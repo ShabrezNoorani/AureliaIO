@@ -3,20 +3,20 @@ import type { AppData, Ticket } from './types';
 const id = () => crypto.randomUUID();
 
 const viatorTickets = (adultPrice: number, childPrice: number, adultCost = 0, childCost = 0): Ticket[] => [
-  { id: id(), type: 'Adult', price: adultPrice, cost: adultCost, minAge: 18, maxAge: 70, pax: 2 },
-  { id: id(), type: 'Children', price: childPrice, cost: childCost, minAge: 0, maxAge: 17, pax: 0 },
+  { id: id(), type: 'Adult', price: adultPrice, cost: adultCost, minAge: 18, maxAge: 70, pax: 0, mapsTo: 'Adult' },
+  { id: id(), type: 'Children', price: childPrice, cost: childCost, minAge: 0, maxAge: 17, pax: 0, mapsTo: 'Children + Youth + Infant' },
 ];
 
 const gygTickets = (adultPrice: number, childPrice: number, adultCost = 0, childCost = 0): Ticket[] => [
-  { id: id(), type: 'Old', price: adultPrice, cost: adultCost, minAge: 71, maxAge: 120, pax: 0 },
-  { id: id(), type: 'Adult', price: adultPrice, cost: adultCost, minAge: 18, maxAge: 70, pax: 2 },
-  { id: id(), type: 'Children', price: childPrice, cost: childCost, minAge: 12, maxAge: 17, pax: 0 },
-  { id: id(), type: 'Youth', price: childPrice, cost: childCost, minAge: 5, maxAge: 11, pax: 0 },
-  { id: id(), type: 'Infant', price: 0, cost: 0, minAge: 0, maxAge: 4, pax: 0 },
+  { id: id(), type: 'Old', price: adultPrice, cost: adultCost, minAge: 71, maxAge: 120, pax: 0, mapsTo: 'None' },
+  { id: id(), type: 'Adult', price: adultPrice, cost: adultCost, minAge: 18, maxAge: 70, pax: 0, mapsTo: 'Adult' },
+  { id: id(), type: 'Children', price: childPrice, cost: childCost, minAge: 12, maxAge: 17, pax: 0, mapsTo: 'Youth' },
+  { id: id(), type: 'Youth', price: childPrice, cost: childCost, minAge: 5, maxAge: 11, pax: 0, mapsTo: 'Children' },
+  { id: id(), type: 'Infant', price: 0, cost: 0, minAge: 0, maxAge: 4, pax: 0, mapsTo: 'Infant' },
 ];
 
 const airbnbTickets = (guestPrice: number, guestCost = 0): Ticket[] => [
-  { id: id(), type: 'Guest', price: guestPrice, cost: guestCost, minAge: 0, maxAge: 99, pax: 2 },
+  { id: id(), type: 'Guest', price: guestPrice, cost: guestCost, minAge: 0, maxAge: 99, pax: 0, mapsTo: 'All pax' },
 ];
 
 export const INITIAL_DATA: AppData = {

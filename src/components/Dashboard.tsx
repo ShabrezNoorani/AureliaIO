@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import type { AppData, Option, Channel } from '@/lib/types';
+import { useState } from 'react';
+import type { AppData, Option, Channel, MapsTo } from '@/lib/types';
 import { calculateMetrics, formatEuro } from '@/lib/calculations';
 
 interface DashboardProps {
@@ -16,37 +16,18 @@ interface GlobalPax {
 }
 
 function mapGlobalToChannel(channel: Channel, global: GlobalPax): Channel {
-  const name = channel.name.toLowerCase();
   const mapped = { ...channel, tickets: channel.tickets.map(t => ({ ...t })) };
 
-  if (name === 'viator') {
-    for (const t of mapped.tickets) {
-      const tl = t.type.toLowerCase();
-      if (tl.includes('adult')) t.pax = global.adult;
-      else if (tl.includes('child')) t.pax = global.children + global.youth + global.infant;
-      else t.pax = 0;
-    }
-  } else if (name === 'getyourguide' || name === 'gyg') {
-    for (const t of mapped.tickets) {
-      const tl = t.type.toLowerCase();
-      if (tl.includes('old')) t.pax = 0;
-      else if (tl.includes('adult')) t.pax = global.adult;
-      else if (tl.includes('child')) t.pax = global.youth;
-      else if (tl.includes('youth')) t.pax = global.children;
-      else if (tl.includes('infant')) t.pax = global.infant;
-      else t.pax = 0;
-    }
-  } else if (name === 'airbnb') {
-    for (const t of mapped.tickets) {
-      t.pax = global.adult + global.youth + global.children + global.infant;
-    }
-  } else {
-    // Own Website, Agent, Custom
-    for (const t of mapped.tickets) {
-      const tl = t.type.toLowerCase();
-      if (tl.includes('adult')) t.pax = global.adult;
-      else if (tl.includes('child')) t.pax = global.children + global.youth + global.infant;
-      else t.pax = 0;
+  for (const t of mapped.tickets) {
+    const m = t.mapsTo || 'None';
+    switch (m) {
+      case 'Adult': t.pax = global.adult; break;
+      case 'Youth': t.pax = global.youth; break;
+      case 'Children': t.pax = global.children; break;
+      case 'Infant': t.pax = global.infant; break;
+      case 'Children + Youth + Infant': t.pax = global.children + global.youth + global.infant; break;
+      case 'All pax': t.pax = global.adult + global.youth + global.children + global.infant; break;
+      case 'None': default: t.pax = 0; break;
     }
   }
 
@@ -54,7 +35,7 @@ function mapGlobalToChannel(channel: Channel, global: GlobalPax): Channel {
 }
 
 export default function Dashboard({ data, onEditOption }: DashboardProps) {
-  const [global, setGlobal] = useState<GlobalPax>({ adult: 10, youth: 2, children: 2, infant: 1 });
+  const [global, setGlobal] = useState<GlobalPax>({ adult: 0, youth: 0, children: 0, infant: 0 });
 
   const allOptions = data.products.flatMap((p) =>
     p.options.map((o) => ({ ...o, productName: p.name }))

@@ -1,40 +1,66 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { AppData, Option, Ticket } from './types';
+import type { AppData, Option, Ticket, MapsTo } from './types';
 import { INITIAL_DATA } from './initialData';
 
 const STORAGE_KEY = 'aurelia_data';
 
 const generateId = () => crypto.randomUUID();
 
+const getDefaultMapsTo = (channelName: string, ticketType: string): MapsTo => {
+  const ch = channelName.toLowerCase();
+  const tt = ticketType.toLowerCase();
+  
+  if (ch === 'viator') {
+    if (tt.includes('adult')) return 'Adult';
+    if (tt.includes('child')) return 'Children + Youth + Infant';
+    return 'None';
+  }
+  if (ch === 'gyg' || ch === 'getyourguide') {
+    if (tt.includes('old')) return 'None';
+    if (tt.includes('adult')) return 'Adult';
+    if (tt.includes('child')) return 'Youth';
+    if (tt.includes('youth')) return 'Children';
+    if (tt.includes('infant')) return 'Infant';
+    return 'None';
+  }
+  if (ch === 'airbnb') {
+    return 'All pax';
+  }
+  // Own Website, Agent, Custom
+  if (tt.includes('adult')) return 'Adult';
+  if (tt.includes('child')) return 'Children + Youth + Infant';
+  return 'None';
+};
+
 const getDefaultTickets = (channelName: string): Ticket[] => {
   switch (channelName) {
     case 'Viator':
       return [
-        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 70, pax: 2 },
-        { id: generateId(), type: 'Children', price: 25, cost: 0, minAge: 0, maxAge: 17, pax: 0 },
+        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 70, pax: 0, mapsTo: 'Adult' },
+        { id: generateId(), type: 'Children', price: 25, cost: 0, minAge: 0, maxAge: 17, pax: 0, mapsTo: 'Children + Youth + Infant' },
       ];
     case 'GYG':
       return [
-        { id: generateId(), type: 'Old', price: 50, cost: 0, minAge: 71, maxAge: 120, pax: 0 },
-        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 70, pax: 2 },
-        { id: generateId(), type: 'Children', price: 25, cost: 0, minAge: 12, maxAge: 17, pax: 0 },
-        { id: generateId(), type: 'Youth', price: 25, cost: 0, minAge: 5, maxAge: 11, pax: 0 },
-        { id: generateId(), type: 'Infant', price: 0, cost: 0, minAge: 0, maxAge: 4, pax: 0 },
+        { id: generateId(), type: 'Old', price: 50, cost: 0, minAge: 71, maxAge: 120, pax: 0, mapsTo: 'None' },
+        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 70, pax: 0, mapsTo: 'Adult' },
+        { id: generateId(), type: 'Children', price: 25, cost: 0, minAge: 12, maxAge: 17, pax: 0, mapsTo: 'Youth' },
+        { id: generateId(), type: 'Youth', price: 25, cost: 0, minAge: 5, maxAge: 11, pax: 0, mapsTo: 'Children' },
+        { id: generateId(), type: 'Infant', price: 0, cost: 0, minAge: 0, maxAge: 4, pax: 0, mapsTo: 'Infant' },
       ];
     case 'Airbnb':
       return [
-        { id: generateId(), type: 'Guest', price: 50, cost: 0, minAge: 0, maxAge: 99, pax: 2 },
+        { id: generateId(), type: 'Guest', price: 50, cost: 0, minAge: 0, maxAge: 99, pax: 0, mapsTo: 'All pax' },
       ];
     case 'Own Website':
     case 'Agent':
       return [
-        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 99, pax: 2 },
-        { id: generateId(), type: 'Child', price: 25, cost: 0, minAge: 4, maxAge: 12, pax: 0 },
+        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 99, pax: 0, mapsTo: 'Adult' },
+        { id: generateId(), type: 'Child', price: 25, cost: 0, minAge: 4, maxAge: 12, pax: 0, mapsTo: 'Children + Youth + Infant' },
       ];
     default:
       return [
-        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 99, pax: 2 },
-        { id: generateId(), type: 'Child', price: 25, cost: 0, minAge: 4, maxAge: 12, pax: 0 },
+        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 99, pax: 0, mapsTo: 'Adult' },
+        { id: generateId(), type: 'Child', price: 25, cost: 0, minAge: 4, maxAge: 12, pax: 0, mapsTo: 'Children + Youth + Infant' },
       ];
   }
 };
@@ -45,12 +71,18 @@ export function useAppData() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as AppData;
-        // Migration: if channels don't have tickets, add defaults
+        // Migration: ensure tickets exist and have mapsTo
         for (const p of parsed.products) {
           for (const o of p.options) {
             for (const c of o.channels) {
               if (!c.tickets) {
                 c.tickets = getDefaultTickets(c.name);
+              } else {
+                for (const t of c.tickets) {
+                  if (!t.mapsTo) {
+                    t.mapsTo = getDefaultMapsTo(c.name, t.type);
+                  }
+                }
               }
             }
           }
@@ -83,11 +115,7 @@ export function useAppData() {
 
   const addProduct = useCallback((name: string) => {
     updateData((d) => {
-      d.products.push({
-        id: generateId(),
-        name,
-        options: [],
-      });
+      d.products.push({ id: generateId(), name, options: [] });
     });
   }, [updateData]);
 
@@ -113,18 +141,11 @@ export function useAppData() {
           tierPricing: { enabled: false, tiers: [] },
         },
         extraCosts: [],
-        channels: [
-          {
-            id: generateId(),
-            name: 'Viator',
-            commission: 30,
-            promo: 0,
-            vatEnabled: false,
-            vatRate: 20,
-            vatType: 'Included',
-            tickets: getDefaultTickets('Viator'),
-          },
-        ],
+        channels: [{
+          id: generateId(), name: 'Viator', commission: 30, promo: 0,
+          vatEnabled: false, vatRate: 20, vatType: 'Included',
+          tickets: getDefaultTickets('Viator'),
+        }],
       });
     });
   }, [updateData]);
@@ -150,13 +171,9 @@ export function useAppData() {
     };
     updateOption(optionId, (opt) => {
       opt.channels.push({
-        id: generateId(),
-        name: channelName,
-        commission: commissionDefaults[channelName] ?? 20,
-        promo: 0,
-        vatEnabled: false,
-        vatRate: 20,
-        vatType: 'Included',
+        id: generateId(), name: channelName,
+        commission: commissionDefaults[channelName] ?? 20, promo: 0,
+        vatEnabled: false, vatRate: 20, vatType: 'Included',
         tickets: getDefaultTickets(channelName),
       });
     });
@@ -173,13 +190,8 @@ export function useAppData() {
       const ch = opt.channels.find((c) => c.id === channelId);
       if (ch) {
         ch.tickets.push({
-          id: generateId(),
-          type: 'New Type',
-          price: 0,
-          cost: 0,
-          minAge: 0,
-          maxAge: 99,
-          pax: 0,
+          id: generateId(), type: 'New Type', price: 0, cost: 0,
+          minAge: 0, maxAge: 99, pax: 0, mapsTo: 'None',
         });
       }
     });
@@ -188,20 +200,13 @@ export function useAppData() {
   const deleteTicket = useCallback((optionId: string, channelId: string, ticketId: string) => {
     updateOption(optionId, (opt) => {
       const ch = opt.channels.find((c) => c.id === channelId);
-      if (ch) {
-        ch.tickets = ch.tickets.filter((t) => t.id !== ticketId);
-      }
+      if (ch) ch.tickets = ch.tickets.filter((t) => t.id !== ticketId);
     });
   }, [updateOption]);
 
   const addGuide = useCallback((optionId: string) => {
     updateOption(optionId, (opt) => {
-      opt.guides.push({
-        id: generateId(),
-        label: `Guide ${opt.guides.length + 1}`,
-        type: 'Fixed',
-        amount: 0,
-      });
+      opt.guides.push({ id: generateId(), label: `Guide ${opt.guides.length + 1}`, type: 'Fixed', amount: 0 });
     });
   }, [updateOption]);
 
@@ -236,23 +241,9 @@ export function useAppData() {
   }, [updateOption]);
 
   return {
-    data,
-    updateData,
-    findOption,
-    addProduct,
-    deleteProduct,
-    addOption,
-    deleteOption,
-    updateOption,
-    addChannel,
-    deleteChannel,
-    addTicket,
-    deleteTicket,
-    addGuide,
-    deleteGuide,
-    addExtraCost,
-    deleteExtraCost,
-    addTier,
-    deleteTier,
+    data, updateData, findOption, addProduct, deleteProduct,
+    addOption, deleteOption, updateOption, addChannel, deleteChannel,
+    addTicket, deleteTicket, addGuide, deleteGuide,
+    addExtraCost, deleteExtraCost, addTier, deleteTier,
   };
 }
