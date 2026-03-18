@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { AppData, Option } from '@/lib/types';
+import { useState, useMemo } from 'react';
+import type { AppData, Option, Channel } from '@/lib/types';
 import { calculateMetrics, formatEuro } from '@/lib/calculations';
 
 interface DashboardProps {
@@ -8,10 +8,64 @@ interface DashboardProps {
   updateOption: (optionId: string, updater: (o: Option) => void) => void;
 }
 
-export default function Dashboard({ data, onEditOption, updateOption }: DashboardProps) {
+interface GlobalPax {
+  adult: number;
+  youth: number;
+  children: number;
+  infant: number;
+}
+
+function mapGlobalToChannel(channel: Channel, global: GlobalPax): Channel {
+  const name = channel.name.toLowerCase();
+  const mapped = { ...channel, tickets: channel.tickets.map(t => ({ ...t })) };
+
+  if (name === 'viator') {
+    for (const t of mapped.tickets) {
+      const tl = t.type.toLowerCase();
+      if (tl.includes('adult')) t.pax = global.adult;
+      else if (tl.includes('child')) t.pax = global.children + global.youth + global.infant;
+      else t.pax = 0;
+    }
+  } else if (name === 'getyourguide' || name === 'gyg') {
+    for (const t of mapped.tickets) {
+      const tl = t.type.toLowerCase();
+      if (tl.includes('old')) t.pax = 0;
+      else if (tl.includes('adult')) t.pax = global.adult;
+      else if (tl.includes('child')) t.pax = global.youth;
+      else if (tl.includes('youth')) t.pax = global.children;
+      else if (tl.includes('infant')) t.pax = global.infant;
+      else t.pax = 0;
+    }
+  } else if (name === 'airbnb') {
+    for (const t of mapped.tickets) {
+      t.pax = global.adult + global.youth + global.children + global.infant;
+    }
+  } else {
+    // Own Website, Agent, Custom
+    for (const t of mapped.tickets) {
+      const tl = t.type.toLowerCase();
+      if (tl.includes('adult')) t.pax = global.adult;
+      else if (tl.includes('child')) t.pax = global.children + global.youth + global.infant;
+      else t.pax = 0;
+    }
+  }
+
+  return mapped;
+}
+
+export default function Dashboard({ data, onEditOption }: DashboardProps) {
+  const [global, setGlobal] = useState<GlobalPax>({ adult: 10, youth: 2, children: 2, infant: 1 });
+
   const allOptions = data.products.flatMap((p) =>
     p.options.map((o) => ({ ...o, productName: p.name }))
   );
+
+  const fields: { key: keyof GlobalPax; label: string }[] = [
+    { key: 'adult', label: 'Adult' },
+    { key: 'youth', label: 'Youth' },
+    { key: 'children', label: 'Children' },
+    { key: 'infant', label: 'Infant' },
+  ];
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -22,6 +76,23 @@ export default function Dashboard({ data, onEditOption, updateOption }: Dashboar
         <p className="text-muted-foreground text-sm mt-1">
           Here is your current pricing performance.
         </p>
+      </div>
+
+      {/* Global pax inputs */}
+      <div className="aurelia-card px-6 py-4 mb-8 flex items-center gap-6 flex-wrap">
+        <span className="text-sm font-bold text-foreground uppercase tracking-widest">Simulate</span>
+        {fields.map(({ key, label }) => (
+          <div key={key} className="flex items-center gap-2">
+            <label className="text-xs font-medium text-muted-foreground">{label}:</label>
+            <input
+              type="number"
+              min={0}
+              value={global[key]}
+              onChange={(e) => setGlobal(prev => ({ ...prev, [key]: Math.max(0, Number(e.target.value)) }))}
+              className="w-16 text-center text-sm font-bold bg-secondary rounded-lg px-2 py-1.5 text-foreground outline-none focus:ring-1 focus:ring-gold"
+            />
+          </div>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 gap-6">
@@ -48,9 +119,10 @@ export default function Dashboard({ data, onEditOption, updateOption }: Dashboar
               style={{ gridTemplateColumns: `repeat(${option.channels.length}, 1fr)` }}
             >
               {option.channels.map((channel, idx) => {
-                const metrics = calculateMetrics(option, channel);
+                const mappedChannel = mapGlobalToChannel(channel, global);
+                const metrics = calculateMetrics(option, mappedChannel);
                 const isProfitable = metrics ? metrics.netProfit > 0 : false;
-                const totalPax = channel.tickets.reduce((s, t) => s + Number(t.pax), 0);
+                const totalPax = mappedChannel.tickets.reduce((s, t) => s + Number(t.pax), 0);
                 return (
                   <div
                     key={channel.id}
@@ -64,27 +136,16 @@ export default function Dashboard({ data, onEditOption, updateOption }: Dashboar
                       </span>
                     </div>
 
-                    {/* Per-channel pax inputs */}
+                    {/* Read-only mapped pax */}
                     <div className="space-y-1.5 mb-4">
-                      {channel.tickets.map((ticket, tIdx) => (
+                      {mappedChannel.tickets.map((ticket) => (
                         <div key={ticket.id} className="flex justify-between items-center">
                           <span className="text-xs text-muted-foreground">
-                            {ticket.type} ({ticket.minAge}-{ticket.maxAge}):
+                            {ticket.type}{ticket.minAge !== undefined && ticket.maxAge !== undefined ? ` (${ticket.minAge}-${ticket.maxAge})` : ''}:
                           </span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={ticket.pax}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => {
-                              const val = Number(e.target.value);
-                              updateOption(option.id, (o) => {
-                                const ch = o.channels.find((c) => c.id === channel.id);
-                                if (ch) ch.tickets[tIdx].pax = val;
-                              });
-                            }}
-                            className="w-14 text-center text-sm font-bold bg-secondary rounded-lg px-2 py-1 text-foreground outline-none focus:ring-1 focus:ring-gold"
-                          />
+                          <span className="w-14 text-center text-sm font-bold bg-secondary rounded-lg px-2 py-1 text-foreground">
+                            {ticket.pax}
+                          </span>
                         </div>
                       ))}
                     </div>
