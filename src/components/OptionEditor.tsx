@@ -302,7 +302,7 @@ export default function OptionEditor({
           </div>
           <div className="space-y-2">
             {channel.tickets.map((t, idx) => (
-              <div key={t.id} className="grid grid-cols-6 gap-2 items-end">
+              <div key={t.id} className="grid grid-cols-7 gap-2 items-end">
                 <div>
                   <label className="text-[10px] font-bold text-muted-foreground">Type</label>
                   <input className="aurelia-input text-xs" value={t.type} onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].type = e.target.value; })} />
@@ -326,6 +326,22 @@ export default function OptionEditor({
                 <div>
                   <label className="text-[10px] font-bold text-muted-foreground">Pax</label>
                   <input type="number" className="aurelia-input text-xs" value={t.pax} onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].pax = Number(e.target.value); })} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-muted-foreground">Maps to</label>
+                  <select
+                    className="aurelia-input text-xs"
+                    value={t.mapsTo || 'None'}
+                    onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].mapsTo = e.target.value as MapsTo; })}
+                  >
+                    <option value="Adult">Adult</option>
+                    <option value="Youth">Youth</option>
+                    <option value="Children">Children</option>
+                    <option value="Infant">Infant</option>
+                    <option value="Children + Youth + Infant">Children + Youth + Infant</option>
+                    <option value="All pax">All pax (total)</option>
+                    <option value="None">None</option>
+                  </select>
                 </div>
                 <button onClick={() => deleteTicket(optionId, channel.id, t.id)} className="p-1.5 text-muted-foreground hover:text-profit-negative transition-colors">
                   <Trash2 size={12} />
