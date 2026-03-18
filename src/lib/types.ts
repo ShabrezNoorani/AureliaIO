@@ -42,6 +42,7 @@ export interface Channel {
   vatEnabled: boolean;
   vatRate: number;
   vatType: 'Included' | 'On Payout' | 'On Gross';
+  tickets: Ticket[];
 }
 
 export interface Option {
@@ -49,7 +50,6 @@ export interface Option {
   name: string;
   bokunId: string;
   notes: string;
-  tickets: Ticket[];
   guides: Guide[];
   rules: Rules;
   extraCosts: ExtraCost[];

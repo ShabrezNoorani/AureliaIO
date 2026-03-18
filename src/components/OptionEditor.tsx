@@ -11,8 +11,8 @@ interface OptionEditorProps {
   initialChannelIdx?: number;
   onBack: () => void;
   updateOption: (optionId: string, updater: (o: Option) => void) => void;
-  addTicket: (optionId: string) => void;
-  deleteTicket: (optionId: string, ticketId: string) => void;
+  addTicket: (optionId: string, channelId: string) => void;
+  deleteTicket: (optionId: string, channelId: string, ticketId: string) => void;
   addGuide: (optionId: string) => void;
   deleteGuide: (optionId: string, guideId: string) => void;
   addExtraCost: (optionId: string) => void;
@@ -110,49 +110,6 @@ export default function OptionEditor({
                 value={option.notes}
                 onChange={(e) => update((o) => { o.notes = e.target.value; })}
               />
-            </div>
-          </section>
-
-          {/* Tickets */}
-          <section className="mb-10">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="aurelia-section-title">Ticket Types</h2>
-              <button onClick={() => addTicket(optionId)} className="text-xs font-bold text-gold hover:underline flex items-center gap-1">
-                <Plus size={12} /> Add Type
-              </button>
-            </div>
-            <div className="space-y-2">
-              {option.tickets.map((t, idx) => (
-                <div key={t.id} className="grid grid-cols-6 gap-2 items-end">
-                  <div>
-                    <label className="text-[10px] font-bold text-muted-foreground">Type</label>
-                    <input className="aurelia-input" value={t.type} onChange={(e) => update((o) => { o.tickets[idx].type = e.target.value; })} />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-muted-foreground">Price €</label>
-                    <input type="number" className="aurelia-input" value={t.price} onChange={(e) => update((o) => { o.tickets[idx].price = Number(e.target.value); })} />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-muted-foreground">Cost €</label>
-                    <input type="number" className="aurelia-input" value={t.cost} onChange={(e) => update((o) => { o.tickets[idx].cost = Number(e.target.value); })} />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-muted-foreground">Age</label>
-                    <div className="flex items-center gap-1">
-                      <input type="number" className="aurelia-input w-12 text-center" value={t.minAge} onChange={(e) => update((o) => { o.tickets[idx].minAge = Number(e.target.value); })} />
-                      <span className="text-muted-foreground text-xs">-</span>
-                      <input type="number" className="aurelia-input w-12 text-center" value={t.maxAge} onChange={(e) => update((o) => { o.tickets[idx].maxAge = Number(e.target.value); })} />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-muted-foreground">Pax</label>
-                    <input type="number" className="aurelia-input" value={t.pax} onChange={(e) => update((o) => { o.tickets[idx].pax = Number(e.target.value); })} />
-                  </div>
-                  <button onClick={() => deleteTicket(optionId, t.id)} className="p-2 text-muted-foreground hover:text-profit-negative transition-colors">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
             </div>
           </section>
 
@@ -334,11 +291,55 @@ export default function OptionEditor({
           </div>
         </div>
 
+        {/* Channel-specific Ticket Types */}
+        <section className="mb-8">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="aurelia-section-title">Ticket Types — {channel.name}</h2>
+            <button onClick={() => addTicket(optionId, channel.id)} className="text-xs font-bold text-gold hover:underline flex items-center gap-1">
+              <Plus size={12} /> Add Type
+            </button>
+          </div>
+          <div className="space-y-2">
+            {channel.tickets.map((t, idx) => (
+              <div key={t.id} className="grid grid-cols-6 gap-2 items-end">
+                <div>
+                  <label className="text-[10px] font-bold text-muted-foreground">Type</label>
+                  <input className="aurelia-input text-xs" value={t.type} onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].type = e.target.value; })} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-muted-foreground">Age</label>
+                  <div className="flex items-center gap-0.5">
+                    <input type="number" className="aurelia-input w-10 text-center text-xs" value={t.minAge} onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].minAge = Number(e.target.value); })} />
+                    <span className="text-muted-foreground text-[10px]">-</span>
+                    <input type="number" className="aurelia-input w-10 text-center text-xs" value={t.maxAge} onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].maxAge = Number(e.target.value); })} />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-muted-foreground">Price €</label>
+                  <input type="number" className="aurelia-input text-xs" value={t.price} onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].price = Number(e.target.value); })} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-muted-foreground">Cost €</label>
+                  <input type="number" className="aurelia-input text-xs" value={t.cost} onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].cost = Number(e.target.value); })} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-muted-foreground">Pax</label>
+                  <input type="number" className="aurelia-input text-xs" value={t.pax} onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].pax = Number(e.target.value); })} />
+                </div>
+                <button onClick={() => deleteTicket(optionId, channel.id, t.id)} className="p-1.5 text-muted-foreground hover:text-profit-negative transition-colors">
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* Channel settings */}
         <div className="space-y-4 mb-8">
+          <h3 className="aurelia-section-title">Channel Settings</h3>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="aurelia-section-title">Commission %</label>
+              <label className="text-[10px] font-bold text-muted-foreground">Commission %</label>
               <input
                 type="number"
                 className="aurelia-input p-3 font-bold text-base"
@@ -347,7 +348,7 @@ export default function OptionEditor({
               />
             </div>
             <div className="space-y-1">
-              <label className="aurelia-section-title">Promotion %</label>
+              <label className="text-[10px] font-bold text-muted-foreground">Promotion %</label>
               <input
                 type="number"
                 className="aurelia-input p-3 font-bold text-base"
@@ -370,7 +371,7 @@ export default function OptionEditor({
           {channel.vatEnabled && (
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
-                <label className="aurelia-section-title">VAT Rate %</label>
+                <label className="text-[10px] font-bold text-muted-foreground">VAT Rate %</label>
                 <input
                   type="number"
                   className="aurelia-input p-3 font-bold"
@@ -379,7 +380,7 @@ export default function OptionEditor({
                 />
               </div>
               <div className="space-y-1">
-                <label className="aurelia-section-title">VAT Type</label>
+                <label className="text-[10px] font-bold text-muted-foreground">VAT Type</label>
                 <select
                   className="aurelia-input p-3 font-bold"
                   value={channel.vatType}

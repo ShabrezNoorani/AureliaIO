@@ -1,16 +1,63 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { AppData, Product, Option, Channel, Ticket, Guide, ExtraCost, TierRow } from './types';
+import type { AppData, Option, Ticket } from './types';
 import { INITIAL_DATA } from './initialData';
 
 const STORAGE_KEY = 'aurelia_data';
 
 const generateId = () => crypto.randomUUID();
 
+const getDefaultTickets = (channelName: string): Ticket[] => {
+  switch (channelName) {
+    case 'Viator':
+      return [
+        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 70, pax: 2 },
+        { id: generateId(), type: 'Children', price: 25, cost: 0, minAge: 0, maxAge: 17, pax: 0 },
+      ];
+    case 'GYG':
+      return [
+        { id: generateId(), type: 'Old', price: 50, cost: 0, minAge: 71, maxAge: 120, pax: 0 },
+        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 70, pax: 2 },
+        { id: generateId(), type: 'Children', price: 25, cost: 0, minAge: 12, maxAge: 17, pax: 0 },
+        { id: generateId(), type: 'Youth', price: 25, cost: 0, minAge: 5, maxAge: 11, pax: 0 },
+        { id: generateId(), type: 'Infant', price: 0, cost: 0, minAge: 0, maxAge: 4, pax: 0 },
+      ];
+    case 'Airbnb':
+      return [
+        { id: generateId(), type: 'Guest', price: 50, cost: 0, minAge: 0, maxAge: 99, pax: 2 },
+      ];
+    case 'Own Website':
+    case 'Agent':
+      return [
+        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 99, pax: 2 },
+        { id: generateId(), type: 'Child', price: 25, cost: 0, minAge: 4, maxAge: 12, pax: 0 },
+      ];
+    default:
+      return [
+        { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 99, pax: 2 },
+        { id: generateId(), type: 'Child', price: 25, cost: 0, minAge: 4, maxAge: 12, pax: 0 },
+      ];
+  }
+};
+
 export function useAppData() {
   const [data, setData] = useState<AppData>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : INITIAL_DATA;
+      if (saved) {
+        const parsed = JSON.parse(saved) as AppData;
+        // Migration: if channels don't have tickets, add defaults
+        for (const p of parsed.products) {
+          for (const o of p.options) {
+            for (const c of o.channels) {
+              if (!c.tickets) {
+                c.tickets = getDefaultTickets(c.name);
+              }
+            }
+          }
+        }
+        return parsed;
+      }
+      return INITIAL_DATA;
     } catch {
       return INITIAL_DATA;
     }
@@ -59,10 +106,6 @@ export function useAppData() {
         name: 'New Option',
         bokunId: '',
         notes: '',
-        tickets: [
-          { id: generateId(), type: 'Adult', price: 50, cost: 0, minAge: 18, maxAge: 99, pax: 2 },
-          { id: generateId(), type: 'Child', price: 25, cost: 0, minAge: 4, maxAge: 12, pax: 0 },
-        ],
         guides: [{ id: generateId(), label: 'Guide 1', type: 'Fixed', amount: 60 }],
         rules: {
           minTicket: { enabled: false, blockSize: 8, blockPrice: 130 },
@@ -71,7 +114,16 @@ export function useAppData() {
         },
         extraCosts: [],
         channels: [
-          { id: generateId(), name: 'Viator', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included' },
+          {
+            id: generateId(),
+            name: 'Viator',
+            commission: 30,
+            promo: 0,
+            vatEnabled: false,
+            vatRate: 20,
+            vatType: 'Included',
+            tickets: getDefaultTickets('Viator'),
+          },
         ],
       });
     });
@@ -105,6 +157,7 @@ export function useAppData() {
         vatEnabled: false,
         vatRate: 20,
         vatType: 'Included',
+        tickets: getDefaultTickets(channelName),
       });
     });
   }, [updateOption]);
@@ -115,23 +168,29 @@ export function useAppData() {
     });
   }, [updateOption]);
 
-  const addTicket = useCallback((optionId: string) => {
+  const addTicket = useCallback((optionId: string, channelId: string) => {
     updateOption(optionId, (opt) => {
-      opt.tickets.push({
-        id: generateId(),
-        type: 'New Type',
-        price: 0,
-        cost: 0,
-        minAge: 0,
-        maxAge: 99,
-        pax: 0,
-      });
+      const ch = opt.channels.find((c) => c.id === channelId);
+      if (ch) {
+        ch.tickets.push({
+          id: generateId(),
+          type: 'New Type',
+          price: 0,
+          cost: 0,
+          minAge: 0,
+          maxAge: 99,
+          pax: 0,
+        });
+      }
     });
   }, [updateOption]);
 
-  const deleteTicket = useCallback((optionId: string, ticketId: string) => {
+  const deleteTicket = useCallback((optionId: string, channelId: string, ticketId: string) => {
     updateOption(optionId, (opt) => {
-      opt.tickets = opt.tickets.filter((t) => t.id !== ticketId);
+      const ch = opt.channels.find((c) => c.id === channelId);
+      if (ch) {
+        ch.tickets = ch.tickets.filter((t) => t.id !== ticketId);
+      }
     });
   }, [updateOption]);
 
