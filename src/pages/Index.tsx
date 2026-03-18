@@ -1,12 +1,93 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useState } from 'react';
+import AureliaSidebar from '@/components/AureliaSidebar';
+import Dashboard from '@/components/Dashboard';
+import ProductsPage from '@/components/ProductsPage';
+import OptionEditor from '@/components/OptionEditor';
+import { useAppData } from '@/lib/useAppData';
+
+type View = 'dashboard' | 'products' | 'editor';
 
 const Index = () => {
+  const {
+    data,
+    addProduct,
+    deleteProduct,
+    addOption,
+    deleteOption,
+    updateOption,
+    addChannel,
+    deleteChannel,
+    addTicket,
+    deleteTicket,
+    addGuide,
+    deleteGuide,
+    addExtraCost,
+    deleteExtraCost,
+    addTier,
+    deleteTier,
+  } = useAppData();
+
+  const [view, setView] = useState<View>('dashboard');
+  const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
+  const [activeChannelIdx, setActiveChannelIdx] = useState(0);
+
+  const handleEditOption = (optionId: string, channelIdx?: number) => {
+    setActiveOptionId(optionId);
+    setActiveChannelIdx(channelIdx ?? 0);
+    setView('editor');
+  };
+
+  const handleNewProduct = () => {
+    const name = prompt('Product name:');
+    if (name?.trim()) {
+      addProduct(name.trim());
+      setView('products');
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="flex min-h-screen bg-background text-foreground antialiased">
+      <AureliaSidebar
+        activeView={view}
+        onNavigate={setView}
+        onNewProduct={handleNewProduct}
+      />
+
+      <main className="flex-1 ml-64">
+        {view === 'dashboard' && (
+          <Dashboard data={data} onEditOption={handleEditOption} />
+        )}
+        {view === 'products' && (
+          <ProductsPage
+            data={data}
+            onAddProduct={addProduct}
+            onDeleteProduct={deleteProduct}
+            onAddOption={addOption}
+            onDeleteOption={deleteOption}
+            onAddChannel={addChannel}
+            onEditOption={handleEditOption}
+          />
+        )}
+        {view === 'editor' && activeOptionId && (
+          <OptionEditor
+            data={data}
+            optionId={activeOptionId}
+            initialChannelIdx={activeChannelIdx}
+            onBack={() => setView('dashboard')}
+            updateOption={updateOption}
+            addTicket={addTicket}
+            deleteTicket={deleteTicket}
+            addGuide={addGuide}
+            deleteGuide={deleteGuide}
+            addExtraCost={addExtraCost}
+            deleteExtraCost={deleteExtraCost}
+            addTier={addTier}
+            deleteTier={deleteTier}
+            addChannel={addChannel}
+            deleteChannel={deleteChannel}
+          />
+        )}
+      </main>
     </div>
   );
 };
