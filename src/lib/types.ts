@@ -1,3 +1,5 @@
+export type MapsTo = 'Adult' | 'Youth' | 'Children' | 'Infant' | 'Children + Youth + Infant' | 'All pax' | 'None';
+
 export interface Ticket {
   id: string;
   type: string;
@@ -6,6 +8,7 @@ export interface Ticket {
   minAge: number;
   maxAge: number;
   pax: number;
+  mapsTo: MapsTo;
 }
 
 export interface Guide {
