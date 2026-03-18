@@ -2,7 +2,6 @@ import { useState, useMemo } from 'react';
 import { Trash2, Copy, ArrowLeft, Plus } from 'lucide-react';
 import type { AppData, Option, MapsTo } from '@/lib/types';
 import { calculateMetrics, formatEuroDetailed } from '@/lib/calculations';
-import { calculateMetrics, formatEuroDetailed } from '@/lib/calculations';
 
 const CHANNEL_PRESETS = ['Viator', 'GYG', 'Airbnb', 'Own Website', 'Agent', 'Custom'];
 
