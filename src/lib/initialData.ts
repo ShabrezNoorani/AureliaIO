@@ -1,4 +1,23 @@
-import type { AppData } from './types';
+import type { AppData, Ticket } from './types';
+
+const id = () => crypto.randomUUID();
+
+const viatorTickets = (adultPrice: number, childPrice: number, adultCost = 0, childCost = 0): Ticket[] => [
+  { id: id(), type: 'Adult', price: adultPrice, cost: adultCost, minAge: 18, maxAge: 70, pax: 2 },
+  { id: id(), type: 'Children', price: childPrice, cost: childCost, minAge: 0, maxAge: 17, pax: 0 },
+];
+
+const gygTickets = (adultPrice: number, childPrice: number, adultCost = 0, childCost = 0): Ticket[] => [
+  { id: id(), type: 'Old', price: adultPrice, cost: adultCost, minAge: 71, maxAge: 120, pax: 0 },
+  { id: id(), type: 'Adult', price: adultPrice, cost: adultCost, minAge: 18, maxAge: 70, pax: 2 },
+  { id: id(), type: 'Children', price: childPrice, cost: childCost, minAge: 12, maxAge: 17, pax: 0 },
+  { id: id(), type: 'Youth', price: childPrice, cost: childCost, minAge: 5, maxAge: 11, pax: 0 },
+  { id: id(), type: 'Infant', price: 0, cost: 0, minAge: 0, maxAge: 4, pax: 0 },
+];
+
+const airbnbTickets = (guestPrice: number, guestCost = 0): Ticket[] => [
+  { id: id(), type: 'Guest', price: guestPrice, cost: guestCost, minAge: 0, maxAge: 99, pax: 2 },
+];
 
 export const INITIAL_DATA: AppData = {
   companyName: "Parisian Adventures",
@@ -12,10 +31,6 @@ export const INITIAL_DATA: AppData = {
           name: "Exterior Only",
           bokunId: "1057128",
           notes: "",
-          tickets: [
-            { id: 't1', type: 'Adult', price: 70, cost: 0, minAge: 18, maxAge: 99, pax: 2 },
-            { id: 't2', type: 'Child', price: 30, cost: 0, minAge: 4, maxAge: 12, pax: 0 },
-          ],
           guides: [{ id: 'g1', label: 'Guide 1', type: 'Fixed', amount: 60 }],
           rules: {
             minTicket: { enabled: false, blockSize: 8, blockPrice: 130 },
@@ -24,9 +39,9 @@ export const INITIAL_DATA: AppData = {
           },
           extraCosts: [],
           channels: [
-            { id: 'c1', name: 'Viator', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included' },
-            { id: 'c2', name: 'GYG', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included' },
-            { id: 'c3', name: 'Airbnb', commission: 25, promo: 10, vatEnabled: false, vatRate: 20, vatType: 'Included' },
+            { id: 'c1', name: 'Viator', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included', tickets: viatorTickets(70, 30) },
+            { id: 'c2', name: 'GYG', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included', tickets: gygTickets(70, 30) },
+            { id: 'c3', name: 'Airbnb', commission: 25, promo: 10, vatEnabled: false, vatRate: 20, vatType: 'Included', tickets: airbnbTickets(70) },
           ],
         },
         {
@@ -34,10 +49,6 @@ export const INITIAL_DATA: AppData = {
           name: "Exterior + Interior",
           bokunId: "",
           notes: "",
-          tickets: [
-            { id: 't3', type: 'Adult', price: 99, cost: 0, minAge: 18, maxAge: 99, pax: 2 },
-            { id: 't4', type: 'Child', price: 45, cost: 0, minAge: 4, maxAge: 12, pax: 0 },
-          ],
           guides: [{ id: 'g2', label: 'Guide 1', type: 'Fixed', amount: 80 }],
           rules: {
             minTicket: { enabled: false, blockSize: 8, blockPrice: 130 },
@@ -46,8 +57,8 @@ export const INITIAL_DATA: AppData = {
           },
           extraCosts: [],
           channels: [
-            { id: 'c4', name: 'Viator', commission: 30, promo: 15, vatEnabled: false, vatRate: 20, vatType: 'Included' },
-            { id: 'c5', name: 'GYG', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included' },
+            { id: 'c4', name: 'Viator', commission: 30, promo: 15, vatEnabled: false, vatRate: 20, vatType: 'Included', tickets: viatorTickets(99, 45) },
+            { id: 'c5', name: 'GYG', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included', tickets: gygTickets(99, 45) },
           ],
         },
       ],
@@ -61,10 +72,6 @@ export const INITIAL_DATA: AppData = {
           name: "Standard Group",
           bokunId: "",
           notes: "",
-          tickets: [
-            { id: 't5', type: 'Adult', price: 109, cost: 28, minAge: 18, maxAge: 99, pax: 2 },
-            { id: 't6', type: 'Child', price: 79, cost: 0, minAge: 4, maxAge: 12, pax: 0 },
-          ],
           guides: [{ id: 'g3', label: 'Guide 1', type: 'Fixed', amount: 150 }],
           rules: {
             minTicket: { enabled: false, blockSize: 8, blockPrice: 130 },
@@ -73,8 +80,8 @@ export const INITIAL_DATA: AppData = {
           },
           extraCosts: [],
           channels: [
-            { id: 'c6', name: 'Viator', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included' },
-            { id: 'c7', name: 'GYG', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included' },
+            { id: 'c6', name: 'Viator', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included', tickets: viatorTickets(109, 79, 28, 0) },
+            { id: 'c7', name: 'GYG', commission: 30, promo: 0, vatEnabled: false, vatRate: 20, vatType: 'Included', tickets: gygTickets(109, 79, 28, 0) },
           ],
         },
       ],

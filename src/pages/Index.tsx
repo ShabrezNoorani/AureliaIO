@@ -55,7 +55,7 @@ const Index = () => {
 
       <main className="flex-1 ml-64">
         {view === 'dashboard' && (
-          <Dashboard data={data} onEditOption={handleEditOption} />
+          <Dashboard data={data} onEditOption={handleEditOption} updateOption={updateOption} />
         )}
         {view === 'products' && (
           <ProductsPage

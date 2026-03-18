@@ -3,9 +3,9 @@ import type { Option, Channel, Metrics } from './types';
 export const calculateMetrics = (
   option: Option,
   channel: Channel,
-  globalPax?: number
 ): Metrics | null => {
-  const totalPax = globalPax || option.tickets.reduce((sum, t) => sum + Number(t.pax), 0);
+  const tickets = channel.tickets;
+  const totalPax = tickets.reduce((sum, t) => sum + Number(t.pax), 0);
   if (totalPax === 0) return null;
 
   // 1. Tier Pricing
@@ -18,10 +18,9 @@ export const calculateMetrics = (
   }
 
   // 2. Gross Revenue
-  const grossRevenue = option.tickets.reduce((sum, t) => {
+  const grossRevenue = tickets.reduce((sum, t) => {
     const price = t.type === 'Adult' && adultPriceOverride !== null ? adultPriceOverride : t.price;
-    const pax = globalPax ? totalPax / option.tickets.length : t.pax;
-    return sum + price * pax;
+    return sum + price * t.pax;
   }, 0);
 
   // 3. Price After Promo
@@ -31,10 +30,7 @@ export const calculateMetrics = (
   const netRevenue = priceAfterPromo * (1 - channel.commission / 100);
 
   // 5. Ticket Costs
-  const ticketCosts = option.tickets.reduce((sum, t) => {
-    const pax = globalPax ? totalPax / option.tickets.length : t.pax;
-    return sum + t.cost * pax;
-  }, 0);
+  const ticketCosts = tickets.reduce((sum, t) => sum + t.cost * t.pax, 0);
 
   // 6. Guide Costs
   const guideCosts = option.guides.reduce((sum, g) => {
