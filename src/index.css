@@ -6,58 +6,57 @@
 
 @layer base {
   :root {
-    --background: 210 20% 98%;
-    --foreground: 220 20% 10%;
+    /* Aurelia Dark Theme */
+    --background: 240 25% 4%;       /* #0a0a0f */
+    --foreground: 210 40% 98%;      /* #f8fafc */
 
-    --card: 0 0% 100%;
-    --card-foreground: 220 20% 10%;
+    --card: 240 18% 9%;             /* #13131a */
+    --card-foreground: 210 40% 98%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 220 20% 10%;
+    --popover: 240 18% 9%;
+    --popover-foreground: 210 40% 98%;
 
-    --primary: 37 91% 55%;
-    --primary-foreground: 220 20% 10%;
+    --primary: 37 91% 55%;          /* #f5a623 gold */
+    --primary-foreground: 0 0% 0%;
 
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 220 20% 10%;
+    --secondary: 240 15% 13%;       /* #1e1e2e */
+    --secondary-foreground: 210 40% 98%;
 
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
+    --muted: 240 15% 13%;
+    --muted-foreground: 215 16% 62%; /* #94a3b8 */
 
-    --accent: 220 14% 96%;
-    --accent-foreground: 220 20% 10%;
+    --accent: 240 12% 15%;
+    --accent-foreground: 210 40% 98%;
 
-    --destructive: 0 72% 51%;
+    --destructive: 0 84% 60%;       /* #ef4444 */
     --destructive-foreground: 0 0% 100%;
 
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
+    --border: 240 15% 18%;          /* #1e1e2e */
+    --input: 240 15% 15%;
     --ring: 37 91% 55%;
 
     --radius: 0.75rem;
 
     /* Aurelia custom tokens */
     --gold: 37 91% 55%;
-    --gold-glow: 37 91% 55% / 0.2;
-    --sidebar-bg: 225 25% 8%;
-    --sidebar-item-active: 0 0% 100% / 0.1;
-    --sidebar-item-hover: 0 0% 100% / 0.05;
-    --sidebar-text: 220 10% 60%;
-    --sidebar-text-active: 0 0% 100%;
-    --profit-positive: 142 72% 29%;
-    --profit-negative: 0 72% 51%;
-    --surface-elevated: 0 0% 100%;
-    --surface-subtle: 220 20% 97%;
-    --card-shadow: 0 0 0 1px rgba(0,0,0,0.04), 0 2px 4px rgba(0,0,0,0.02), 0 8px 16px -4px rgba(0,0,0,0.04);
-    --card-shadow-hover: 0 0 0 1px rgba(0,0,0,0.04), 0 4px 8px rgba(0,0,0,0.04), 0 12px 24px -4px rgba(0,0,0,0.06);
+    --gold-muted: 37 50% 35%;
+    --gold-glow: 37 91% 55% / 0.15;
+    --sidebar-bg: 230 25% 7%;       /* #0f1117 */
+    --sidebar-border: 240 15% 12%;
+    --profit-positive: 142 71% 45%; /* #22c55e */
+    --profit-negative: 0 84% 60%;   /* #ef4444 */
+    --surface-elevated: 240 18% 11%;
+    --surface-subtle: 240 18% 8%;
+    --hover: 240 14% 11%;           /* #1a1a2e */
+    --card-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 2px 8px rgba(0,0,0,0.3);
+    --card-shadow-hover: 0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.4);
 
-    --sidebar-background: 225 25% 8%;
-    --sidebar-foreground: 220 10% 60%;
+    --sidebar-background: 230 25% 7%;
+    --sidebar-foreground: 215 16% 62%;
     --sidebar-primary: 37 91% 55%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 0 0% 100% / 0.1;
+    --sidebar-accent: 0 0% 100% / 0.06;
     --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 0 0% 100% / 0.05;
     --sidebar-ring: 37 91% 55%;
   }
 }
@@ -74,17 +73,31 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Tabular nums for financial data */
   .tabular-nums {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.2);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.3);
   }
 }
 
 @layer components {
   .aurelia-card {
-    @apply bg-card rounded-xl;
+    @apply bg-card rounded-xl border border-border;
     box-shadow: var(--card-shadow);
-    transition: box-shadow 0.2s ease;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
   }
 
   .aurelia-card:hover {
@@ -92,45 +105,59 @@
   }
 
   .aurelia-input {
-    @apply w-full p-2 text-sm rounded-lg bg-secondary/50 border-none outline-none transition-all duration-200;
+    @apply w-full px-3 py-2 text-sm rounded-lg bg-background border border-border
+           text-foreground outline-none transition-all duration-200 placeholder:text-muted-foreground;
   }
 
   .aurelia-input:focus {
-    @apply ring-2;
-    --tw-ring-color: hsl(var(--gold-glow));
+    @apply ring-1 border-transparent;
+    --tw-ring-color: hsl(var(--gold) / 0.5);
   }
 
   .aurelia-section-title {
-    @apply text-[11px] font-black uppercase tracking-[0.08em] text-muted-foreground;
+    @apply text-[11px] font-extrabold uppercase tracking-[0.1em] text-muted-foreground;
   }
 
   .aurelia-gold-btn {
-    @apply px-4 py-2 rounded-lg font-bold text-sm transition-all duration-200;
-    background-color: hsl(var(--gold));
-    color: hsl(var(--foreground));
+    @apply px-5 py-2.5 rounded-lg font-bold text-sm transition-all duration-200;
+    background: hsl(var(--gold));
+    color: #0a0a0f;
     box-shadow: 0 4px 12px hsl(var(--gold-glow));
   }
 
   .aurelia-gold-btn:hover {
-    transform: scale(1.02);
-    box-shadow: 0 6px 16px hsl(var(--gold-glow));
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px hsl(var(--gold-glow));
+  }
+
+  .aurelia-ghost-btn {
+    @apply px-3 py-1.5 rounded-lg text-xs font-semibold text-muted-foreground 
+           hover:text-foreground hover:bg-accent transition-all duration-200;
   }
 
   .aurelia-sidebar-item {
-    @apply w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 text-sm font-medium;
+    @apply w-full flex items-center space-x-3 px-4 py-3 rounded-lg 
+           transition-all duration-200 text-sm font-medium;
   }
 
   .aurelia-sidebar-item-active {
-    background: hsl(var(--sidebar-item-active));
-    color: hsl(var(--sidebar-text-active));
+    color: hsl(var(--gold));
+    background: hsl(var(--gold) / 0.08);
+    border-left: 3px solid hsl(var(--gold));
   }
 
   .aurelia-sidebar-item-inactive {
-    color: hsl(var(--sidebar-text));
+    color: hsl(var(--muted-foreground));
+    border-left: 3px solid transparent;
   }
 
   .aurelia-sidebar-item-inactive:hover {
-    color: hsl(var(--sidebar-text-active));
-    background: hsl(var(--sidebar-item-hover));
+    color: hsl(var(--foreground));
+    background: hsl(0 0% 100% / 0.04);
+  }
+
+  /* Stat pills */
+  .aurelia-pill {
+    @apply px-4 py-2 rounded-lg text-xs font-semibold border border-border bg-card;
   }
 }

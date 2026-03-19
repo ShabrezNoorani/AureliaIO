@@ -25,6 +25,8 @@ const Index = () => {
     deleteExtraCost,
     addTier,
     deleteTier,
+    updateBucketCount,
+    updateAgeBuckets,
   } = useAppData();
 
   const [view, setView] = useState<View>('dashboard');
@@ -49,13 +51,19 @@ const Index = () => {
     <div className="flex min-h-screen bg-background text-foreground antialiased">
       <AureliaSidebar
         activeView={view}
+        companyName={data.companyName}
         onNavigate={setView}
         onNewProduct={handleNewProduct}
       />
 
-      <main className="flex-1 ml-64">
+      <main className="flex-1 ml-[240px]">
         {view === 'dashboard' && (
-          <Dashboard data={data} onEditOption={handleEditOption} updateOption={updateOption} />
+          <Dashboard
+            data={data}
+            onEditOption={handleEditOption}
+            updateBucketCount={updateBucketCount}
+            updateAgeBuckets={updateAgeBuckets}
+          />
         )}
         {view === 'products' && (
           <ProductsPage

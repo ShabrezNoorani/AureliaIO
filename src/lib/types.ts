@@ -1,4 +1,11 @@
-export type MapsTo = 'Adult' | 'Youth' | 'Children' | 'Infant' | 'Children + Youth + Infant' | 'All pax' | 'None';
+export interface AgeBucket {
+  id: string;
+  label: string;
+  emoji: string;
+  minAge: number;
+  maxAge: number;
+  count: number;
+}
 
 export interface Ticket {
   id: string;
@@ -7,8 +14,6 @@ export interface Ticket {
   cost: number;
   minAge: number;
   maxAge: number;
-  pax: number;
-  mapsTo: MapsTo;
 }
 
 export interface Guide {
@@ -67,6 +72,7 @@ export interface Product {
 
 export interface AppData {
   companyName: string;
+  ageBuckets: AgeBucket[];
   products: Product[];
 }
 
@@ -86,4 +92,5 @@ export interface Metrics {
   margin: number;
   breakEven: number;
   totalPax: number;
+  ticketPax: { ticketId: string; pax: number }[];
 }

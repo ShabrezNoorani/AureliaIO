@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Package } from 'lucide-react';
 import type { AppData } from '@/lib/types';
 
 const CHANNEL_PRESETS = ['Viator', 'GYG', 'Airbnb', 'Own Website', 'Agent', 'Custom'];
@@ -37,13 +37,25 @@ export default function ProductsPage({
   };
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <div className="flex justify-between items-center mb-12">
-        <h1 className="text-3xl font-bold tracking-tight text-foreground">Products</h1>
+    <div className="p-8 max-w-5xl mx-auto animate-fade-in">
+      <div className="flex justify-between items-center mb-10">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Products</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Manage your tours and their pricing options.
+          </p>
+        </div>
         <button onClick={handleAddProduct} className="aurelia-gold-btn">
           + Add Product
         </button>
       </div>
+
+      {data.products.length === 0 && (
+        <div className="aurelia-card p-16 text-center">
+          <Package size={40} className="mx-auto text-muted-foreground/30 mb-4" />
+          <p className="text-sm text-muted-foreground">No products yet. Add your first one to get started.</p>
+        </div>
+      )}
 
       {data.products.map((product) => (
         <div key={product.id} className="mb-8">
@@ -52,11 +64,14 @@ export default function ProductsPage({
             onClick={() => toggleExpand(product.id)}
           >
             {expanded[product.id] ? (
-              <ChevronDown size={20} className="text-muted-foreground" />
+              <ChevronDown size={18} className="text-muted-foreground" />
             ) : (
-              <ChevronRight size={20} className="text-muted-foreground" />
+              <ChevronRight size={18} className="text-muted-foreground" />
             )}
-            <h2 className="text-xl font-bold text-foreground">{product.name}</h2>
+            <h2 className="text-lg font-bold text-foreground">{product.name}</h2>
+            <span className="text-xs text-muted-foreground">
+              {product.options.length} option{product.options.length !== 1 ? 's' : ''}
+            </span>
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -64,22 +79,27 @@ export default function ProductsPage({
               }}
               className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-profit-negative transition-all"
             >
-              <Trash2 size={16} />
+              <Trash2 size={14} />
             </button>
           </div>
 
           {expanded[product.id] && (
-            <div className="ml-8 space-y-3">
+            <div className="ml-7 space-y-3">
               {product.options.map((opt) => (
                 <div key={opt.id}>
-                  <div className="aurelia-card p-4 flex justify-between items-center group hover:shadow-lg transition-shadow">
+                  <div className="aurelia-card p-4 flex justify-between items-center group hover:border-border/80 transition-all">
                     <div>
-                      <span className="font-medium text-foreground">{opt.name}</span>
-                      <div className="flex items-center space-x-2 mt-1">
+                      <span className="font-semibold text-sm text-foreground">{opt.name}</span>
+                      {opt.bokunId && (
+                        <span className="text-[10px] text-muted-foreground ml-2 tabular-nums">
+                          Bokun: #{opt.bokunId}
+                        </span>
+                      )}
+                      <div className="flex items-center space-x-1.5 mt-1.5">
                         {opt.channels.map((ch) => (
                           <span
                             key={ch.id}
-                            className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-secondary text-muted-foreground"
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-secondary text-muted-foreground"
                           >
                             {ch.name}
                           </span>
@@ -90,9 +110,7 @@ export default function ProductsPage({
                       <div className="relative">
                         <button
                           onClick={() =>
-                            setShowChannelDropdown(
-                              showChannelDropdown === opt.id ? null : opt.id
-                            )
+                            setShowChannelDropdown(showChannelDropdown === opt.id ? null : opt.id)
                           }
                           className="text-xs font-bold text-gold hover:underline"
                         >
@@ -108,7 +126,7 @@ export default function ProductsPage({
                                   onAddChannel(opt.id, name);
                                   setShowChannelDropdown(null);
                                 }}
-                                className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-secondary rounded transition-colors"
+                                className="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-hover rounded transition-colors"
                               >
                                 {ch}
                               </button>
@@ -118,7 +136,7 @@ export default function ProductsPage({
                       </div>
                       <button
                         onClick={() => onEditOption(opt.id)}
-                        className="opacity-0 group-hover:opacity-100 bg-secondary text-muted-foreground px-3 py-1 rounded text-xs font-bold transition-all hover:text-foreground"
+                        className="opacity-0 group-hover:opacity-100 bg-secondary text-muted-foreground px-3 py-1.5 rounded-lg text-xs font-bold transition-all hover:text-foreground"
                       >
                         Manage
                       </button>

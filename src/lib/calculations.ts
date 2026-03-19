@@ -1,43 +1,65 @@
-import type { Option, Channel, Metrics } from './types';
+import type { Option, Channel, Metrics, AgeBucket, Ticket } from './types';
+
+/**
+ * Auto-map pax from global age buckets to a ticket type based on age range overlap.
+ * If any part of a bucket's age range overlaps with the ticket's age range, include it.
+ */
+export function getAutoMappedPax(ticket: Ticket, ageBuckets: AgeBucket[]): number {
+  let pax = 0;
+  for (const bucket of ageBuckets) {
+    // Check if bucket range overlaps with ticket range
+    if (bucket.minAge <= ticket.maxAge && bucket.maxAge >= ticket.minAge) {
+      pax += bucket.count;
+    }
+  }
+  return pax;
+}
 
 export const calculateMetrics = (
   option: Option,
   channel: Channel,
+  ageBuckets: AgeBucket[],
 ): Metrics | null => {
   const tickets = channel.tickets;
-  const totalPax = tickets.reduce((sum, t) => sum + Number(t.pax), 0);
+
+  // 1. Auto-calculate pax from age buckets for each ticket
+  const ticketPax = tickets.map((t) => ({
+    ticketId: t.id,
+    pax: getAutoMappedPax(t, ageBuckets),
+  }));
+  const totalPax = ticketPax.reduce((sum, tp) => sum + tp.pax, 0);
   if (totalPax === 0) return null;
 
-  // 1. Tier Pricing
-  let adultPriceOverride: number | null = null;
+  // 2. Tier Pricing — override ALL ticket prices by total pax
+  let tierPriceOverride: number | null = null;
   if (option.rules.tierPricing.enabled) {
     const tier = option.rules.tierPricing.tiers.find(
       (t) => totalPax >= t.min && totalPax <= t.max
     );
-    if (tier) adultPriceOverride = tier.price;
+    if (tier) tierPriceOverride = tier.price;
   }
 
-  // 2. Gross Revenue
-  const grossRevenue = tickets.reduce((sum, t) => {
-    const price = t.type === 'Adult' && adultPriceOverride !== null ? adultPriceOverride : t.price;
-    return sum + price * t.pax;
+  // 3. Gross Revenue = Σ(listing_price × pax)
+  const grossRevenue = tickets.reduce((sum, t, i) => {
+    const price = tierPriceOverride !== null ? tierPriceOverride : t.price;
+    return sum + price * ticketPax[i].pax;
   }, 0);
 
-  // 3. Price After Promo
+  // 4. Price After Promo
   const priceAfterPromo = grossRevenue * (1 - channel.promo / 100);
 
-  // 4. Net Revenue
+  // 5. Net Revenue (after commission)
   const netRevenue = priceAfterPromo * (1 - channel.commission / 100);
 
-  // 5. Ticket Costs
-  const ticketCosts = tickets.reduce((sum, t) => sum + t.cost * t.pax, 0);
+  // 6. Ticket Costs
+  const ticketCosts = tickets.reduce((sum, t, i) => sum + t.cost * ticketPax[i].pax, 0);
 
-  // 6. Guide Costs
+  // 7. Guide Costs
   const guideCosts = option.guides.reduce((sum, g) => {
     return sum + (g.type === 'Fixed' ? g.amount : g.amount * totalPax);
   }, 0);
 
-  // 7. RTS Cost
+  // 8. RTS Cost
   let rtsCost = 0;
   if (option.rules.rts.enabled) {
     rtsCost = totalPax <= option.rules.rts.t1Max
@@ -45,24 +67,24 @@ export const calculateMetrics = (
       : option.rules.rts.t2Price;
   }
 
-  // 8. Min Ticket Cost
+  // 9. Min Ticket Cost
   let minTicketCost = 0;
-  if (option.rules.minTicket.enabled) {
+  if (option.rules.minTicket.enabled && option.rules.minTicket.blockSize > 0) {
     minTicketCost =
       Math.ceil(totalPax / option.rules.minTicket.blockSize) *
       option.rules.minTicket.blockPrice;
   }
 
-  // 9. Extra Costs
+  // 10. Extra Costs
   const extraCostsTotal = option.extraCosts.reduce((sum, e) => sum + e.amount, 0);
 
-  // 10. Total Costs
+  // 11. Total Costs
   const totalCosts = ticketCosts + guideCosts + rtsCost + minTicketCost + extraCostsTotal;
 
-  // 11. Gross Profit
+  // 12. Gross Profit
   const grossProfit = netRevenue - totalCosts;
 
-  // 12. VAT
+  // 13. VAT
   let vatAmount = 0;
   if (channel.vatEnabled) {
     const rate = channel.vatRate / 100;
@@ -75,13 +97,13 @@ export const calculateMetrics = (
     }
   }
 
-  // 13. Net Profit
+  // 14. Net Profit
   const netProfit = grossProfit - vatAmount;
 
-  // 14. Margin
+  // 15. Margin
   const margin = netRevenue > 0 ? (netProfit / netRevenue) * 100 : 0;
 
-  // 15. Break-even
+  // 16. Break-even
   const breakEven = netRevenue > 0 ? totalCosts / (netRevenue / totalPax) : 0;
 
   return {
@@ -100,21 +122,12 @@ export const calculateMetrics = (
     margin,
     breakEven,
     totalPax,
+    ticketPax,
   };
 };
 
 export const formatEuro = (val: number): string =>
-  new Intl.NumberFormat('en-IE', {
-    style: 'currency',
-    currency: 'EUR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(val);
+  '€' + val.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 export const formatEuroDetailed = (val: number): string =>
-  new Intl.NumberFormat('en-IE', {
-    style: 'currency',
-    currency: 'EUR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val);
+  '€' + val.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
