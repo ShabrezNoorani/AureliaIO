@@ -7,7 +7,7 @@ import { useAppData } from '@/lib/useAppData';
 
 type View = 'dashboard' | 'products' | 'editor';
 
-const Index = () => {
+const AppLayout = () => {
   const {
     data,
     addProduct,
@@ -100,4 +100,4 @@ const Index = () => {
   );
 };
 
-export default Index;
+export default AppLayout;

@@ -160,4 +160,21 @@
   .aurelia-pill {
     @apply px-4 py-2 rounded-lg text-xs font-semibold border border-border bg-card;
   }
+
+  /* Auth form inputs */
+  .auth-input {
+    @apply w-full px-4 py-3 text-sm rounded-lg border outline-none transition-all duration-200;
+    background: #13131a;
+    border-color: #1e1e2e;
+    color: #f8fafc;
+  }
+
+  .auth-input::placeholder {
+    color: #4b5563;
+  }
+
+  .auth-input:focus {
+    border-color: #f5a623;
+    box-shadow: 0 0 0 3px rgba(245, 166, 35, 0.1);
+  }
 }
