@@ -1,13 +1,22 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const { session, loading: authLoading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Redirect to /app once session is confirmed
+  useEffect(() => {
+    if (!authLoading && session) {
+      navigate('/app', { replace: true });
+    }
+  }, [session, authLoading, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,10 +30,10 @@ export default function LoginPage() {
       });
 
       if (authError) throw authError;
-      navigate('/app');
+      // Don't navigate here — the useEffect above will handle it
+      // once onAuthStateChange propagates the new session
     } catch (err: any) {
       setError(err.message || 'Invalid email or password');
-    } finally {
       setLoading(false);
     }
   };

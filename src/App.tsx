@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/context/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
-import ParticleCanvas from "@/components/ParticleCanvas";
+import FinancialCanvas from "@/components/ParticleCanvas";
 import LandingPage from "./pages/LandingPage";
 import SignupPage from "./pages/SignupPage";
 import LoginPage from "./pages/LoginPage";
@@ -17,11 +17,11 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <ParticleCanvas />
     <TooltipProvider>
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <FinancialCanvas />
         <AuthProvider>
           <Routes>
             {/* Public routes */}
