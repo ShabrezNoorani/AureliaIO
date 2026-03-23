@@ -1,6 +1,8 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+
+const LOADING_TIMEOUT_MS = 5000;
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -8,8 +10,22 @@ interface ProtectedRouteProps {
 
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { session, profile, loading } = useAuth();
+  const [timedOut, setTimedOut] = useState(false);
 
-  if (loading) {
+  // Safety timeout: if loading for >5s, stop waiting
+  useEffect(() => {
+    if (!loading) {
+      setTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => setTimedOut(true), LOADING_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
+  const effectiveLoading = loading && !timedOut;
+
+  // While loading → show spinner (never redirect)
+  if (effectiveLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -20,6 +36,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     );
   }
 
+  // Only redirect if loading is definitely done AND no session
   if (!session) {
     return <Navigate to="/login" replace />;
   }

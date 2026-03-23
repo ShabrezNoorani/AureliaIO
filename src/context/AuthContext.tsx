@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
@@ -16,6 +16,7 @@ interface AuthContextType {
   profile: Profile | null;
   loading: boolean;
   refreshProfile: () => Promise<void>;
+  signIn: (email: string, password: string) => Promise<{ error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -24,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   loading: true,
   refreshProfile: async () => {},
+  signIn: async () => ({}),
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -56,6 +58,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // Direct sign-in: sets session/user immediately, no race condition
+  const signIn = useCallback(async (email: string, password: string): Promise<{ error?: string }> => {
+    try {
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError) {
+        return { error: authError.message };
+      }
+
+      if (data.session) {
+        // Immediately update state — don't wait for onAuthStateChange
+        setSession(data.session);
+        setUser(data.session.user);
+        setLoading(false);
+        await fetchProfile(data.session.user.id);
+      }
+
+      return {};
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Login failed';
+      return { error: message };
+    }
+  }, []);
+
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
@@ -67,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
-    // Listen for auth changes
+    // Listen for auth changes (logout, token refresh, etc.)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, newSession) => {
         setSession(newSession);
@@ -86,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, session, profile, loading, refreshProfile }}>
+    <AuthContext.Provider value={{ user, session, profile, loading, refreshProfile, signIn }}>
       {children}
     </AuthContext.Provider>
   );

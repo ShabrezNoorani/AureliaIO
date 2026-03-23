@@ -1,19 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { session, loading: authLoading } = useAuth();
+  const { session, loading: authLoading, signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Redirect to /app once session is confirmed
+  // Redirect to /app once session exists — reactive, works for all cases
   useEffect(() => {
-    if (!authLoading && session) {
+    if (session && !authLoading) {
       navigate('/app', { replace: true });
     }
   }, [session, authLoading, navigate]);
@@ -23,19 +22,13 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
 
-    try {
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (authError) throw authError;
-      // Don't navigate here — the useEffect above will handle it
-      // once onAuthStateChange propagates the new session
-    } catch (err: any) {
-      setError(err.message || 'Invalid email or password');
+    // signIn sets session in context immediately — useEffect will redirect
+    const { error: loginError } = await signIn(email, password);
+    if (loginError) {
+      setError(loginError);
       setLoading(false);
     }
+    // No navigate here — useEffect handles redirect after session is set
   };
 
   return (

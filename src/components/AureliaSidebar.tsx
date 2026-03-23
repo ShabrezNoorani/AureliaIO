@@ -1,9 +1,9 @@
-import { LayoutDashboard, Package, Plus, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, Profile } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 
-type View = 'dashboard' | 'products' | 'editor';
+type View = 'dashboard' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'settings';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -100,10 +100,31 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
           onClick={() => onNavigate('products')}
         />
         <SidebarItem
+          icon={BookOpen}
+          label="Ledger"
+          active={activeView === 'ledger'}
+          onClick={() => onNavigate('ledger')}
+        />
+        <SidebarItem
+          icon={Wallet}
+          label="Admin Costs"
+          active={activeView === 'admin-costs'}
+          onClick={() => onNavigate('admin-costs')}
+        />
+        <SidebarItem
           icon={Plus}
           label="New Product"
           active={false}
           onClick={onNewProduct}
+        />
+
+        <div className="my-3 mx-4 border-t border-border/30" />
+
+        <SidebarItem
+          icon={Settings}
+          label="Settings"
+          active={activeView === 'settings'}
+          onClick={() => onNavigate('settings')}
         />
       </nav>
 

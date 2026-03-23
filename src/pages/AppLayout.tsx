@@ -3,9 +3,12 @@ import AureliaSidebar from '@/components/AureliaSidebar';
 import Dashboard from '@/components/Dashboard';
 import ProductsPage from '@/components/ProductsPage';
 import OptionEditor from '@/components/OptionEditor';
+import LedgerPage from '@/components/LedgerPage';
+import AdminCostsPage from '@/components/AdminCostsPage';
+import SettingsPage from '@/components/SettingsPage';
 import { useAppData } from '@/lib/useAppData';
 
-type View = 'dashboard' | 'products' | 'editor';
+type View = 'dashboard' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'settings';
 
 const AppLayout = () => {
   const {
@@ -97,6 +100,9 @@ const AppLayout = () => {
             deleteChannel={deleteChannel}
           />
         )}
+        {view === 'ledger' && <LedgerPage />}
+        {view === 'admin-costs' && <AdminCostsPage />}
+        {view === 'settings' && <SettingsPage />}
       </main>
     </div>
   );
