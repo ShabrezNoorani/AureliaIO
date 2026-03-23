@@ -12,6 +12,7 @@ const AppLayout = () => {
     data,
     addProduct,
     deleteProduct,
+    updateProduct,
     addOption,
     deleteOption,
     updateOption,
@@ -74,6 +75,7 @@ const AppLayout = () => {
             onDeleteOption={deleteOption}
             onAddChannel={addChannel}
             onEditOption={handleEditOption}
+            updateProduct={updateProduct}
           />
         )}
         {view === 'editor' && activeOptionId && (

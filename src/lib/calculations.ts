@@ -1,4 +1,4 @@
-import type { Option, Channel, Metrics, AgeBucket, Ticket } from './types';
+import type { Option, Channel, Metrics, AgeBucket, Ticket, Guide, GuideTierRow } from './types';
 
 /**
  * Auto-map pax from global age buckets to a ticket type based on age range overlap.
@@ -13,6 +13,54 @@ export function getAutoMappedPax(ticket: Ticket, ageBuckets: AgeBucket[]): numbe
     }
   }
   return pax;
+}
+
+/**
+ * Find the price from a set of tier rows for a given pax count.
+ * Returns the tier price if found, otherwise 0.
+ */
+function findTierPrice(tiers: GuideTierRow[], pax: number): number {
+  for (const tier of tiers) {
+    if (pax >= tier.min && pax <= tier.max) return tier.price;
+  }
+  return 0;
+}
+
+/**
+ * Calculate cost for a single guide based on its type and the total pax.
+ */
+function calculateSingleGuideCost(guide: Guide, totalPax: number): number {
+  switch (guide.type) {
+    case 'Fixed':
+      return guide.amount;
+
+    case 'Tier':
+      return findTierPrice(guide.tiers, totalPax);
+
+    case 'Auto-Split': {
+      if (guide.maxPerGuide <= 0 || totalPax <= 0) return 0;
+      const numberOfGuides = Math.ceil(totalPax / guide.maxPerGuide);
+      let totalCost = 0;
+      let remaining = totalPax;
+
+      for (let i = 0; i < numberOfGuides; i++) {
+        // Distribute pax: ceil for earlier guides
+        const subGroupSize = Math.ceil(remaining / (numberOfGuides - i));
+        remaining -= subGroupSize;
+
+        if (guide.splitPriceMode === 'Fixed') {
+          totalCost += guide.amount;
+        } else {
+          // Tier pricing per sub-group
+          totalCost += findTierPrice(guide.tiers, subGroupSize);
+        }
+      }
+      return totalCost;
+    }
+
+    default:
+      return 0;
+  }
 }
 
 export const calculateMetrics = (
@@ -54,9 +102,9 @@ export const calculateMetrics = (
   // 6. Ticket Costs
   const ticketCosts = tickets.reduce((sum, t, i) => sum + t.cost * ticketPax[i].pax, 0);
 
-  // 7. Guide Costs
+  // 7. Guide Costs — new 3-type system
   const guideCosts = option.guides.reduce((sum, g) => {
-    return sum + (g.type === 'Fixed' ? g.amount : g.amount * totalPax);
+    return sum + calculateSingleGuideCost(g, totalPax);
   }, 0);
 
   // 8. RTS Cost

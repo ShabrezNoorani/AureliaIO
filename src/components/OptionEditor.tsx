@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Trash2, ArrowLeft, Plus } from 'lucide-react';
-import type { AppData, Option, AgeBucket } from '@/lib/types';
+import type { AppData, Option, AgeBucket, Guide } from '@/lib/types';
 import { calculateMetrics, formatEuroDetailed, getAutoMappedPax } from '@/lib/calculations';
 
 const CHANNEL_PRESETS = ['Viator', 'GYG', 'Airbnb', 'Own Website', 'Agent', 'Custom'];
@@ -33,6 +33,166 @@ function ResultRow({ label, value, subText, isCost }: { label: string; value: nu
       <div className={`text-sm font-bold tabular-nums ${isCost && value > 0 ? 'text-profit-negative' : 'text-foreground'}`}>
         {isCost && value > 0 ? '-' : ''}{formatEuroDetailed(Math.abs(value || 0))}
       </div>
+    </div>
+  );
+}
+
+function GuideRow({
+  guide,
+  guideIdx,
+  optionId,
+  update,
+  deleteGuide,
+}: {
+  guide: Guide;
+  guideIdx: number;
+  optionId: string;
+  update: (updater: (o: Option) => void) => void;
+  deleteGuide: (optionId: string, guideId: string) => void;
+}) {
+  const generateId = () => crypto.randomUUID();
+
+  return (
+    <div className="aurelia-card p-4 mb-3">
+      {/* Header row: label, type dropdown, delete */}
+      <div className="flex items-center gap-2 mb-3">
+        <input
+          className="aurelia-input flex-1"
+          value={guide.label}
+          onChange={(e) => update((o) => { o.guides[guideIdx].label = e.target.value; })}
+        />
+        <select
+          className="aurelia-input w-32"
+          value={guide.type}
+          onChange={(e) => update((o) => { o.guides[guideIdx].type = e.target.value as Guide['type']; })}
+        >
+          <option value="Fixed">Fixed</option>
+          <option value="Tier">Tier</option>
+          <option value="Auto-Split">Auto-Split</option>
+        </select>
+        <button onClick={() => deleteGuide(optionId, guide.id)} className="p-2 text-muted-foreground hover:text-profit-negative transition-colors">
+          <Trash2 size={14} />
+        </button>
+      </div>
+
+      {/* Fixed: simple amount */}
+      {guide.type === 'Fixed' && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Amount:</span>
+          <div className="relative">
+            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">€</span>
+            <input
+              type="number" min={0}
+              className="aurelia-input w-24 pl-6"
+              value={guide.amount}
+              onChange={(e) => update((o) => { o.guides[guideIdx].amount = Math.max(0, Number(e.target.value)); })}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Tier: dynamic tier rows */}
+      {guide.type === 'Tier' && (
+        <div className="space-y-2">
+          {guide.tiers.map((tier, tIdx) => (
+            <div key={tier.id} className="flex items-center gap-2 text-xs">
+              <input type="number" min={0} className="aurelia-input w-16 text-center" value={tier.min}
+                onChange={(e) => update((o) => { o.guides[guideIdx].tiers[tIdx].min = Math.max(0, Number(e.target.value)); })} />
+              <span className="text-muted-foreground">to</span>
+              <input type="number" min={0} className="aurelia-input w-16 text-center" value={tier.max}
+                onChange={(e) => update((o) => { o.guides[guideIdx].tiers[tIdx].max = Math.max(0, Number(e.target.value)); })} />
+              <span className="text-muted-foreground">pax → €</span>
+              <input type="number" min={0} className="aurelia-input w-20" value={tier.price}
+                onChange={(e) => update((o) => { o.guides[guideIdx].tiers[tIdx].price = Math.max(0, Number(e.target.value)); })} />
+              <button onClick={() => update((o) => { o.guides[guideIdx].tiers = o.guides[guideIdx].tiers.filter((t) => t.id !== tier.id); })}
+                className="text-muted-foreground hover:text-profit-negative">
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => update((o) => {
+              const tiers = o.guides[guideIdx].tiers;
+              const lastMax = tiers.length > 0 ? tiers[tiers.length - 1].max + 1 : 1;
+              tiers.push({ id: generateId(), min: lastMax, max: lastMax + 9, price: 0 });
+            })}
+            className="text-xs font-bold text-gold hover:underline flex items-center gap-1"
+          >
+            <Plus size={10} /> Add Tier
+          </button>
+        </div>
+      )}
+
+      {/* Auto-Split */}
+      {guide.type === 'Auto-Split' && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Max pax per guide:</span>
+            <input type="number" min={1} className="aurelia-input w-16 text-center"
+              value={guide.maxPerGuide}
+              onChange={(e) => update((o) => { o.guides[guideIdx].maxPerGuide = Math.max(1, Number(e.target.value)); })} />
+          </div>
+          <div className="text-xs text-muted-foreground mb-1">Price per guide:</div>
+          <div className="flex items-center gap-4 ml-2">
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+              <input type="radio" name={`split-mode-${guide.id}`}
+                checked={guide.splitPriceMode === 'Fixed'}
+                onChange={() => update((o) => { o.guides[guideIdx].splitPriceMode = 'Fixed'; })}
+                className="accent-gold" />
+              <span className="text-foreground">Fixed</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+              <input type="radio" name={`split-mode-${guide.id}`}
+                checked={guide.splitPriceMode === 'Tier'}
+                onChange={() => update((o) => { o.guides[guideIdx].splitPriceMode = 'Tier'; })}
+                className="accent-gold" />
+              <span className="text-foreground">Tier</span>
+            </label>
+          </div>
+
+          {guide.splitPriceMode === 'Fixed' && (
+            <div className="flex items-center gap-2 ml-2">
+              <div className="relative">
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">€</span>
+                <input type="number" min={0} className="aurelia-input w-24 pl-6"
+                  value={guide.amount}
+                  onChange={(e) => update((o) => { o.guides[guideIdx].amount = Math.max(0, Number(e.target.value)); })} />
+              </div>
+            </div>
+          )}
+
+          {guide.splitPriceMode === 'Tier' && (
+            <div className="space-y-2 ml-2">
+              {guide.tiers.map((tier, tIdx) => (
+                <div key={tier.id} className="flex items-center gap-2 text-xs">
+                  <input type="number" min={0} className="aurelia-input w-16 text-center" value={tier.min}
+                    onChange={(e) => update((o) => { o.guides[guideIdx].tiers[tIdx].min = Math.max(0, Number(e.target.value)); })} />
+                  <span className="text-muted-foreground">to</span>
+                  <input type="number" min={0} className="aurelia-input w-16 text-center" value={tier.max}
+                    onChange={(e) => update((o) => { o.guides[guideIdx].tiers[tIdx].max = Math.max(0, Number(e.target.value)); })} />
+                  <span className="text-muted-foreground">pax → €</span>
+                  <input type="number" min={0} className="aurelia-input w-20" value={tier.price}
+                    onChange={(e) => update((o) => { o.guides[guideIdx].tiers[tIdx].price = Math.max(0, Number(e.target.value)); })} />
+                  <button onClick={() => update((o) => { o.guides[guideIdx].tiers = o.guides[guideIdx].tiers.filter((t) => t.id !== tier.id); })}
+                    className="text-muted-foreground hover:text-profit-negative">
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => update((o) => {
+                  const tiers = o.guides[guideIdx].tiers;
+                  const lastMax = tiers.length > 0 ? tiers[tiers.length - 1].max + 1 : 1;
+                  tiers.push({ id: generateId(), min: lastMax, max: lastMax + 9, price: 0 });
+                })}
+                className="text-xs font-bold text-gold hover:underline flex items-center gap-1"
+              >
+                <Plus size={10} /> Add Tier
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -87,23 +247,13 @@ export default function OptionEditor({
         {/* Basic Info */}
         <section className="mb-10">
           <h2 className="aurelia-section-title mb-5">Basic Info</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Option Name</label>
-              <input
-                className="aurelia-input"
-                value={option.name}
-                onChange={(e) => update((o) => { o.name = e.target.value; })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Bokun Product ID</label>
-              <input
-                className="aurelia-input"
-                value={option.bokunId}
-                onChange={(e) => update((o) => { o.bokunId = e.target.value; })}
-              />
-            </div>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Option Name</label>
+            <input
+              className="aurelia-input"
+              value={option.name}
+              onChange={(e) => update((o) => { o.name = e.target.value; })}
+            />
           </div>
           <div className="space-y-1.5 mt-4">
             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Notes</label>
@@ -124,30 +274,14 @@ export default function OptionEditor({
             </button>
           </div>
           {option.guides.map((g, idx) => (
-            <div key={g.id} className="flex space-x-2 mb-2 items-center">
-              <input className="aurelia-input flex-1" value={g.label} onChange={(e) => update((o) => { o.guides[idx].label = e.target.value; })} />
-              <select
-                className="aurelia-input w-28"
-                value={g.type}
-                onChange={(e) => update((o) => { o.guides[idx].type = e.target.value as 'Fixed' | 'Per Pax'; })}
-              >
-                <option>Fixed</option>
-                <option>Per Pax</option>
-              </select>
-              <div className="relative">
-                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">€</span>
-                <input
-                  type="number"
-                  min={0}
-                  className="aurelia-input w-24 pl-6"
-                  value={g.amount}
-                  onChange={(e) => update((o) => { o.guides[idx].amount = Math.max(0, Number(e.target.value)); })}
-                />
-              </div>
-              <button onClick={() => deleteGuide(optionId, g.id)} className="p-2 text-muted-foreground hover:text-profit-negative transition-colors">
-                <Trash2 size={14} />
-              </button>
-            </div>
+            <GuideRow
+              key={g.id}
+              guide={g}
+              guideIdx={idx}
+              optionId={optionId}
+              update={update}
+              deleteGuide={deleteGuide}
+            />
           ))}
         </section>
 
@@ -409,8 +543,13 @@ export default function OptionEditor({
                   <div className="grid grid-cols-[1fr_60px_60px_70px_70px] gap-2 items-end">
                     <div>
                       <label className="text-[9px] font-bold text-muted-foreground uppercase">Name</label>
-                      <input className="aurelia-input text-xs" value={t.type}
-                        onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].type = e.target.value; })} />
+                      <input
+                        className="aurelia-input text-[13px] min-w-[120px]"
+                        style={{ color: 'inherit' }}
+                        placeholder="Ticket name"
+                        value={t.type}
+                        onChange={(e) => update((o) => { o.channels[activeChannelIdx].tickets[idx].type = e.target.value; })}
+                      />
                     </div>
                     <div>
                       <label className="text-[9px] font-bold text-muted-foreground uppercase">Min</label>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Trash2, Package } from 'lucide-react';
-import type { AppData } from '@/lib/types';
+import type { AppData, Product } from '@/lib/types';
 
 const CHANNEL_PRESETS = ['Viator', 'GYG', 'Airbnb', 'Own Website', 'Agent', 'Custom'];
 
@@ -12,6 +12,7 @@ interface ProductsPageProps {
   onDeleteOption: (optionId: string) => void;
   onAddChannel: (optionId: string, channelName: string) => void;
   onEditOption: (optionId: string, channelIdx?: number) => void;
+  updateProduct: (productId: string, updater: (p: Product) => void) => void;
 }
 
 export default function ProductsPage({
@@ -22,6 +23,7 @@ export default function ProductsPage({
   onDeleteOption,
   onAddChannel,
   onEditOption,
+  updateProduct,
 }: ProductsPageProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(data.products.map((p) => [p.id, true]))
@@ -83,6 +85,18 @@ export default function ProductsPage({
             </button>
           </div>
 
+          {/* Bokun ID inline edit */}
+          <div className="flex items-center gap-2 mb-3 ml-7">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Bokun ID:</span>
+            <input
+              className="aurelia-input text-xs w-32 tabular-nums"
+              placeholder="—"
+              value={product.bokunId}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => updateProduct(product.id, (p) => { p.bokunId = e.target.value; })}
+            />
+          </div>
+
           {expanded[product.id] && (
             <div className="ml-7 space-y-3">
               {product.options.map((opt) => (
@@ -90,11 +104,6 @@ export default function ProductsPage({
                   <div className="aurelia-card p-4 flex justify-between items-center group hover:border-border/80 transition-all">
                     <div>
                       <span className="font-semibold text-sm text-foreground">{opt.name}</span>
-                      {opt.bokunId && (
-                        <span className="text-[10px] text-muted-foreground ml-2 tabular-nums">
-                          Bokun: #{opt.bokunId}
-                        </span>
-                      )}
                       <div className="flex items-center space-x-1.5 mt-1.5">
                         {opt.channels.map((ch) => (
                           <span

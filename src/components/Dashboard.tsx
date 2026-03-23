@@ -204,6 +204,11 @@ export default function Dashboard({ data, onEditOption, updateBucketCount, updat
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
                 <h2 className="text-lg font-bold text-foreground">{product.name}</h2>
+                {product.bokunId && (
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                    Bokun: #{product.bokunId}
+                  </span>
+                )}
                 <span className="text-xs text-muted-foreground">
                   {product.options.length} option{product.options.length !== 1 ? 's' : ''} · {' '}
                   {new Set(product.options.flatMap((o) => o.channels.map((c) => c.name))).size} channels
@@ -253,11 +258,6 @@ function OptionCard({
       <div className="px-6 py-3.5 flex justify-between items-center bg-surface-subtle border-b border-border">
         <div className="flex items-center gap-3">
           <h3 className="font-semibold text-sm text-foreground">{option.name}</h3>
-          {option.bokunId && (
-            <span className="text-[10px] text-muted-foreground tabular-nums">
-              Bokun: #{option.bokunId}
-            </span>
-          )}
         </div>
         <button
           onClick={() => onEditOption(option.id)}

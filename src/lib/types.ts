@@ -16,11 +16,21 @@ export interface Ticket {
   maxAge: number;
 }
 
+export interface GuideTierRow {
+  id: string;
+  min: number;
+  max: number;
+  price: number;
+}
+
 export interface Guide {
   id: string;
   label: string;
-  type: 'Fixed' | 'Per Pax';
+  type: 'Fixed' | 'Tier' | 'Auto-Split';
   amount: number;
+  tiers: GuideTierRow[];
+  maxPerGuide: number;
+  splitPriceMode: 'Fixed' | 'Tier';
 }
 
 export interface TierRow {
@@ -56,7 +66,6 @@ export interface Channel {
 export interface Option {
   id: string;
   name: string;
-  bokunId: string;
   notes: string;
   guides: Guide[];
   rules: Rules;
@@ -67,6 +76,7 @@ export interface Option {
 export interface Product {
   id: string;
   name: string;
+  bokunId: string;
   options: Option[];
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { AppData, Option, AgeBucket } from './types';
+import type { AppData, Option, AgeBucket, Product } from './types';
 import { INITIAL_DATA, DEFAULT_AGE_BUCKETS } from './initialData';
 
 const STORAGE_KEY = 'aurelia_data';
@@ -33,6 +33,46 @@ export function useAppData() {
                 if (t.minAge === undefined) t.minAge = 0;
                 if (t.maxAge === undefined) t.maxAge = 99;
               }
+            }
+          }
+        }
+
+        // Migration: move bokunId from options to product
+        for (const p of parsed.products) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if ((p as any).bokunId === undefined) {
+            // Find first option with a bokunId and move it up
+            let foundBokunId = '';
+            for (const o of p.options) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const optAny = o as any;
+              if (optAny.bokunId) {
+                foundBokunId = optAny.bokunId;
+                break;
+              }
+            }
+            p.bokunId = foundBokunId;
+          }
+          // Remove bokunId from all options
+          for (const o of p.options) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            delete (o as any).bokunId;
+          }
+        }
+
+        // Migration: update guide types from legacy Per Pax + ensure new fields
+        for (const p of parsed.products) {
+          for (const o of p.options) {
+            for (const g of o.guides) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const gAny = g as any;
+              if (gAny.type === 'Per Pax') {
+                gAny.type = 'Fixed';
+                gAny.amount = 0;
+              }
+              if (!g.tiers) g.tiers = [];
+              if (!g.maxPerGuide) g.maxPerGuide = 10;
+              if (!g.splitPriceMode) g.splitPriceMode = 'Fixed';
             }
           }
         }
@@ -72,15 +112,22 @@ export function useAppData() {
   }, [updateData]);
 
   // Product operations
-  const addProduct = useCallback((name: string) => {
+  const addProduct = useCallback((name: string, bokunId?: string) => {
     updateData((d) => {
-      d.products.push({ id: generateId(), name, options: [] });
+      d.products.push({ id: generateId(), name, bokunId: bokunId || '', options: [] });
     });
   }, [updateData]);
 
   const deleteProduct = useCallback((productId: string) => {
     updateData((d) => {
       d.products = d.products.filter((p) => p.id !== productId);
+    });
+  }, [updateData]);
+
+  const updateProduct = useCallback((productId: string, updater: (p: Product) => void) => {
+    updateData((d) => {
+      const prod = d.products.find((p) => p.id === productId);
+      if (prod) updater(prod);
     });
   }, [updateData]);
 
@@ -92,9 +139,8 @@ export function useAppData() {
       product.options.push({
         id: generateId(),
         name: 'New Option',
-        bokunId: '',
         notes: '',
-        guides: [{ id: generateId(), label: 'Guide 1', type: 'Fixed', amount: 60 }],
+        guides: [{ id: generateId(), label: 'Guide 1', type: 'Fixed', amount: 60, tiers: [], maxPerGuide: 10, splitPriceMode: 'Fixed' }],
         rules: {
           minTicket: { enabled: false, blockSize: 8, blockPrice: 130 },
           rts: { enabled: false, t1Max: 6, t1Price: 20, t2Price: 90 },
@@ -193,7 +239,15 @@ export function useAppData() {
   // Guide operations
   const addGuide = useCallback((optionId: string) => {
     updateOption(optionId, (opt) => {
-      opt.guides.push({ id: generateId(), label: `Guide ${opt.guides.length + 1}`, type: 'Fixed', amount: 0 });
+      opt.guides.push({
+        id: generateId(),
+        label: `Guide ${opt.guides.length + 1}`,
+        type: 'Fixed',
+        amount: 0,
+        tiers: [],
+        maxPerGuide: 10,
+        splitPriceMode: 'Fixed',
+      });
     });
   }, [updateOption]);
 
@@ -230,7 +284,7 @@ export function useAppData() {
   }, [updateOption]);
 
   return {
-    data, updateData, addProduct, deleteProduct,
+    data, updateData, addProduct, deleteProduct, updateProduct,
     addOption, deleteOption, updateOption,
     addChannel, deleteChannel,
     addTicket, deleteTicket,

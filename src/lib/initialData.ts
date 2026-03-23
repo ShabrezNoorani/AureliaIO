@@ -17,13 +17,13 @@ export const INITIAL_DATA: AppData = {
     {
       id: 'prod-1',
       name: 'Notre Dame Tour',
+      bokunId: '1057128',
       options: [
         {
           id: 'opt-1',
           name: 'Exterior Only',
-          bokunId: '1057128',
           notes: '',
-          guides: [{ id: id(), label: 'Guide 1', type: 'Fixed', amount: 60 }],
+          guides: [{ id: id(), label: 'Guide 1', type: 'Fixed', amount: 60, tiers: [], maxPerGuide: 10, splitPriceMode: 'Fixed' }],
           rules: {
             minTicket: { enabled: false, blockSize: 8, blockPrice: 130 },
             rts: { enabled: false, t1Max: 6, t1Price: 20, t2Price: 90 },
@@ -61,9 +61,8 @@ export const INITIAL_DATA: AppData = {
         {
           id: 'opt-2',
           name: 'Exterior + Interior',
-          bokunId: '',
           notes: '',
-          guides: [{ id: id(), label: 'Guide 1', type: 'Fixed', amount: 80 }],
+          guides: [{ id: id(), label: 'Guide 1', type: 'Fixed', amount: 80, tiers: [], maxPerGuide: 10, splitPriceMode: 'Fixed' }],
           rules: {
             minTicket: { enabled: false, blockSize: 8, blockPrice: 130 },
             rts: { enabled: true, t1Max: 6, t1Price: 20, t2Price: 90 },
@@ -96,13 +95,13 @@ export const INITIAL_DATA: AppData = {
     {
       id: 'prod-2',
       name: 'Louvre Tour',
+      bokunId: '',
       options: [
         {
           id: 'opt-3',
           name: 'Standard Group',
-          bokunId: '',
           notes: '',
-          guides: [{ id: id(), label: 'Guide 1', type: 'Fixed', amount: 150 }],
+          guides: [{ id: id(), label: 'Guide 1', type: 'Fixed', amount: 150, tiers: [], maxPerGuide: 10, splitPriceMode: 'Fixed' }],
           rules: {
             minTicket: { enabled: false, blockSize: 8, blockPrice: 130 },
             rts: { enabled: true, t1Max: 6, t1Price: 20, t2Price: 90 },
