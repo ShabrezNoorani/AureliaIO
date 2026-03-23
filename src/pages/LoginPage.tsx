@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
+import Logo from '@/components/Logo';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -38,9 +39,9 @@ export default function LoginPage() {
         <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[400px] bg-[#f5a623]/5 rounded-full blur-[100px] pointer-events-none" />
 
         <div className="relative z-10">
-          <h2 className="text-xl font-black tracking-wider text-[#f5a623] uppercase mb-12">
-            Aurelia
-          </h2>
+          <div className="mb-12">
+            <Logo size="lg" />
+          </div>
           <h3 className="text-4xl font-bold text-white leading-snug mb-4">
             Welcome back.
           </h3>
@@ -55,9 +56,7 @@ export default function LoginPage() {
         <div className="w-full max-w-md">
           {/* Mobile logo */}
           <div className="lg:hidden mb-10">
-            <h2 className="text-xl font-black tracking-wider text-[#f5a623] uppercase">
-              Aurelia
-            </h2>
+            <Logo size="lg" showSubtitle={false} />
           </div>
 
           <h1 className="text-2xl font-bold text-white mb-8">Login to AURELIA</h1>

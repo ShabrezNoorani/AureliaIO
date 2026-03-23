@@ -2,6 +2,7 @@ import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut } fr
 import { useNavigate } from 'react-router-dom';
 import { useAuth, Profile } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
+import Logo from '@/components/Logo';
 
 type View = 'dashboard' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'settings';
 
@@ -77,12 +78,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
     <aside className="w-[240px] bg-sidebar-bg flex flex-col fixed h-full z-50 border-r border-border/50">
       {/* Logo */}
       <div className="px-6 pt-8 pb-6">
-        <h1 className="text-xl font-black tracking-wider text-gold uppercase">
-          Aurelia
-        </h1>
-        <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground mt-0.5">
-          Pricing Intelligence
-        </p>
+        <Logo size="md" />
       </div>
 
       {/* Navigation */}

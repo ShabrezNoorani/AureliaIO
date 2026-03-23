@@ -110,6 +110,15 @@ export default function FinancialCanvas() {
     let h = window.innerHeight;
     const dpr = window.devicePixelRatio || 1;
 
+    let mouseX = -1000;
+    let mouseY = -1000;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+
     const resize = () => {
       w = window.innerWidth;
       h = window.innerHeight;
@@ -168,31 +177,54 @@ export default function FinancialCanvas() {
         ctx!.stroke();
       }
       ctx!.restore();
+
+      // Mouse glow
+      if (mouseX > -1000) {
+        ctx!.save();
+        const grad = ctx!.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 150);
+        grad.addColorStop(0, 'rgba(245, 166, 35, 0.04)');
+        grad.addColorStop(1, 'transparent');
+        ctx!.fillStyle = grad;
+        ctx!.beginPath();
+        ctx!.arc(mouseX, mouseY, 150, 0, Math.PI * 2);
+        ctx!.fill();
+        ctx!.restore();
+      }
     }
 
     // ──── Animate ────
     function animate() {
       ctx!.clearRect(0, 0, w, h);
 
-      // 1. Grid (static)
+      // 1. Grid (static + mouse glow)
       drawGrid();
 
       // 2. Falling numbers
       ctx!.save();
       ctx!.font = '500 12px Inter, monospace';
       for (const n of numbers) {
-        // Fade in at top, fade out at bottom
         let alpha = n.opacity;
         if (n.y < 60) alpha *= n.y / 60;
         if (n.y > h - 60) alpha *= (h - n.y) / 60;
-        if (alpha <= 0) { n.y += n.speed; continue; }
+        
+        let currentSpeed = n.speed;
+        const dist = Math.hypot(n.x - mouseX, n.y - mouseY);
+        
+        if (dist < 120) {
+          alpha = 0.18;
+          n.x += (n.x - mouseX) * 0.03;
+          n.y += (n.y - mouseY) * 0.03;
+          currentSpeed *= 0.5;
+        }
 
-        ctx!.globalAlpha = Math.max(0, alpha);
+        if (alpha <= 0 && dist >= 120) { n.y += currentSpeed; continue; }
+
+        ctx!.globalAlpha = Math.max(0, Math.min(1, alpha));
         ctx!.fillStyle = GRID_COLOR;
         ctx!.font = `500 ${n.fontSize}px Inter, monospace`;
         ctx!.fillText(n.text, n.x, n.y);
 
-        n.y += n.speed;
+        n.y += currentSpeed;
         if (n.y > h + 30) {
           Object.assign(n, createFallingNumber(w, true));
         }
@@ -205,9 +237,20 @@ export default function FinancialCanvas() {
         let alpha = c.opacity;
         if (c.y < 60) alpha *= c.y / 60;
         if (c.y > h - 60) alpha *= (h - c.y) / 60;
-        if (alpha <= 0) { c.y -= c.speed; continue; }
+        
+        let currentSpeed = c.speed;
+        const dist = Math.hypot(c.x - mouseX, c.y - mouseY);
+        
+        if (dist < 120) {
+          alpha = 0.18;
+          c.x += (c.x - mouseX) * 0.03;
+          c.y += (c.y - mouseY) * 0.03;
+          currentSpeed *= 0.5;
+        }
 
-        ctx!.globalAlpha = Math.max(0, alpha);
+        if (alpha <= 0 && dist >= 120) { c.y -= currentSpeed; continue; }
+
+        ctx!.globalAlpha = Math.max(0, Math.min(1, alpha));
         ctx!.strokeStyle = GRID_COLOR;
         ctx!.lineWidth = 1;
 
@@ -227,7 +270,7 @@ export default function FinancialCanvas() {
         ctx!.stroke();
         ctx!.restore();
 
-        c.y -= c.speed;
+        c.y -= currentSpeed;
         c.rotation += c.rotationSpeed;
         if (c.y < -40) {
           Object.assign(c, createMiniChart(w, h));
@@ -242,13 +285,24 @@ export default function FinancialCanvas() {
         let alpha = s.opacity;
         if (s.y < 40) alpha *= s.y / 40;
         if (s.y > h - 40) alpha *= (h - s.y) / 40;
-        if (alpha <= 0) { s.y -= s.speed; continue; }
+        
+        let currentSpeed = s.speed;
+        const dist = Math.hypot(s.x - mouseX, s.y - mouseY);
+        
+        if (dist < 120) {
+          alpha = 0.18;
+          s.x += (s.x - mouseX) * 0.03;
+          s.y += (s.y - mouseY) * 0.03;
+          currentSpeed *= 0.5;
+        }
 
-        ctx!.globalAlpha = Math.max(0, alpha);
+        if (alpha <= 0 && dist >= 120) { s.y -= currentSpeed; continue; }
+
+        ctx!.globalAlpha = Math.max(0, Math.min(1, alpha));
         ctx!.fillStyle = GRID_COLOR;
         ctx!.fillText(s.text, s.x, s.y);
 
-        s.y -= s.speed;
+        s.y -= currentSpeed;
         s.x += s.drift;
         if (s.y < -20) {
           Object.assign(s, createFloatingSymbol(w, h));
@@ -263,6 +317,7 @@ export default function FinancialCanvas() {
 
     return () => {
       window.removeEventListener('resize', resize);
+      window.removeEventListener('mousemove', handleMouseMove);
       cancelAnimationFrame(rafRef.current);
     };
   }, []);

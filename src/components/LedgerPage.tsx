@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { Plus, Upload, Trash2, Pencil, FileSpreadsheet, RefreshCw } from 'lucide-react';
-import { useBookings, type Booking } from '@/lib/useBookings';
 import { useAppData } from '@/lib/useAppData';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -30,7 +29,7 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
-function formatPax(b: Booking) {
+function formatPax(b: any) {
   const parts: string[] = [];
   if (b.pax_adult) parts.push(`A:${b.pax_adult}`);
   if (b.pax_youth) parts.push(`Y:${b.pax_youth}`);
@@ -43,15 +42,21 @@ function fmtEuro(v: number) {
   return '€' + v.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-export default function LedgerPage() {
-  const { bookings, loading, addBooking, updateBooking, deleteBooking, bulkInsert, refresh } = useBookings();
+interface LedgerPageProps {
+  bookings: any[];
+  setBookings: (b: any[]) => void;
+  onSync: () => void;
+  bookingsLoaded: boolean;
+}
+
+export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoaded }: LedgerPageProps) {
   const { data: appData } = useAppData();
   const { user } = useAuth();
   const productNames = useMemo(() => appData.products.map((p) => p.name), [appData.products]);
 
   // Panel state
   const [panelOpen, setPanelOpen] = useState(false);
-  const [editBooking, setEditBooking] = useState<Booking | null>(null);
+  const [editBooking, setEditBooking] = useState<any | null>(null);
   const [csvOpen, setCsvOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
@@ -111,27 +116,38 @@ export default function LedgerPage() {
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
   const pageBookings = filtered.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
 
-  const handleSave = async (booking: Booking) => {
+  // Mutations
+  const handleSave = async (booking: any) => {
     if (booking.id) {
       const { id, user_id, created_at, ...fields } = booking;
-      await updateBooking(id, fields);
+      const { data } = await supabase.from('bookings').update(fields).eq('id', id).select().single();
+      if (data) setBookings(bookings.map((x) => (x.id === id ? data : x)));
     } else {
-      await addBooking(booking);
+      const { data } = await supabase.from('bookings').insert({ ...booking, user_id: user?.id }).select().single();
+      if (data) setBookings([data, ...bookings]);
     }
     setPanelOpen(false);
     setEditBooking(null);
   };
 
-  const handleEdit = (b: Booking) => {
+  const handleEdit = (b: any) => {
     setEditBooking(b);
     setPanelOpen(true);
   };
 
-  const handleDelete = async (b: Booking) => {
+  const handleDelete = async (b: any) => {
     if (!b.id) return;
     if (confirm(`Delete booking ${b.booking_ref || 'this booking'}?`)) {
-      await deleteBooking(b.id);
+      await supabase.from('bookings').delete().eq('id', b.id);
+      setBookings(bookings.filter((x) => x.id !== b.id));
     }
+  };
+
+  const bulkInsert = async (bs: any[]) => {
+    const { data } = await supabase.from('bookings').insert(
+      bs.map((b) => ({ ...b, user_id: user?.id }))
+    ).select();
+    if (data) setBookings([...data, ...bookings]);
   };
 
   const handleGsheetSync = async () => {
@@ -149,7 +165,7 @@ export default function LedgerPage() {
         setSyncMsg(`❌ ${res.error}`);
       } else {
         setSyncMsg(`✅ Imported ${res.imported} new · Updated ${res.updated} · Skipped ${res.skipped}`);
-        await refresh();
+        onSync(); // Tell AppLayout to refetch
       }
     } catch {
       setSyncMsg('❌ Sync failed. Please try again.');
@@ -173,10 +189,10 @@ export default function LedgerPage() {
           <button onClick={() => setCsvOpen(true)} className="aurelia-ghost-btn flex items-center gap-2 border border-border">
             <Upload size={14} /> Upload CSV
           </button>
-          <button onClick={handleGsheetSync} disabled={syncing}
+          <button onClick={handleGsheetSync} disabled={syncing || !bookingsLoaded}
             className="aurelia-ghost-btn flex items-center gap-2 border border-border disabled:opacity-50">
-            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Syncing…' : 'Sync from Google Sheets'}
+            <RefreshCw size={14} className={syncing || !bookingsLoaded ? 'animate-spin' : ''} />
+            {syncing || !bookingsLoaded ? 'Syncing…' : 'Sync from Google Sheets'}
           </button>
         </div>
       </div>
@@ -250,15 +266,15 @@ export default function LedgerPage() {
         </div>
       </div>
 
-      {/* Loading state */}
-      {loading && (
+      {/* Loading state - only if NOT loaded AT ALL */}
+      {(!bookingsLoaded && bookings.length === 0) && (
         <div className="flex items-center justify-center py-20">
           <div className="w-8 h-8 border-2 border-gold border-t-transparent rounded-full animate-spin" />
         </div>
       )}
 
       {/* Empty state */}
-      {!loading && bookings.length === 0 && (
+      {bookingsLoaded && bookings.length === 0 && (
         <div className="aurelia-card p-16 text-center">
           <FileSpreadsheet size={40} className="mx-auto text-muted-foreground/30 mb-4" />
           <p className="text-sm text-muted-foreground">No bookings yet. Add your first booking or upload a CSV.</p>
@@ -266,7 +282,7 @@ export default function LedgerPage() {
       )}
 
       {/* Table */}
-      {!loading && filtered.length > 0 && (
+      {filtered.length > 0 && (
         <div className="aurelia-card overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">

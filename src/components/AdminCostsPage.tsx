@@ -1,17 +1,17 @@
 import { useState, useMemo } from 'react';
 import { Plus, Trash2, Pencil, RefreshCw } from 'lucide-react';
-import { useAdminCosts, ADMIN_CATEGORIES, type AdminCost } from '@/lib/useAdminCosts';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { syncAdminCosts } from '@/lib/gsheetSync';
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const ADMIN_CATEGORIES = ['Tools', 'Marketing', 'Salary', 'Rent', 'Legal', 'Insurance', 'Other'] as const;
 
 function fmtEuro(v: number) {
   return '€' + v.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-const EMPTY_COST: AdminCost = {
+const EMPTY_COST: any = {
   label: '',
   category: 'Other',
   amount: 0,
@@ -19,10 +19,15 @@ const EMPTY_COST: AdminCost = {
   year: new Date().getFullYear(),
 };
 
-export default function AdminCostsPage() {
-  const { costs, loading, addCost, updateCost, deleteCost, refresh } = useAdminCosts();
-  const { user } = useAuth();
+interface AdminCostsPageProps {
+  costs: any[];
+  setCosts: (c: any[]) => void;
+  onSync: () => void;
+  costsLoaded: boolean;
+}
 
+export default function AdminCostsPage({ costs, setCosts, onSync, costsLoaded }: AdminCostsPageProps) {
+  const { user } = useAuth();
   const now = new Date();
   const [viewMonth, setViewMonth] = useState(now.getMonth() + 1);
   const [viewYear, setViewYear] = useState(now.getFullYear());
@@ -30,7 +35,7 @@ export default function AdminCostsPage() {
   // Form state
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<AdminCost>({ ...EMPTY_COST });
+  const [draft, setDraft] = useState<any>({ ...EMPTY_COST });
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
 
@@ -51,28 +56,32 @@ export default function AdminCostsPage() {
     return map;
   }, [monthCosts]);
 
-  const handleEdit = (cost: AdminCost) => {
+  const handleEdit = (cost: any) => {
     setDraft({ ...cost });
     setEditId(cost.id || null);
     setShowForm(true);
   };
 
   const handleSave = async () => {
+    const costToSave = { ...draft, month: draft.month || viewMonth, year: draft.year || viewYear };
     if (editId) {
-      const { id, user_id, created_at, ...fields } = draft;
-      await updateCost(editId, fields);
+      const { id, user_id, created_at, ...fields } = costToSave;
+      const { data } = await supabase.from('admin_costs').update(fields).eq('id', id).select().single();
+      if (data) setCosts(costs.map((c) => (c.id === id ? data : c)));
     } else {
-      await addCost({ ...draft, month: draft.month || viewMonth, year: draft.year || viewYear });
+      const { data } = await supabase.from('admin_costs').insert({ ...costToSave, user_id: user?.id }).select().single();
+      if (data) setCosts([data, ...costs]);
     }
     setShowForm(false);
     setEditId(null);
     setDraft({ ...EMPTY_COST, month: viewMonth, year: viewYear });
   };
 
-  const handleDelete = async (cost: AdminCost) => {
+  const handleDelete = async (cost: any) => {
     if (!cost.id) return;
     if (confirm(`Delete "${cost.label}"?`)) {
-      await deleteCost(cost.id);
+      await supabase.from('admin_costs').delete().eq('id', cost.id);
+      setCosts(costs.filter((c) => c.id !== cost.id));
     }
   };
 
@@ -97,7 +106,7 @@ export default function AdminCostsPage() {
         setSyncMsg(`❌ ${res.error}`);
       } else {
         setSyncMsg(`✅ Imported ${res.imported} costs`);
-        await refresh();
+        onSync(); // Tell AppLayout to refetch
       }
     } catch {
       setSyncMsg('❌ Sync failed. Please try again.');
@@ -131,10 +140,10 @@ export default function AdminCostsPage() {
           <button onClick={handleAdd} className="aurelia-gold-btn flex items-center gap-2">
             <Plus size={14} /> Add Cost
           </button>
-          <button onClick={handleGsheetSync} disabled={syncing}
+          <button onClick={handleGsheetSync} disabled={syncing || !costsLoaded}
             className="aurelia-ghost-btn flex items-center gap-2 border border-border disabled:opacity-50">
-            <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
-            {syncing ? 'Syncing…' : 'Sync from Google Sheets'}
+            <RefreshCw size={14} className={syncing || !costsLoaded ? 'animate-spin' : ''} />
+            {syncing || !costsLoaded ? 'Syncing…' : 'Sync from Google Sheets'}
           </button>
         </div>
       </div>
@@ -184,7 +193,7 @@ export default function AdminCostsPage() {
             <div className="space-y-1.5">
               <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Category</label>
               <select className="aurelia-input" value={draft.category}
-                onChange={(e) => setDraft({ ...draft, category: e.target.value as AdminCost['category'] })}>
+                onChange={(e) => setDraft({ ...draft, category: e.target.value })}>
                 {ADMIN_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
               </select>
             </div>
@@ -213,15 +222,15 @@ export default function AdminCostsPage() {
         </div>
       )}
 
-      {/* Loading */}
-      {loading && (
+      {/* Loading state - only if NOT loaded AT ALL */}
+      {(!costsLoaded && costs.length === 0) && (
         <div className="flex items-center justify-center py-20">
           <div className="w-8 h-8 border-2 border-gold border-t-transparent rounded-full animate-spin" />
         </div>
       )}
 
       {/* Costs table */}
-      {!loading && monthCosts.length > 0 && (
+      {monthCosts.length > 0 && (
         <div className="aurelia-card overflow-hidden">
           <table className="w-full text-sm">
             <thead>
@@ -258,7 +267,7 @@ export default function AdminCostsPage() {
       )}
 
       {/* Empty state */}
-      {!loading && monthCosts.length === 0 && !showForm && (
+      {costsLoaded && monthCosts.length === 0 && !showForm && (
         <div className="aurelia-card p-12 text-center">
           <p className="text-sm text-muted-foreground">No costs for {MONTH_NAMES[viewMonth - 1]} {viewYear}.</p>
           <button onClick={handleAdd} className="aurelia-gold-btn mt-4 text-sm">

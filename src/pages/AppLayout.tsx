@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import AureliaSidebar from '@/components/AureliaSidebar';
 import Dashboard from '@/components/Dashboard';
 import ProductsPage from '@/components/ProductsPage';
@@ -7,10 +7,13 @@ import LedgerPage from '@/components/LedgerPage';
 import AdminCostsPage from '@/components/AdminCostsPage';
 import SettingsPage from '@/components/SettingsPage';
 import { useAppData } from '@/lib/useAppData';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 
 type View = 'dashboard' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'settings';
 
 const AppLayout = () => {
+  const { user } = useAuth();
   const {
     data,
     addProduct,
@@ -36,6 +39,30 @@ const AppLayout = () => {
   const [view, setView] = useState<View>('dashboard');
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
   const [activeChannelIdx, setActiveChannelIdx] = useState(0);
+
+  // FIX 1: Lift state
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [adminCosts, setAdminCosts] = useState<any[]>([]);
+  const [bookingsLoaded, setBookingsLoaded] = useState(false);
+  const [adminCostsLoaded, setAdminCostsLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+
+    if (!bookingsLoaded) {
+      supabase.from('bookings').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).then(({ data }) => {
+        if (data) setBookings(data);
+        setBookingsLoaded(true);
+      });
+    }
+
+    if (!adminCostsLoaded) {
+      supabase.from('admin_costs').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).then(({ data }) => {
+        if (data) setAdminCosts(data);
+        setAdminCostsLoaded(true);
+      });
+    }
+  }, [user, bookingsLoaded, adminCostsLoaded]);
 
   const handleEditOption = (optionId: string, channelIdx?: number) => {
     setActiveOptionId(optionId);
@@ -100,8 +127,22 @@ const AppLayout = () => {
             deleteChannel={deleteChannel}
           />
         )}
-        {view === 'ledger' && <LedgerPage />}
-        {view === 'admin-costs' && <AdminCostsPage />}
+        {view === 'ledger' && (
+          <LedgerPage 
+            bookings={bookings} 
+            setBookings={setBookings} 
+            onSync={() => setBookingsLoaded(false)} 
+            bookingsLoaded={bookingsLoaded}
+          />
+        )}
+        {view === 'admin-costs' && (
+          <AdminCostsPage 
+            costs={adminCosts} 
+            setCosts={setAdminCosts} 
+            onSync={() => setAdminCostsLoaded(false)} 
+            costsLoaded={adminCostsLoaded}
+          />
+        )}
         {view === 'settings' && <SettingsPage />}
       </main>
     </div>
