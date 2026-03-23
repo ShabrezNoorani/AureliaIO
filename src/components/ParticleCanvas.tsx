@@ -11,7 +11,7 @@ const FINANCIAL_FIGURES = [
 
 const SYMBOLS = ['€', '£', '$', '%', '↑', '↗', '↘', '✓'];
 
-const GRID_OPACITY = 0.03;
+const GRID_OPACITY = 0.15;
 const GRID_COLOR = '#f5a623';
 const GRID_SPACING = 80;
 
@@ -57,7 +57,7 @@ function createFallingNumber(w: number, startTop?: boolean): FallingNumber {
     y: startTop ? -20 : Math.random() * -600, // stagger initial positions
     speed: randomBetween(0.15, 0.45),
     text: FINANCIAL_FIGURES[Math.floor(Math.random() * FINANCIAL_FIGURES.length)],
-    opacity: randomBetween(0.05, 0.08),
+    opacity: randomBetween(0.15, 0.20),
     fontSize: randomBetween(11, 13),
   };
 }
@@ -78,7 +78,7 @@ function createMiniChart(w: number, h: number): MiniChart {
     rotation: randomBetween(-0.08, 0.08),
     rotationSpeed: randomBetween(-0.0003, 0.0003),
     points: pts,
-    opacity: randomBetween(0.04, 0.06),
+    opacity: randomBetween(0.15, 0.20),
     width: 60,
     height: 25,
   };
@@ -90,7 +90,7 @@ function createFloatingSymbol(w: number, h: number): FloatingSymbol {
     y: h + Math.random() * 100,
     speed: randomBetween(0.1, 0.3),
     text: SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)],
-    opacity: randomBetween(0.03, 0.05),
+    opacity: randomBetween(0.15, 0.20),
     drift: randomBetween(-0.15, 0.15),
   };
 }
@@ -108,12 +108,16 @@ export default function FinancialCanvas() {
 
     let w = window.innerWidth;
     let h = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
 
     const resize = () => {
       w = window.innerWidth;
       h = window.innerHeight;
-      canvas.width = w;
-      canvas.height = h;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -270,10 +274,11 @@ export default function FinancialCanvas() {
         position: 'fixed',
         top: 0,
         left: 0,
-        width: '100%',
-        height: '100%',
-        zIndex: 0,
+        width: '100vw',
+        height: '100vh',
+        zIndex: 1,
         pointerEvents: 'none',
+        opacity: 1,
       }}
     />
   );

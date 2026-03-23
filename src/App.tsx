@@ -21,28 +21,30 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <FinancialCanvas />
-        <AuthProvider>
-          <Routes>
-            {/* Public routes */}
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/signup" element={<SignupPage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/pricing" element={<PricingPage />} />
+        <div style={{ position: 'relative', minHeight: '100vh' }}>
+          <FinancialCanvas />
+          <AuthProvider>
+            <Routes>
+              {/* Public routes */}
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/signup" element={<SignupPage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/pricing" element={<PricingPage />} />
 
-            {/* Protected app */}
-            <Route
-              path="/app"
-              element={
-                <ProtectedRoute>
-                  <AppLayout />
-                </ProtectedRoute>
-              }
-            />
+              {/* Protected app */}
+              <Route
+                path="/app"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout />
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </AuthProvider>
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </AuthProvider>
+        </div>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
