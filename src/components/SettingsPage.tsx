@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, ShieldAlert, Palette, Building2, Save } from 'lucide-react';
+import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw } from 'lucide-react';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -13,6 +13,8 @@ export default function SettingsPage() {
   const [sheetId, setSheetId] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(getTheme());
+  const [autoSync, setAutoSync] = useState(false);
+  const [syncInterval, setSyncInterval] = useState('1800000');
   
   const [sheetSaved, setSheetSaved] = useState(false);
   const [companySaved, setCompanySaved] = useState(false);
@@ -21,8 +23,25 @@ export default function SettingsPage() {
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     setSheetId(stored || DEFAULT_SHEET_ID);
+    setAutoSync(localStorage.getItem('aurelia_autosync_enabled') === 'true');
+    setSyncInterval(localStorage.getItem('aurelia_autosync_interval') || '1800000');
     if (profile) setCompanyName(profile.company_name || '');
   }, [profile]);
+
+  const handleToggleAutoSync = (checked: boolean) => {
+    setAutoSync(checked);
+    localStorage.setItem('aurelia_autosync_enabled', String(checked));
+    if (checked && !localStorage.getItem('aurelia_autosync_interval')) {
+      localStorage.setItem('aurelia_autosync_interval', '1800000');
+    }
+    window.dispatchEvent(new Event('autosync_changed'));
+  };
+
+  const handleIntervalChange = (val: string) => {
+    setSyncInterval(val);
+    localStorage.setItem('aurelia_autosync_interval', val);
+    window.dispatchEvent(new Event('autosync_changed'));
+  };
 
   const handleSaveSheet = () => {
     localStorage.setItem(STORAGE_KEY, sheetId);
@@ -137,6 +156,50 @@ export default function SettingsPage() {
                 <span className="text-xs text-profit-positive font-bold animate-fade-in">✓ Saved</span>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* SECTION 2b — Auto Sync */}
+        <div className="aurelia-card p-6 border-l-[3px] border-l-blue-500">
+          <div className="flex items-center gap-3 mb-5">
+            <RefreshCw size={18} className="text-blue-500" />
+            <h2 className="text-sm font-bold uppercase tracking-wider">Auto Sync</h2>
+          </div>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-bold">Enable Auto Sync</label>
+              <button 
+                onClick={() => handleToggleAutoSync(!autoSync)} 
+                className={`w-10 h-6 rounded-full transition-colors relative ${autoSync ? 'bg-blue-500' : 'bg-[#2a2a3e]'}`}
+              >
+                <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${autoSync ? 'left-5' : 'left-1'}`} />
+              </button>
+            </div>
+            
+            {autoSync && (
+              <div className="space-y-2 mt-4 animate-fade-in p-4 bg-white/5 rounded-lg border border-white/10">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                  Sync every
+                </label>
+                <select 
+                  className="aurelia-input w-full text-sm font-bold" 
+                  value={syncInterval}
+                  onChange={(e) => handleIntervalChange(e.target.value)}
+                >
+                  <option value="300000">5 minutes</option>
+                  <option value="900000">15 minutes</option>
+                  <option value="1800000">30 minutes</option>
+                  <option value="3600000">1 hour</option>
+                  <option value="7200000">2 hours</option>
+                  <option value="21600000">6 hours</option>
+                  <option value="43200000">12 hours</option>
+                </select>
+              </div>
+            )}
+            
+            <p className="text-xs text-muted-foreground mt-4 leading-relaxed">
+              Auto sync pulls latest data from your Google Sheet automatically. Your sheet data is read-only — AURELIA never writes to your Google Sheet.
+            </p>
           </div>
         </div>
 

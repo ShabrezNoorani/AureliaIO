@@ -129,9 +129,14 @@ export async function syncMasterData(
   let imported = 0;
   let updated = 0;
   let skipped = 0;
+  let rowIndex = 0;
 
   for (const cols of dataRows) {
     const bookingRef = (cols[2] || '').trim();
+    const channelRaw = cols[11];
+    
+    console.log('Row:', rowIndex++, 'col3:', cols[3], 'channel:', channelRaw, 'bookingRef:', cols[2]);
+
     if (!bookingRef) { skipped++; continue; } // only skip if no booking ref
 
     const channel = CHANNEL_MAP[cols[11]] || 'Other';
@@ -163,10 +168,12 @@ export async function syncMasterData(
     const travelDate = parseLongDate(cols[9]);
     const bookingDate = parseLongDate(cols[33]);
 
+    const ext_ref = (cols[3] && cols[3].toString().trim() !== '') ? cols[3].toString().trim() : null;
+
     const booking: Record<string, unknown> = {
       user_id: userId,
       booking_ref: bookingRef,
-      ext_ref: cols[3]?.trim() ? cols[3] : null,
+      ext_ref,
       product_name: cols[4] || '',
       option_name: cols[5] || '',
       customer_name: cols[6] || '',

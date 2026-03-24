@@ -12,6 +12,7 @@ import AnalyticsPage from '@/pages/AnalyticsPage';
 import { useAppData } from '@/lib/useAppData';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
+import { syncMasterData } from '@/lib/gsheetSync';
 
 export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics';
 
@@ -66,6 +67,47 @@ const AppLayout = () => {
       });
     }
   }, [user, bookingsLoaded, adminCostsLoaded]);
+
+  // AUTO SYNC LOGIC
+  const [lastSynced, setLastSynced] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const int = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(int);
+  }, []);
+
+  useEffect(() => {
+    let intervalId: any;
+
+    const checkSync = () => {
+      if (intervalId) clearInterval(intervalId);
+      const enabled = localStorage.getItem('aurelia_autosync_enabled') === 'true';
+      if (!enabled) return;
+      
+      const intervalMs = parseInt(localStorage.getItem('aurelia_autosync_interval') || '1800000', 10);
+      intervalId = setInterval(async () => {
+        const sheetId = localStorage.getItem('gsheet_id');
+        if (sheetId && user) {
+          try {
+            await syncMasterData(sheetId, user.id, supabase);
+            setLastSynced(Date.now());
+            setBookingsLoaded(false); 
+          } catch (e) {
+            console.error('Auto sync failed:', e);
+          }
+        }
+      }, intervalMs);
+    };
+
+    checkSync();
+    window.addEventListener('autosync_changed', checkSync);
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      window.removeEventListener('autosync_changed', checkSync);
+    };
+  }, [user]);
 
   const handleEditOption = (optionId: string, channelIdx?: number) => {
     setActiveOptionId(optionId);
@@ -151,6 +193,12 @@ const AppLayout = () => {
         {view === 'analytics' && <AnalyticsPage />}
         {view === 'settings' && <SettingsPage />}
       </main>
+
+      {lastSynced && (
+        <div className="fixed bottom-[72px] left-6 text-[10px] text-muted-foreground z-50 pointer-events-none font-medium opacity-80 animate-fade-in">
+          Last synced: {Math.floor((now - lastSynced) / 60000)} mins ago
+        </div>
+      )}
     </div>
   );
 };
