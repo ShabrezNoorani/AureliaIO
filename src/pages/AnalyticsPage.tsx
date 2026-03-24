@@ -73,17 +73,19 @@ function AnalyticsPage() {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
-    supabase.from('bookings').select('*').eq('user_id', user.id)
-      .then(({ data, error }) => {
+    const loadData = async () => {
+      try {
+        const { data, error } = await supabase.from('bookings').select('*').eq('user_id', user.id);
         if (error) console.error("Error fetching bookings:", error);
         setBookings(data || []);
-        setLoading(false);
-      })
-      .catch(err => {
+      } catch (err) {
         console.error("Caught error fetching bookings:", err);
         setBookings([]);
+      } finally {
         setLoading(false);
-      });
+      }
+    };
+    loadData();
   }, [user]);
 
   // Derived filter options

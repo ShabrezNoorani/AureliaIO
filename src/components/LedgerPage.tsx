@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { syncMasterData } from '@/lib/gsheetSync';
 import BookingPanel from './BookingPanel';
 import CsvUploadModal from './CsvUploadModal';
+import MultiSelect from './MultiSelect';
 
 const CHANNELS = ['All', 'Viator', 'GYG', 'Airbnb', 'Website', 'Agent', 'Other'];
 const STATUSES = ['All', 'UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED_EARLY', 'CANCELLED_LATE'];
@@ -92,8 +93,8 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
 
   // Filters
   const [search, setSearch] = useState('');
-  const [channelFilter, setChannelFilter] = useState('All');
-  const [statusFilter, setStatusFilter] = useState('All');
+  const [channelFilter, setChannelFilter] = useState<string[]>(['All']);
+  const [statusFilter, setStatusFilter] = useState<string[]>(['All']);
   const [travelMonth, setTravelMonth] = useState('All');
   const [travelYear, setTravelYear] = useState('');
   const [bookingMonth, setBookingMonth] = useState('All');
@@ -119,7 +120,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   };
 
   const clearFilters = () => {
-    setSearch(''); setChannelFilter('All'); setStatusFilter('All');
+    setSearch(''); setChannelFilter(['All']); setStatusFilter(['All']);
     setTravelMonth('All'); setTravelYear(''); setBookingMonth('All'); setBookingYear('');
     setPage(0);
   };
@@ -135,8 +136,12 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
         (b.product_name || '').toLowerCase().includes(q)
       );
     }
-    if (channelFilter !== 'All') out = out.filter((b) => b.channel === channelFilter);
-    if (statusFilter !== 'All') out = out.filter((b) => b.status === statusFilter);
+    if (!channelFilter.includes('All')) {
+      out = out.filter((b) => channelFilter.includes(b.channel || 'Other'));
+    }
+    if (!statusFilter.includes('All')) {
+      out = out.filter((b) => statusFilter.includes(b.status || 'UPCOMING'));
+    }
     if (travelMonth !== 'All') {
       const mi = MONTHS.indexOf(travelMonth); 
       out = out.filter((b) => b.travel_date && new Date(b.travel_date).getMonth() + 1 === mi);
@@ -286,34 +291,40 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-6 items-end">
         <input
-          className="aurelia-input w-64 text-xs"
-          placeholder="Search booking ref, customer, product…"
+          className="aurelia-input w-48 text-[11px]"
+          placeholder="Search ref, customer, product..."
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(0); }}
         />
-        <select className="aurelia-input w-28 text-xs" value={channelFilter} onChange={(e) => { setChannelFilter(e.target.value); setPage(0); }}>
-          {CHANNELS.map((c) => <option key={c}>{c}</option>)}
-        </select>
-        <select className="aurelia-input w-36 text-xs" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}>
-          {STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
-        </select>
+        <MultiSelect 
+          label="OTA / Channel" 
+          options={CHANNELS.map(c => ({ value: c, label: c }))}
+          selected={channelFilter}
+          onChange={(s) => { setChannelFilter(s); setPage(0); }}
+        />
+        <MultiSelect 
+          label="Status" 
+          options={STATUSES.map(s => ({ value: s, label: s.replace(/_/g, ' ') }))}
+          selected={statusFilter}
+          onChange={(s) => { setStatusFilter(s); setPage(0); }}
+        />
         <div className="flex items-center gap-1">
-          <select className="aurelia-input w-24 text-xs" value={travelMonth} onChange={(e) => { setTravelMonth(e.target.value); setPage(0); }}>
-            {MONTHS.map((m) => <option key={'t' + m}>{m}</option>)}
+          <select className="aurelia-input w-28 text-[11px]" value={travelMonth} onChange={(e) => { setTravelMonth(e.target.value); setPage(0); }}>
+            <option value="All">Travel Month</option>
+            {MONTHS.filter(m=>m!=='All').map((m) => <option key={'t' + m} value={m}>{m}</option>)}
           </select>
-          <input className="aurelia-input w-20 text-xs" placeholder="Year" value={travelYear}
+          <input className="aurelia-input w-16 text-[11px]" placeholder="Year" value={travelYear}
             onChange={(e) => { setTravelYear(e.target.value); setPage(0); }} />
-          <span className="text-[9px] text-muted-foreground uppercase">Travel</span>
         </div>
         <div className="flex items-center gap-1">
-          <select className="aurelia-input w-24 text-xs" value={bookingMonth} onChange={(e) => { setBookingMonth(e.target.value); setPage(0); }}>
-            {MONTHS.map((m) => <option key={'b' + m}>{m}</option>)}
+          <select className="aurelia-input w-28 text-[11px]" value={bookingMonth} onChange={(e) => { setBookingMonth(e.target.value); setPage(0); }}>
+            <option value="All">Booking Month</option>
+            {MONTHS.filter(m=>m!=='All').map((m) => <option key={'b' + m} value={m}>{m}</option>)}
           </select>
-          <input className="aurelia-input w-20 text-xs" placeholder="Year" value={bookingYear}
+          <input className="aurelia-input w-16 text-[11px]" placeholder="Year" value={bookingYear}
             onChange={(e) => { setBookingYear(e.target.value); setPage(0); }} />
-          <span className="text-[9px] text-muted-foreground uppercase">Booking</span>
         </div>
-        <button onClick={clearFilters} className="text-xs font-bold text-muted-foreground hover:text-gold transition-colors ml-2 pb-2">
+        <button onClick={clearFilters} className="text-[11px] font-bold text-muted-foreground hover:text-gold transition-colors ml-2 pb-2">
           Clear filters
         </button>
       </div>
