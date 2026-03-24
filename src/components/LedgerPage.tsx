@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { Plus, Upload, Trash2, Pencil, FileSpreadsheet, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/useAppData';
 import { useAuth } from '@/context/AuthContext';
@@ -11,6 +11,33 @@ const CHANNELS = ['All', 'Viator', 'GYG', 'Airbnb', 'Website', 'Agent', 'Other']
 const STATUSES = ['All', 'UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED_EARLY', 'CANCELLED_LATE'];
 const MONTHS = ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const PER_PAGE = 50;
+
+const DEFAULT_COLS = [
+  { id: 'ref', label: 'Booking Ref', width: 140, sticky: 'left', stickyZ: 20 },
+  { id: 'extId', label: 'Ext. Ref', width: 120 },
+  { id: 'prod', label: 'Product Code', width: 90 },
+  { id: 'opt', label: 'Option', width: 160 },
+  { id: 'name', label: 'Customer Name', width: 140 },
+  { id: 'phone', label: 'Customer Phone', width: 130 },
+  { id: 'date', label: 'Travel Date', width: 110 },
+  { id: 'time', label: 'Travel Time', width: 90 },
+  { id: 'bdate', label: 'Booking Date', width: 110 },
+  { id: 'chan', label: 'Channel', width: 90 },
+  { id: 'promo', label: 'Promo Code', width: 100 },
+  { id: 'pax', label: 'Pax', width: 120 },
+  { id: 'tpax', label: 'Total Pax', width: 70 },
+  { id: 'gross', label: 'Gross Revenue €', width: 110, align: 'text-right' },
+  { id: 'comm', label: 'Commission %', width: 90, align: 'text-right' },
+  { id: 'fee', label: 'Marketplace Fee €', width: 110, align: 'text-right' },
+  { id: 'netp', label: 'Net Payout €', width: 100, align: 'text-right' },
+  { id: 'gcost', label: 'Guide Cost €', width: 90, align: 'text-right' },
+  { id: 'ecost', label: 'Extra Cost €', width: 90, align: 'text-right' },
+  { id: 'tcost', label: 'Ticket Cost €', width: 90, align: 'text-right' },
+  { id: 'profit', label: 'Net Profit €', width: 100, align: 'text-right' },
+  { id: 'status', label: 'Status', width: 130, sticky: 'right', stickyZ: 20 },
+  { id: 'guide', label: 'Assigned Guide', width: 120 },
+  { id: 'actions', label: 'Actions', width: 80, sticky: 'right', stickyZ: 20 }
+];
 
 const STATUS_STYLES: Record<string, string> = {
   UPCOMING: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
@@ -72,6 +99,24 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   const [bookingMonth, setBookingMonth] = useState('All');
   const [bookingYear, setBookingYear] = useState('');
   const [page, setPage] = useState(0);
+
+  // Column Widths
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    const saved = localStorage.getItem('ledger_col_widths');
+    if (saved) return JSON.parse(saved);
+    const def: Record<string, number> = {};
+    DEFAULT_COLS.forEach(c => def[c.id] = c.width);
+    return def;
+  });
+
+  const handleResize = (id: string, newWidth: number) => {
+    setColWidths(prev => {
+      const nw = Math.max(50, newWidth);
+      const next = { ...prev, [id]: nw };
+      localStorage.setItem('ledger_col_widths', JSON.stringify(next));
+      return next;
+    });
+  };
 
   const clearFilters = () => {
     setSearch(''); setChannelFilter('All'); setStatusFilter('All');
@@ -313,92 +358,110 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       {/* Table - Horizontally Scrollable Exact Specifications */}
       {filtered.length > 0 && (
         <div className="aurelia-card relative flex flex-col w-full overflow-hidden">
-          <div className="overflow-x-auto w-full max-w-full block flex-1 scrollbar-hide aurelia-scrollbar">
-            <table className="w-full text-[13px] text-white table-fixed min-w-[1800px]">
+          <div className="overflow-x-auto w-full max-w-full block flex-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent pb-1">
+            <table className="w-full text-[13px] text-foreground table-fixed min-w-[2400px]">
               <thead>
-                <tr className="bg-[#13131a] border-b border-border">
-                  {[
-                    { key: 'Booking Ref', sticky: 'sticky left-0 z-20 shadow-[1px_0_0_0_#1e1e2e]' },
-                    { key: 'Ext. Ref' },
-                    { key: 'Product Code' },
-                    { key: 'Option' },
-                    { key: 'Customer Name' },
-                    { key: 'Customer Phone' },
-                    { key: 'Travel Date' },
-                    { key: 'Travel Time' },
-                    { key: 'Booking Date' },
-                    { key: 'Channel' },
-                    { key: 'Promo Code' },
-                    { key: 'Pax' },
-                    { key: 'Total Pax' },
-                    { key: 'Gross Revenue €', align: 'text-right' },
-                    { key: 'Commission %', align: 'text-right' },
-                    { key: 'Marketplace Fee €', align: 'text-right' },
-                    { key: 'Net Payout €', align: 'text-right' },
-                    { key: 'Guide Cost €', align: 'text-right' },
-                    { key: 'Extra Cost €', align: 'text-right' },
-                    { key: 'Ticket Cost €', align: 'text-right' },
-                    { key: 'Net Profit €', align: 'text-right' },
-                    { key: 'Status', sticky: 'sticky right-[80px] z-20 shadow-[-1px_0_0_0_#1e1e2e]' },
-                    { key: 'Assigned Guide' },
-                    { key: 'Actions', sticky: 'sticky right-0 z-20 shadow-[-1px_0_0_0_#1e1e2e]' }
-                  ].map((h) => (
-                    <th 
-                      key={h.key} 
-                      className={`py-3 px-3 text-left text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap bg-[#13131a] ${h.align || ''} ${h.sticky || 'relative'}`}
-                    >
-                      {h.key}
-                    </th>
-                  ))}
+                <tr className="border-b" style={{ borderColor: 'hsl(var(--theme-border))', backgroundColor: 'hsl(var(--theme-card))' }}>
+                  {DEFAULT_COLS.map((col) => {
+                    const w = colWidths[col.id];
+                    
+                    let stickyStyle: any = null;
+                    if (col.sticky === 'left') {
+                      stickyStyle = { position: 'sticky', left: 0, zIndex: 30, boxShadow: '1px 0 0 0 hsl(var(--theme-border))' };
+                    } else if (col.sticky === 'right') {
+                      const rightOffset = col.id === 'status' ? colWidths['actions'] : 0;
+                      stickyStyle = { position: 'sticky', right: rightOffset, zIndex: 30, boxShadow: '-1px 0 0 0 hsl(var(--theme-border))' };
+                    }
+
+                    return (
+                      <th 
+                        key={col.id} 
+                        className={`py-3 px-3 text-left text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap bg-card ${col.align || ''} relative group`}
+                        style={{ minWidth: w, width: w, maxWidth: w, backgroundColor: 'hsl(var(--theme-card))', ...stickyStyle }}
+                      >
+                        <div className="flex items-center justify-between w-full overflow-hidden">
+                          <span className="truncate pr-2">{col.label}</span>
+                        </div>
+                        <div 
+                          className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/20 z-40 transition-colors"
+                          style={{ borderRight: '1px solid hsl(var(--theme-border) / 0.5)' }}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            const startX = e.pageX;
+                            const startW = w;
+                            const mv = (me: MouseEvent) => requestAnimationFrame(() => handleResize(col.id, startW + (me.pageX - startX)));
+                            const up = () => { document.removeEventListener('mousemove', mv); document.removeEventListener('mouseup', up); };
+                            document.addEventListener('mousemove', mv);
+                            document.addEventListener('mouseup', up);
+                          }}
+                        />
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
                 {pageBookings.map((b, i) => (
-                  <tr key={b.id || i} className="border-b border-border/30 hover:bg-hover transition-colors group">
-                    <td className="py-2.5 px-3 text-white font-medium whitespace-nowrap bg-[#13131a] sticky left-0 z-10 shadow-[1px_0_0_0_#1e1e2e] group-hover:bg-[#1a1a2e]">
-                      {b.booking_ref || '—'}
-                    </td>
-                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{b.ext_ref || '—'}</td>
-                    <td className="py-2.5 px-3 whitespace-nowrap max-w-[120px] truncate">{b.product_name || '—'}</td>
-                    <td className="py-2.5 px-3 whitespace-nowrap max-w-[100px] truncate">{b.option_name || '—'}</td>
-                    <td className="py-2.5 px-3 whitespace-nowrap max-w-[100px] truncate">{b.customer_name || '—'}</td>
-                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{b.customer_phone || '—'}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap">{b.travel_date || '—'}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap">{b.travel_time || '—'}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-muted-foreground">{b.booking_date || '—'}</td>
-                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{b.channel || '—'}</td>
-                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{b.promo_code || '—'}</td>
-                    
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-emerald-400 font-mono text-[11px]">{formatPax(b)}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-center text-muted-foreground">{calcTotalPax(b)}</td>
-                    
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right">{fmtEuro(b.gross_revenue)}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{b.commission_rate ? `${b.commission_rate}%` : '—'}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{fmtEuro(b.marketplace_fee)}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right">{fmtEuro(b.net_revenue)}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{fmtEuro(b.guide_cost)}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{fmtEuro(b.extra_cost)}</td>
-                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{fmtEuro(b.ticket_cost)}</td>
-                    <td className={`py-2.5 px-3 font-bold tabular-nums whitespace-nowrap text-right ${b.net_profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>
-                      {fmtEuro(b.net_profit)}
-                    </td>
-                    
-                    <td className="py-2.5 px-3 whitespace-nowrap bg-[#13131a] sticky right-[80px] z-10 shadow-[-1px_0_0_0_#1e1e2e] group-hover:bg-[#1a1a2e]">
-                      <StatusBadge status={b.status} />
-                    </td>
-                    
-                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground truncate max-w-[100px]">{b.assigned_guide || '—'}</td>
-                    
-                    <td className="py-2.5 px-3 whitespace-nowrap bg-[#13131a] sticky right-0 z-10 shadow-[-1px_0_0_0_#1e1e2e] group-hover:bg-[#1a1a2e]">
-                      <div className="flex gap-2">
-                        <button onClick={() => handleEdit(b)} className="p-1 px-1.5 rounded bg-white/5 border border-white/10 text-muted-foreground hover:text-gold hover:bg-white/10 transition-colors">
-                          <Pencil size={12} />
-                        </button>
-                        <button onClick={() => handleDelete(b)} className="p-1 px-1.5 rounded bg-red-500/5 text-muted-foreground border border-red-500/20 hover:text-red-400 hover:bg-red-500/10 transition-colors">
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                    </td>
+                  <tr key={b.id || i} className="border-b transition-colors group" style={{ borderColor: 'hsl(var(--theme-border) / 0.3)' }}>
+                    {DEFAULT_COLS.map(col => {
+                      const w = colWidths[col.id];
+                      let stickyStyle: any = null;
+                      if (col.sticky === 'left') {
+                        stickyStyle = { position: 'sticky', left: 0, zIndex: col.stickyZ, boxShadow: '1px 0 0 0 hsl(var(--theme-border))' };
+                      } else if (col.sticky === 'right') {
+                        const rightOffset = col.id === 'status' ? colWidths['actions'] : 0;
+                        stickyStyle = { position: 'sticky', right: rightOffset, zIndex: col.stickyZ, boxShadow: '-1px 0 0 0 hsl(var(--theme-border))' };
+                      }
+
+                      const renderCell = () => {
+                        switch(col.id) {
+                          case 'ref': return <span className="font-semibold text-foreground">{b.booking_ref || '—'}</span>;
+                          case 'extId': return <span className="text-muted-foreground">{b.ext_ref || '—'}</span>;
+                          case 'prod': return b.product_name || '—';
+                          case 'opt': return b.option_name || '—';
+                          case 'name': return b.customer_name || '—';
+                          case 'phone': return <span className="text-muted-foreground">{b.customer_phone || '—'}</span>;
+                          case 'date': return <span className="tabular-nums">{b.travel_date || '—'}</span>;
+                          case 'time': return <span className="tabular-nums">{b.travel_time || '—'}</span>;
+                          case 'bdate': return <span className="tabular-nums text-muted-foreground">{b.booking_date || '—'}</span>;
+                          case 'chan': return <span className="text-muted-foreground">{b.channel || '—'}</span>;
+                          case 'promo': return <span className="text-muted-foreground">{b.promo_code || '—'}</span>;
+                          case 'pax': return <span className="tabular-nums text-emerald-400 font-mono text-[11px]">{formatPax(b)}</span>;
+                          case 'tpax': return <span className="tabular-nums text-muted-foreground">{calcTotalPax(b)}</span>;
+                          case 'gross': return <span className="tabular-nums text-foreground">{fmtEuro(b.gross_revenue)}</span>;
+                          case 'comm': return <span className="tabular-nums text-muted-foreground">{b.commission_rate ? `${b.commission_rate}%` : '—'}</span>;
+                          case 'fee': return <span className="tabular-nums text-muted-foreground">{fmtEuro(b.marketplace_fee)}</span>;
+                          case 'netp': return <span className="tabular-nums text-foreground">{fmtEuro(b.net_revenue)}</span>;
+                          case 'gcost': return <span className="tabular-nums text-muted-foreground">{fmtEuro(b.guide_cost)}</span>;
+                          case 'ecost': return <span className="tabular-nums text-muted-foreground">{fmtEuro(b.extra_cost)}</span>;
+                          case 'tcost': return <span className="tabular-nums text-muted-foreground">{fmtEuro(b.ticket_cost)}</span>;
+                          case 'profit': return <span className={`font-bold tabular-nums ${b.net_profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>{fmtEuro(b.net_profit)}</span>;
+                          case 'status': return <StatusBadge status={b.status} />;
+                          case 'guide': return <span className="text-muted-foreground">{b.assigned_guide || '—'}</span>;
+                          case 'actions': return (
+                            <div className="flex gap-2">
+                              <button onClick={() => handleEdit(b)} className="p-1 px-1.5 rounded transition-colors" style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'hsl(var(--theme-text-sec))' }}>
+                                <Pencil size={12} />
+                              </button>
+                              <button onClick={() => handleDelete(b)} className="p-1 px-1.5 rounded transition-colors border border-red-500/20 text-red-400 hover:bg-red-500/10">
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          );
+                          default: return null;
+                        }
+                      };
+
+                      return (
+                        <td 
+                          key={col.id} 
+                          className={`py-2.5 px-3 truncate whitespace-nowrap overflow-hidden text-ellipsis ${col.align || ''} bg-card group-hover:brightness-110`}
+                          style={{ minWidth: w, maxWidth: w, width: w, backgroundColor: 'hsl(var(--theme-card))', ...stickyStyle }}
+                        >
+                          {renderCell()}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -406,7 +469,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
           </div>
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="flex justify-between items-center px-4 py-3 border-t border-border mt-1 relative z-30 bg-[#13131a]">
+            <div className="flex justify-between items-center px-4 py-3 border-t mt-1 relative z-30" style={{ borderColor: 'hsl(var(--theme-border))', backgroundColor: 'hsl(var(--theme-card))' }}>
               <span className="text-xs text-muted-foreground">
                 Showing {page * PER_PAGE + 1}–{Math.min((page + 1) * PER_PAGE, filtered.length)} of {filtered.length}
               </span>

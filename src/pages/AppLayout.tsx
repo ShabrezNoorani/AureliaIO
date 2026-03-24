@@ -8,11 +8,12 @@ import AdminCostsPage from '@/components/AdminCostsPage';
 import SettingsPage from '@/components/SettingsPage';
 import TodayToursPage from '@/pages/TodayToursPage';
 import ExecutiveDashboard from '@/pages/ExecutiveDashboard';
+import AnalyticsPage from '@/pages/AnalyticsPage';
 import { useAppData } from '@/lib/useAppData';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 
-export type View = 'dashboard' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics';
 
 const AppLayout = () => {
   const { user } = useAuth();
@@ -38,7 +39,7 @@ const AppLayout = () => {
     updateAgeBuckets,
   } = useAppData();
 
-  const [view, setView] = useState<View>('dashboard');
+  const [view, setView] = useState<View>('executive'); // Default is now Executive Dashboard
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
   const [activeChannelIdx, setActiveChannelIdx] = useState(0);
 
@@ -90,7 +91,7 @@ const AppLayout = () => {
       />
 
       <main className="flex-1 ml-[240px]">
-        {view === 'dashboard' && (
+        {view === 'simulator' && (
           <Dashboard
             data={data}
             onEditOption={handleEditOption}
@@ -115,7 +116,7 @@ const AppLayout = () => {
             data={data}
             optionId={activeOptionId}
             initialChannelIdx={activeChannelIdx}
-            onBack={() => setView('dashboard')}
+            onBack={() => setView('simulator')}
             updateOption={updateOption}
             addTicket={addTicket}
             deleteTicket={deleteTicket}
@@ -147,6 +148,7 @@ const AppLayout = () => {
         )}
         {view === 'today' && <TodayToursPage />}
         {view === 'executive' && <ExecutiveDashboard />}
+        {view === 'analytics' && <AnalyticsPage />}
         {view === 'settings' && <SettingsPage />}
       </main>
     </div>

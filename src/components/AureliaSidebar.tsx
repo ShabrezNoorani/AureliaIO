@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
-export type View = 'dashboard' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -138,9 +138,9 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
           
           {overviewExpanded && (
             <div className="mt-1 flex flex-col space-y-0.5">
-              <SidebarItem icon={Home} label="Home" active={activeView === 'dashboard'} onClick={() => onNavigate('dashboard')} indent />
-              <SidebarItem icon={TrendingUp} label="Executive" active={activeView === 'executive'} onClick={() => onNavigate('executive')} indent />
-              <SidebarItem icon={BarChart3} label="Analytics" active={false} disabled indent title="Coming Soon" />
+              <SidebarItem icon={Home} label="Home" active={activeView === 'executive'} onClick={() => onNavigate('executive')} indent />
+              <SidebarItem icon={TrendingUp} label="Simulator" active={activeView === 'simulator'} onClick={() => onNavigate('simulator')} indent />
+              <SidebarItem icon={BarChart3} label="Analytics" active={activeView === 'analytics'} onClick={() => onNavigate('analytics')} indent />
             </div>
           )}
         </div>
