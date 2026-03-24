@@ -1,73 +1,212 @@
 import { useState, useEffect } from 'react';
-import { Settings } from 'lucide-react';
+import { Settings, ShieldAlert, Palette, Building2, Save } from 'lucide-react';
+import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
+import { useAuth } from '@/context/AuthContext';
+import { supabase } from '@/lib/supabase';
 
 const STORAGE_KEY = 'gsheet_id';
 const DEFAULT_SHEET_ID = '1EAI0SHtkJD5HHVj25rJcnzmoksTug249eIT4_JmiOR8';
 
 export default function SettingsPage() {
+  const { user, profile } = useAuth();
+  
   const [sheetId, setSheetId] = useState('');
-  const [saved, setSaved] = useState(false);
+  const [companyName, setCompanyName] = useState('');
+  const [currentTheme, setCurrentTheme] = useState<ThemeName>(getTheme());
+  
+  const [sheetSaved, setSheetSaved] = useState(false);
+  const [companySaved, setCompanySaved] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     setSheetId(stored || DEFAULT_SHEET_ID);
-  }, []);
+    if (profile) setCompanyName(profile.company_name || '');
+  }, [profile]);
 
-  const handleSave = () => {
+  const handleSaveSheet = () => {
     localStorage.setItem(STORAGE_KEY, sheetId);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setSheetSaved(true);
+    setTimeout(() => setSheetSaved(false), 2000);
+  };
+
+  const handleSaveCompany = async () => {
+    if (!user) return;
+    try {
+      await supabase
+        .from('profiles')
+        .update({ company_name: companyName })
+        .eq('id', user.id);
+        
+      setCompanySaved(true);
+      setTimeout(() => setCompanySaved(false), 2000);
+      // Wait for auth context to re-poll and update sidebar live
+    } catch (e) {
+      alert('Failed to update company name');
+    }
+  };
+
+  const handleThemeChange = (theme: ThemeName) => {
+    applyTheme(theme);
+    setCurrentTheme(theme);
+  };
+
+  const handleResetData = async () => {
+    if (!user) return;
+    const confirm1 = window.confirm("WARNING: This will delete ALL products, options, ledger bookings, and costs. Are you absolutely sure?");
+    if (!confirm1) return;
+    const confirm2 = window.prompt("Type 'DELETE' to confirm wiping all data.");
+    if (confirm2 !== 'DELETE') return;
+    
+    setIsResetting(true);
+    try {
+      // Products cascade deletes options, tickets, guides etc.
+      await supabase.from('products').delete().eq('user_id', user.id);
+      await supabase.from('bookings').delete().eq('user_id', user.id);
+      await supabase.from('admin_costs').delete().eq('user_id', user.id);
+      
+      alert("All data has been reset.");
+      window.location.reload();
+    } catch (e) {
+      alert("Error resetting data.");
+    } finally {
+      setIsResetting(false);
+    }
   };
 
   return (
-    <div className="p-8 max-w-3xl mx-auto animate-fade-in">
-      <h1 className="text-2xl font-bold text-foreground mb-2">Settings</h1>
-      <p className="text-sm text-muted-foreground mb-8">Configure integrations and preferences.</p>
+    <div className="p-8 pb-32 max-w-3xl mx-auto animate-fade-in text-foreground">
+      <h1 className="text-2xl font-bold mb-2">Settings</h1>
+      <p className="text-sm text-muted-foreground mb-8">Configure integrations, appearance, and company preferences.</p>
 
-      {/* Google Sheets Integration */}
-      <div className="aurelia-card p-6 border-l-[3px] border-l-gold">
-        <div className="flex items-center gap-3 mb-5">
-          <Settings size={18} className="text-gold" />
-          <h2 className="text-sm font-bold text-foreground uppercase tracking-wider">Google Sheets Integration</h2>
+      <div className="space-y-6">
+        {/* SECTION 1 — Company Settings */}
+        <div className="aurelia-card p-6 border-l-[3px] border-l-gold">
+          <div className="flex items-center gap-3 mb-5">
+            <Building2 size={18} className="text-gold" />
+            <h2 className="text-sm font-bold uppercase tracking-wider">Company Settings</h2>
+          </div>
+          
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                Company Name
+              </label>
+              <input
+                className="aurelia-input text-sm"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                placeholder="Enter Company Name"
+              />
+            </div>
+            
+            <div className="flex items-center gap-3">
+              <button onClick={handleSaveCompany} className="aurelia-gold-btn text-xs flex items-center gap-2">
+                <Save size={14} /> Save Company Details
+              </button>
+              {companySaved && (
+                <span className="text-xs text-profit-positive font-bold animate-fade-in">✓ Saved</span>
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-              Spreadsheet ID
+        {/* SECTION 2 — Google Sheets Integration */}
+        <div className="aurelia-card p-6 border-l-[3px] border-l-gold">
+          <div className="flex items-center gap-3 mb-5">
+            <Settings size={18} className="text-gold" />
+            <h2 className="text-sm font-bold uppercase tracking-wider">Google Sheets Integration</h2>
+          </div>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                Spreadsheet ID
+              </label>
+              <input
+                className="aurelia-input font-mono text-xs"
+                value={sheetId}
+                onChange={(e) => setSheetId(e.target.value)}
+                placeholder="Enter your Google Sheets spreadsheet ID"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={handleSaveSheet} className="aurelia-gold-btn text-xs">
+                Save Spreadsheet ID
+              </button>
+              {sheetSaved && (
+                <span className="text-xs text-profit-positive font-bold animate-fade-in">✓ Saved</span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* SECTION 3 — Appearance */}
+        <div className="aurelia-card p-6 border-l-[3px] border-l-gold">
+          <div className="flex items-center gap-3 mb-5">
+            <Palette size={18} className="text-gold" />
+            <h2 className="text-sm font-bold uppercase tracking-wider">Appearance</h2>
+          </div>
+          
+          <div className="space-y-4">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
+              Color Theme
             </label>
-            <input
-              className="aurelia-input font-mono text-xs"
-              value={sheetId}
-              onChange={(e) => setSheetId(e.target.value)}
-              placeholder="Enter your Google Sheets spreadsheet ID"
-            />
-            <p className="text-[11px] text-muted-foreground/60">
-              The long ID from your Google Sheets URL:
-              <code className="text-[10px] text-muted-foreground bg-background px-1 py-0.5 rounded ml-1">
-                docs.google.com/spreadsheets/d/<span className="text-gold">THIS_PART</span>/edit
-              </code>
-            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {(Object.entries(THEMES) as [ThemeName, typeof THEMES[ThemeName]][]).map(([key, theme]) => (
+                <button
+                  key={key}
+                  onClick={() => handleThemeChange(key)}
+                  className={`relative flex flex-col p-4 rounded-xl border text-left transition-all hover:-translate-y-1
+                    ${currentTheme === key ? 'ring-2 ring-offset-2 ring-offset-background' : 'opacity-80 hover:opacity-100'}
+                  `}
+                  style={{
+                    backgroundColor: theme.colors.bg,
+                    borderColor: currentTheme === key ? theme.colors.accent : theme.colors.border,
+                    boxShadow: theme.shadows.cardHover
+                  }}
+                >
+                  {/* Mini Preview Header */}
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: theme.colors.accent }} />
+                    <span className="text-sm font-bold" style={{ color: theme.colors.text }}>{theme.name}</span>
+                  </div>
+                  {/* Miniature Elements */}
+                  <div className="space-y-2 w-full">
+                    <div className="h-2 w-3/4 rounded-full" style={{ backgroundColor: theme.colors.sidebar }} />
+                    <div className="h-8 w-full rounded-md border" style={{ backgroundColor: theme.colors.card, borderColor: theme.colors.border }} />
+                    <div className="h-6 w-1/2 rounded-md mt-1" style={{ backgroundColor: theme.colors.btnBg }} />
+                  </div>
+                  
+                  {/* Checked indicator */}
+                  {currentTheme === key && (
+                    <div className="absolute top-4 right-4 text-xs font-extrabold" style={{ color: theme.colors.accent }}>
+                      ✓
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
+        </div>
 
-          <div className="flex items-center gap-3">
-            <button onClick={handleSave} className="aurelia-gold-btn text-xs">
-              Save Spreadsheet ID
-            </button>
-            {saved && (
-              <span className="text-xs text-profit-positive font-bold animate-fade-in">✓ Saved</span>
-            )}
+        {/* SECTION 4 — Danger Zone */}
+        <div className="aurelia-card p-6 border-l-[3px] border-l-red-500 bg-red-500/5">
+          <div className="flex items-center gap-3 mb-5">
+            <ShieldAlert size={18} className="text-red-500" />
+            <h2 className="text-sm font-bold text-red-500 uppercase tracking-wider">Danger Zone</h2>
           </div>
-
-          <div className="p-3 rounded-lg bg-surface-subtle border border-border/50 mt-4">
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              <span className="font-bold text-foreground">How it works:</span> Your Google Sheet must be set to{' '}
-              <span className="font-bold text-gold">"Anyone with the link can view"</span> in sharing settings.
-              The Ledger and Admin Costs pages have a "Sync from Google Sheets" button that will
-              pull data from the <code className="text-[10px] bg-background px-1 py-0.5 rounded">Master Data</code> and{' '}
-              <code className="text-[10px] bg-background px-1 py-0.5 rounded">Admin_Costs</code> sheets respectively.
-            </p>
-          </div>
+          
+          <p className="text-sm text-muted-foreground mb-4">
+            Once you delete your data, there is no going back. Please be certain.
+          </p>
+          
+          <button 
+            onClick={handleResetData} 
+            disabled={isResetting}
+            className="px-4 py-2 font-bold rounded-lg bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white transition-colors"
+          >
+            {isResetting ? 'Resetting...' : 'Reset all data'}
+          </button>
         </div>
       </div>
     </div>

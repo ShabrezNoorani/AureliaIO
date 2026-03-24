@@ -6,50 +6,50 @@
 
 @layer base {
   :root {
-    /* Aurelia Dark Theme */
-    --background: 240 25% 4%;       /* #0a0a0f */
-    --foreground: 210 40% 98%;      /* #f8fafc */
+    /* Aurelia Dark Theme Mapped */
+    --background: var(--theme-bg, 240 25% 4%);
+    --foreground: var(--theme-text, 210 40% 98%);
 
-    --card: 240 18% 9%;             /* #13131a */
-    --card-foreground: 210 40% 98%;
+    --card: var(--theme-card, 240 18% 9%);
+    --card-foreground: var(--theme-text, 210 40% 98%);
 
     --popover: 240 18% 9%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 37 91% 55%;          /* #f5a623 gold */
+    --primary: var(--theme-accent, 37 91% 55%);
     --primary-foreground: 0 0% 0%;
 
-    --secondary: 240 15% 13%;       /* #1e1e2e */
-    --secondary-foreground: 210 40% 98%;
+    --secondary: var(--theme-border, 240 15% 13%);
+    --secondary-foreground: var(--theme-text, 210 40% 98%);
 
-    --muted: 240 15% 13%;
-    --muted-foreground: 215 16% 62%; /* #94a3b8 */
+    --muted: var(--theme-border, 240 15% 13%);
+    --muted-foreground: var(--theme-text-sec, 215 16% 62%);
 
-    --accent: 240 12% 15%;
-    --accent-foreground: 210 40% 98%;
+    --accent: var(--theme-card, 240 12% 15%);
+    --accent-foreground: var(--theme-text, 210 40% 98%);
 
-    --destructive: 0 84% 60%;       /* #ef4444 */
+    --destructive: 0 84% 60%;       
     --destructive-foreground: 0 0% 100%;
 
-    --border: 240 15% 18%;          /* #1e1e2e */
-    --input: 240 15% 15%;
-    --ring: 37 91% 55%;
+    --border: var(--theme-border, 240 15% 18%);
+    --input: var(--theme-border, 240 15% 15%);
+    --ring: var(--theme-accent, 37 91% 55%);
 
     --radius: 0.75rem;
 
     /* Aurelia custom tokens */
-    --gold: 37 91% 55%;
-    --gold-muted: 37 50% 35%;
-    --gold-glow: 37 91% 55% / 0.15;
-    --sidebar-bg: 230 25% 7%;       /* #0f1117 */
-    --sidebar-border: 240 15% 12%;
+    --gold: var(--theme-accent, 37 91% 55%);
+    --gold-muted: 37 50% 35%; /* Leaving alone for specific overrides, though gold logic overwrites */
+    --gold-glow: var(--theme-accent, 37 91% 55%) / 0.15;
+    --sidebar-bg: var(--theme-sidebar, 230 25% 7%);
+    --sidebar-border: var(--theme-border, 240 15% 12%);
     --profit-positive: 142 71% 45%; /* #22c55e */
     --profit-negative: 0 84% 60%;   /* #ef4444 */
     --surface-elevated: 240 18% 11%;
     --surface-subtle: 240 18% 8%;
-    --hover: 240 14% 11%;           /* #1a1a2e */
-    --card-shadow: 0 0 0 1px rgba(255,255,255,0.03), 0 2px 8px rgba(0,0,0,0.3);
-    --card-shadow-hover: 0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.4);
+    --hover: 240 14% 11%;           
+    --card-shadow: var(--card-shadow-var, 0 0 0 1px rgba(255,255,255,0.03), 0 2px 8px rgba(0,0,0,0.3));
+    --card-shadow-hover: var(--card-shadow-hover-var, 0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.4));
 
     --sidebar-background: 230 25% 7%;
     --sidebar-foreground: 215 16% 62%;
@@ -120,8 +120,8 @@
 
   .aurelia-gold-btn {
     @apply px-5 py-2.5 rounded-lg font-bold text-sm transition-all duration-200;
-    background: hsl(var(--gold));
-    color: #0a0a0f;
+    background: hsl(var(--theme-btn-bg, 37 91% 55%));
+    color: hsl(var(--theme-btn-text, 0 0% 4%));
     box-shadow: 0 4px 12px hsl(var(--gold-glow));
   }
 
@@ -174,7 +174,15 @@
   }
 
   .auth-input:focus {
-    border-color: #f5a623;
-    box-shadow: 0 0 0 3px rgba(245, 166, 35, 0.1);
+    border-color: hsl(var(--gold));
+    box-shadow: 0 0 0 3px hsl(var(--gold-glow));
   }
+}
+
+.theme-light table tr:nth-child(even) td {
+  background-color: #ffffff !important;
+}
+
+.theme-light table tr:nth-child(odd) td {
+  background-color: #f8fafc !important;
 }

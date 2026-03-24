@@ -6,11 +6,13 @@ import OptionEditor from '@/components/OptionEditor';
 import LedgerPage from '@/components/LedgerPage';
 import AdminCostsPage from '@/components/AdminCostsPage';
 import SettingsPage from '@/components/SettingsPage';
+import TodayToursPage from '@/pages/TodayToursPage';
+import ExecutiveDashboard from '@/pages/ExecutiveDashboard';
 import { useAppData } from '@/lib/useAppData';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 
-type View = 'dashboard' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'settings';
+export type View = 'dashboard' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive';
 
 const AppLayout = () => {
   const { user } = useAuth();
@@ -143,6 +145,8 @@ const AppLayout = () => {
             costsLoaded={adminCostsLoaded}
           />
         )}
+        {view === 'today' && <TodayToursPage />}
+        {view === 'executive' && <ExecutiveDashboard />}
         {view === 'settings' && <SettingsPage />}
       </main>
     </div>

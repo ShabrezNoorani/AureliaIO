@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, Upload, Trash2, Pencil, FileSpreadsheet, RefreshCw } from 'lucide-react';
+import { Plus, Upload, Trash2, Pencil, FileSpreadsheet, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useAppData } from '@/lib/useAppData';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -15,13 +15,13 @@ const PER_PAGE = 50;
 const STATUS_STYLES: Record<string, string> = {
   UPCOMING: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
   DONE: 'bg-green-500/15 text-green-400 border-green-500/20',
-  NO_SHOW: 'bg-orange-500/15 text-orange-400 border-orange-500/20',
+  NO_SHOW: 'bg-orange-500/15 text-orange-400 border-orange-500/20 text-[#f5a623] bg-[#f5a623]/10 border-[#f5a623]/20', // override to orange as requested
   CANCELLED_EARLY: 'bg-red-500/15 text-red-400 border-red-500/20',
   CANCELLED_LATE: 'bg-red-500/10 text-orange-400 border-orange-500/20',
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const label = status.replace(/_/g, ' ');
+  const label = status === 'NO_SHOW' ? 'No Show' : status.replace(/_/g, ' ');
   return (
     <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${STATUS_STYLES[status] || 'bg-secondary text-muted-foreground'}`}>
       {label}
@@ -30,16 +30,18 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function formatPax(b: any) {
-  const parts: string[] = [];
-  if (b.pax_adult) parts.push(`A:${b.pax_adult}`);
-  if (b.pax_youth) parts.push(`Y:${b.pax_youth}`);
-  if (b.pax_child) parts.push(`C:${b.pax_child}`);
-  if (b.pax_infant) parts.push(`I:${b.pax_infant}`);
-  return parts.join(' ') || '0';
+  return `A:${b.pax_adult || 0} Y:${b.pax_youth || 0} C:${b.pax_child || 0} I:${b.pax_infant || 0}`;
+}
+
+function calcTotalPax(b: any) {
+  return (b.pax_adult || 0) + (b.pax_youth || 0) + (b.pax_child || 0) + (b.pax_infant || 0);
 }
 
 function fmtEuro(v: number) {
-  return '€' + v.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const num = v || 0;
+  // include negative sign before euro symbol
+  if (num < 0) return '-€' + Math.abs(num).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return '€' + num.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
 interface LedgerPageProps {
@@ -83,32 +85,32 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
     if (search) {
       const q = search.toLowerCase();
       out = out.filter((b) =>
-        b.booking_ref.toLowerCase().includes(q) ||
-        b.customer_name.toLowerCase().includes(q) ||
-        b.product_name.toLowerCase().includes(q)
+        (b.booking_ref || '').toLowerCase().includes(q) ||
+        (b.customer_name || '').toLowerCase().includes(q) ||
+        (b.product_name || '').toLowerCase().includes(q)
       );
     }
     if (channelFilter !== 'All') out = out.filter((b) => b.channel === channelFilter);
     if (statusFilter !== 'All') out = out.filter((b) => b.status === statusFilter);
     if (travelMonth !== 'All') {
-      const mi = MONTHS.indexOf(travelMonth); // 1-based
-      out = out.filter((b) => new Date(b.travel_date).getMonth() + 1 === mi);
+      const mi = MONTHS.indexOf(travelMonth); 
+      out = out.filter((b) => b.travel_date && new Date(b.travel_date).getMonth() + 1 === mi);
     }
-    if (travelYear) out = out.filter((b) => new Date(b.travel_date).getFullYear() === Number(travelYear));
+    if (travelYear) out = out.filter((b) => b.travel_date && new Date(b.travel_date).getFullYear() === Number(travelYear));
     if (bookingMonth !== 'All') {
       const mi = MONTHS.indexOf(bookingMonth);
-      out = out.filter((b) => new Date(b.booking_date).getMonth() + 1 === mi);
+      out = out.filter((b) => b.booking_date && new Date(b.booking_date).getMonth() + 1 === mi);
     }
-    if (bookingYear) out = out.filter((b) => new Date(b.booking_date).getFullYear() === Number(bookingYear));
+    if (bookingYear) out = out.filter((b) => b.booking_date && new Date(b.booking_date).getFullYear() === Number(bookingYear));
     return out;
   }, [bookings, search, channelFilter, statusFilter, travelMonth, travelYear, bookingMonth, bookingYear]);
 
   // Summary
   const summary = useMemo(() => {
-    const rev = filtered.reduce((s, b) => s + b.gross_revenue, 0);
-    const comm = filtered.reduce((s, b) => s + b.commission_amount, 0);
-    const costs = filtered.reduce((s, b) => s + b.ticket_cost + b.guide_cost + b.extra_cost, 0);
-    const profit = filtered.reduce((s, b) => s + b.net_profit, 0);
+    const rev = filtered.reduce((s, b) => s + (b.gross_revenue || 0), 0);
+    const comm = filtered.reduce((s, b) => s + (b.marketplace_fee || 0), 0);
+    const costs = filtered.reduce((s, b) => s + (b.ticket_cost || 0) + (b.guide_cost || 0) + (b.extra_cost || 0), 0);
+    const profit = filtered.reduce((s, b) => s + (b.net_profit || 0), 0);
     return { rev, comm, costs, profit };
   }, [filtered]);
 
@@ -144,26 +146,23 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   };
 
   const bulkInsert = async (bs: any[]) => {
-    const { data } = await supabase.from('bookings').insert(
+    const { data, error } = await supabase.from('bookings').insert(
       bs.map((b) => ({ ...b, user_id: user?.id }))
     ).select();
     if (data) setBookings([...data, ...bookings]);
+    return { inserted: data ? data.length : 0, skipped: error ? bs.length : 0 };
   };
 
   const handleGsheetSync = async () => {
     const sheetId = localStorage.getItem('gsheet_id');
-    if (!sheetId) {
-      setSyncMsg('⚠ No Spreadsheet ID configured. Go to Settings first.');
-      return;
-    }
+    if (!sheetId) return setSyncMsg('⚠ No Spreadsheet ID configured. Go to Settings first.');
     if (!user) return;
     setSyncing(true);
     setSyncMsg('Syncing bookings…');
     try {
       const res = await syncMasterData(sheetId, user.id, supabase);
-      if (res.error) {
-        setSyncMsg(`❌ ${res.error}`);
-      } else {
+      if (res.error) setSyncMsg(`❌ ${res.error}`);
+      else {
         setSyncMsg(`✅ Imported ${res.imported} new · Updated ${res.updated} · Skipped ${res.skipped}`);
         onSync(); // Tell AppLayout to refetch
       }
@@ -174,8 +173,33 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
     }
   };
 
+  const handleForceSync = async () => {
+    const sheetId = localStorage.getItem('gsheet_id');
+    if (!sheetId) return setSyncMsg('⚠ No Spreadsheet ID configured. Go to Settings first.');
+    if (!user) return;
+    
+    if (!confirm("WARNING: This will delete ALL bookings for your account and re-import from the Google Sheet. Are you absolutely sure?")) return;
+    
+    setSyncing(true);
+    setSyncMsg('Deleting existing bookings...');
+    try {
+      await supabase.from('bookings').delete().eq('user_id', user.id);
+      setSyncMsg('Wait, refetching fresh bookings from GSheets...');
+      const res = await syncMasterData(sheetId, user.id, supabase);
+      if (res.error) setSyncMsg(`❌ ${res.error}`);
+      else {
+        setSyncMsg(`✅ Re-synced ${res.imported} bookings`);
+        onSync(); // Tell AppLayout to refetch
+      }
+    } catch {
+      setSyncMsg('❌ Forced Sync failed.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
-    <div className="p-8 max-w-[1600px] mx-auto animate-fade-in">
+    <div className="p-8 max-w-[1600px] mx-auto animate-fade-in pb-32">
       {/* Top bar */}
       <div className="flex justify-between items-center mb-6">
         <div>
@@ -193,6 +217,11 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
             className="aurelia-ghost-btn flex items-center gap-2 border border-border disabled:opacity-50">
             <RefreshCw size={14} className={syncing || !bookingsLoaded ? 'animate-spin' : ''} />
             {syncing || !bookingsLoaded ? 'Syncing…' : 'Sync from Google Sheets'}
+          </button>
+          <button onClick={handleForceSync} disabled={syncing || !bookingsLoaded}
+            className="aurelia-ghost-btn flex items-center gap-2 border border-orange-500/20 text-orange-400 hover:bg-orange-500/10 disabled:opacity-50">
+            <AlertTriangle size={14} />
+            Force Full Re-sync
           </button>
         </div>
       </div>
@@ -212,34 +241,34 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-6 items-end">
         <input
-          className="aurelia-input w-64"
+          className="aurelia-input w-64 text-xs"
           placeholder="Search booking ref, customer, product…"
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(0); }}
         />
-        <select className="aurelia-input w-28" value={channelFilter} onChange={(e) => { setChannelFilter(e.target.value); setPage(0); }}>
+        <select className="aurelia-input w-28 text-xs" value={channelFilter} onChange={(e) => { setChannelFilter(e.target.value); setPage(0); }}>
           {CHANNELS.map((c) => <option key={c}>{c}</option>)}
         </select>
-        <select className="aurelia-input w-36" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}>
+        <select className="aurelia-input w-36 text-xs" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}>
           {STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
         </select>
         <div className="flex items-center gap-1">
-          <select className="aurelia-input w-24" value={travelMonth} onChange={(e) => { setTravelMonth(e.target.value); setPage(0); }}>
+          <select className="aurelia-input w-24 text-xs" value={travelMonth} onChange={(e) => { setTravelMonth(e.target.value); setPage(0); }}>
             {MONTHS.map((m) => <option key={'t' + m}>{m}</option>)}
           </select>
-          <input className="aurelia-input w-20" placeholder="Year" value={travelYear}
+          <input className="aurelia-input w-20 text-xs" placeholder="Year" value={travelYear}
             onChange={(e) => { setTravelYear(e.target.value); setPage(0); }} />
           <span className="text-[9px] text-muted-foreground uppercase">Travel</span>
         </div>
         <div className="flex items-center gap-1">
-          <select className="aurelia-input w-24" value={bookingMonth} onChange={(e) => { setBookingMonth(e.target.value); setPage(0); }}>
+          <select className="aurelia-input w-24 text-xs" value={bookingMonth} onChange={(e) => { setBookingMonth(e.target.value); setPage(0); }}>
             {MONTHS.map((m) => <option key={'b' + m}>{m}</option>)}
           </select>
-          <input className="aurelia-input w-20" placeholder="Year" value={bookingYear}
+          <input className="aurelia-input w-20 text-xs" placeholder="Year" value={bookingYear}
             onChange={(e) => { setBookingYear(e.target.value); setPage(0); }} />
           <span className="text-[9px] text-muted-foreground uppercase">Booking</span>
         </div>
-        <button onClick={clearFilters} className="text-xs font-bold text-muted-foreground hover:text-gold transition-colors">
+        <button onClick={clearFilters} className="text-xs font-bold text-muted-foreground hover:text-gold transition-colors ml-2 pb-2">
           Clear filters
         </button>
       </div>
@@ -266,7 +295,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
         </div>
       </div>
 
-      {/* Loading state - only if NOT loaded AT ALL */}
+      {/* Loading state */}
       {(!bookingsLoaded && bookings.length === 0) && (
         <div className="flex items-center justify-center py-20">
           <div className="w-8 h-8 border-2 border-gold border-t-transparent rounded-full animate-spin" />
@@ -277,49 +306,95 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       {bookingsLoaded && bookings.length === 0 && (
         <div className="aurelia-card p-16 text-center">
           <FileSpreadsheet size={40} className="mx-auto text-muted-foreground/30 mb-4" />
-          <p className="text-sm text-muted-foreground">No bookings yet. Add your first booking or upload a CSV.</p>
+          <p className="text-sm text-muted-foreground">No bookings yet. Sync from Google Sheets to get started.</p>
         </div>
       )}
 
-      {/* Table */}
+      {/* Table - Horizontally Scrollable Exact Specifications */}
       {filtered.length > 0 && (
-        <div className="aurelia-card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+        <div className="aurelia-card relative flex flex-col w-full overflow-hidden">
+          <div className="overflow-x-auto w-full max-w-full block flex-1 scrollbar-hide aurelia-scrollbar">
+            <table className="w-full text-[13px] text-white table-fixed min-w-[1800px]">
               <thead>
-                <tr className="bg-surface-subtle border-b border-border">
-                  {['Ref', 'Ext Ref', 'Travel', 'Booked', 'Product', 'Option', 'Channel', 'Pax', 'Revenue', 'Comm.', 'Net Rev.', 'Costs', 'Profit', 'Status', ''].map((h) => (
-                    <th key={h} className="py-3 px-3 text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-                      {h}
+                <tr className="bg-[#13131a] border-b border-border">
+                  {[
+                    { key: 'Booking Ref', sticky: 'sticky left-0 z-20 shadow-[1px_0_0_0_#1e1e2e]' },
+                    { key: 'Ext. Ref' },
+                    { key: 'Product Code' },
+                    { key: 'Option' },
+                    { key: 'Customer Name' },
+                    { key: 'Customer Phone' },
+                    { key: 'Travel Date' },
+                    { key: 'Travel Time' },
+                    { key: 'Booking Date' },
+                    { key: 'Channel' },
+                    { key: 'Promo Code' },
+                    { key: 'Pax' },
+                    { key: 'Total Pax' },
+                    { key: 'Gross Revenue €', align: 'text-right' },
+                    { key: 'Commission %', align: 'text-right' },
+                    { key: 'Marketplace Fee €', align: 'text-right' },
+                    { key: 'Net Payout €', align: 'text-right' },
+                    { key: 'Guide Cost €', align: 'text-right' },
+                    { key: 'Extra Cost €', align: 'text-right' },
+                    { key: 'Ticket Cost €', align: 'text-right' },
+                    { key: 'Net Profit €', align: 'text-right' },
+                    { key: 'Status', sticky: 'sticky right-[80px] z-20 shadow-[-1px_0_0_0_#1e1e2e]' },
+                    { key: 'Assigned Guide' },
+                    { key: 'Actions', sticky: 'sticky right-0 z-20 shadow-[-1px_0_0_0_#1e1e2e]' }
+                  ].map((h) => (
+                    <th 
+                      key={h.key} 
+                      className={`py-3 px-3 text-left text-[11px] font-bold text-muted-foreground uppercase tracking-wider whitespace-nowrap bg-[#13131a] ${h.align || ''} ${h.sticky || 'relative'}`}
+                    >
+                      {h.key}
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {pageBookings.map((b, i) => (
-                  <tr key={b.id || i} className="border-b border-border/30 hover:bg-hover transition-colors">
-                    <td className="py-2.5 px-3 text-foreground font-medium whitespace-nowrap">{b.booking_ref || '—'}</td>
-                    <td className="py-2.5 px-3 text-muted-foreground whitespace-nowrap">{b.ext_ref || '—'}</td>
-                    <td className="py-2.5 px-3 text-foreground tabular-nums whitespace-nowrap">{b.travel_date}</td>
-                    <td className="py-2.5 px-3 text-muted-foreground tabular-nums whitespace-nowrap">{b.booking_date}</td>
-                    <td className="py-2.5 px-3 text-foreground whitespace-nowrap max-w-[120px] truncate">{b.product_name}</td>
-                    <td className="py-2.5 px-3 text-muted-foreground whitespace-nowrap max-w-[100px] truncate">{b.option_name || '—'}</td>
-                    <td className="py-2.5 px-3 text-foreground whitespace-nowrap">{b.channel}</td>
-                    <td className="py-2.5 px-3 text-muted-foreground tabular-nums whitespace-nowrap">{formatPax(b)}</td>
-                    <td className="py-2.5 px-3 text-foreground tabular-nums whitespace-nowrap">{fmtEuro(b.gross_revenue)}</td>
-                    <td className="py-2.5 px-3 text-muted-foreground tabular-nums whitespace-nowrap">{fmtEuro(b.commission_amount)}</td>
-                    <td className="py-2.5 px-3 text-foreground tabular-nums whitespace-nowrap">{fmtEuro(b.net_revenue)}</td>
-                    <td className="py-2.5 px-3 text-muted-foreground tabular-nums whitespace-nowrap">{fmtEuro(b.ticket_cost + b.guide_cost + b.extra_cost)}</td>
-                    <td className={`py-2.5 px-3 font-bold tabular-nums whitespace-nowrap ${b.net_profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>
+                  <tr key={b.id || i} className="border-b border-border/30 hover:bg-hover transition-colors group">
+                    <td className="py-2.5 px-3 text-white font-medium whitespace-nowrap bg-[#13131a] sticky left-0 z-10 shadow-[1px_0_0_0_#1e1e2e] group-hover:bg-[#1a1a2e]">
+                      {b.booking_ref || '—'}
+                    </td>
+                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{b.ext_ref || '—'}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap max-w-[120px] truncate">{b.product_name || '—'}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap max-w-[100px] truncate">{b.option_name || '—'}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap max-w-[100px] truncate">{b.customer_name || '—'}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{b.customer_phone || '—'}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap">{b.travel_date || '—'}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap">{b.travel_time || '—'}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-muted-foreground">{b.booking_date || '—'}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{b.channel || '—'}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground">{b.promo_code || '—'}</td>
+                    
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-emerald-400 font-mono text-[11px]">{formatPax(b)}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-center text-muted-foreground">{calcTotalPax(b)}</td>
+                    
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right">{fmtEuro(b.gross_revenue)}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{b.commission_rate ? `${b.commission_rate}%` : '—'}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{fmtEuro(b.marketplace_fee)}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right">{fmtEuro(b.net_revenue)}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{fmtEuro(b.guide_cost)}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{fmtEuro(b.extra_cost)}</td>
+                    <td className="py-2.5 px-3 tabular-nums whitespace-nowrap text-right text-muted-foreground">{fmtEuro(b.ticket_cost)}</td>
+                    <td className={`py-2.5 px-3 font-bold tabular-nums whitespace-nowrap text-right ${b.net_profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>
                       {fmtEuro(b.net_profit)}
                     </td>
-                    <td className="py-2.5 px-3 whitespace-nowrap"><StatusBadge status={b.status} /></td>
-                    <td className="py-2.5 px-3 whitespace-nowrap">
-                      <div className="flex gap-1">
-                        <button onClick={() => handleEdit(b)} className="p-1 text-muted-foreground hover:text-gold transition-colors">
+                    
+                    <td className="py-2.5 px-3 whitespace-nowrap bg-[#13131a] sticky right-[80px] z-10 shadow-[-1px_0_0_0_#1e1e2e] group-hover:bg-[#1a1a2e]">
+                      <StatusBadge status={b.status} />
+                    </td>
+                    
+                    <td className="py-2.5 px-3 whitespace-nowrap text-muted-foreground truncate max-w-[100px]">{b.assigned_guide || '—'}</td>
+                    
+                    <td className="py-2.5 px-3 whitespace-nowrap bg-[#13131a] sticky right-0 z-10 shadow-[-1px_0_0_0_#1e1e2e] group-hover:bg-[#1a1a2e]">
+                      <div className="flex gap-2">
+                        <button onClick={() => handleEdit(b)} className="p-1 px-1.5 rounded bg-white/5 border border-white/10 text-muted-foreground hover:text-gold hover:bg-white/10 transition-colors">
                           <Pencil size={12} />
                         </button>
-                        <button onClick={() => handleDelete(b)} className="p-1 text-muted-foreground hover:text-profit-negative transition-colors">
+                        <button onClick={() => handleDelete(b)} className="p-1 px-1.5 rounded bg-red-500/5 text-muted-foreground border border-red-500/20 hover:text-red-400 hover:bg-red-500/10 transition-colors">
                           <Trash2 size={12} />
                         </button>
                       </div>
@@ -331,7 +406,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
           </div>
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="flex justify-between items-center px-4 py-3 border-t border-border">
+            <div className="flex justify-between items-center px-4 py-3 border-t border-border mt-1 relative z-30 bg-[#13131a]">
               <span className="text-xs text-muted-foreground">
                 Showing {page * PER_PAGE + 1}–{Math.min((page + 1) * PER_PAGE, filtered.length)} of {filtered.length}
               </span>

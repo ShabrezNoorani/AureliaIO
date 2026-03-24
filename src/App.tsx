@@ -12,6 +12,8 @@ import LoginPage from "./pages/LoginPage";
 import PricingPage from "./pages/PricingPage";
 import AppLayout from "./pages/AppLayout";
 import BlogPage from "./pages/BlogPage";
+import BlogPostPage from "./pages/BlogPostPage";
+import BlogAdminPage from "./pages/BlogAdminPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,6 +34,7 @@ const App = () => (
               <Route path="/login" element={<LoginPage />} />
               <Route path="/pricing" element={<PricingPage />} />
               <Route path="/blog" element={<BlogPage />} />
+              <Route path="/blog/:slug" element={<BlogPostPage />} />
 
               {/* Protected app */}
               <Route
@@ -41,7 +44,9 @@ const App = () => (
                     <AppLayout />
                   </ProtectedRoute>
                 }
-              />
+              >
+                <Route path="blog-admin" element={<BlogAdminPage />} />
+              </Route>
 
               <Route path="*" element={<NotFound />} />
             </Routes>

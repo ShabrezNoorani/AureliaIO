@@ -12,7 +12,6 @@ const FINANCIAL_FIGURES = [
 const SYMBOLS = ['€', '£', '$', '%', '↑', '↗', '↘', '✓'];
 
 const GRID_OPACITY = 0.15;
-const GRID_COLOR = '#f5a623';
 const GRID_SPACING = 80;
 
 // ──────────── Types ────────────
@@ -127,40 +126,59 @@ export default function FinancialCanvas() {
       canvas.style.width = w + 'px';
       canvas.style.height = h + 'px';
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      initElements();
     };
+
+    let numbers: FallingNumber[] = [];
+    let charts: MiniChart[] = [];
+    let symbols: FloatingSymbol[] = [];
+
+    const initElements = () => {
+      const NUM_NUMBERS = 25;
+      const NUM_CHARTS = 8;
+      const NUM_SYMBOLS = 15;
+
+      numbers = [];
+      for (let i = 0; i < NUM_NUMBERS; i++) {
+        const n = createFallingNumber(w, false);
+        n.y = Math.random() * h; 
+        numbers.push(n);
+      }
+
+      charts = [];
+      for (let i = 0; i < NUM_CHARTS; i++) {
+        const c = createMiniChart(w, h);
+        c.y = Math.random() * h; 
+        charts.push(c);
+      }
+
+      symbols = [];
+      for (let i = 0; i < NUM_SYMBOLS; i++) {
+        const s = createFloatingSymbol(w, h);
+        s.y = Math.random() * h; 
+        symbols.push(s);
+      }
+    };
+
     resize();
     window.addEventListener('resize', resize);
 
-    // Initialize elements
-    const NUM_NUMBERS = 25;
-    const NUM_CHARTS = 8;
-    const NUM_SYMBOLS = 15;
-
-    const numbers: FallingNumber[] = [];
-    for (let i = 0; i < NUM_NUMBERS; i++) {
-      const n = createFallingNumber(w, false);
-      n.y = Math.random() * h; // spread across screen initially
-      numbers.push(n);
-    }
-
-    const charts: MiniChart[] = [];
-    for (let i = 0; i < NUM_CHARTS; i++) {
-      const c = createMiniChart(w, h);
-      c.y = Math.random() * h; // spread initially
-      charts.push(c);
-    }
-
-    const symbols: FloatingSymbol[] = [];
-    for (let i = 0; i < NUM_SYMBOLS; i++) {
-      const s = createFloatingSymbol(w, h);
-      s.y = Math.random() * h; // spread initially
-      symbols.push(s);
-    }
+    // Theme listener setup
+    let canvasColor = '#f5a623'; // fallback
+    const updateThemeColor = () => {
+      // Small timeout ensures CSS vars match up visually
+      setTimeout(() => {
+        const raw = getComputedStyle(document.documentElement).getPropertyValue('--theme-accent').trim();
+        if (raw) canvasColor = `hsl(${raw})`;
+      }, 50);
+    };
+    updateThemeColor();
+    window.addEventListener('themechange', updateThemeColor);
 
     // ──── Draw grid ────
     function drawGrid() {
       ctx!.save();
-      ctx!.strokeStyle = GRID_COLOR;
+      ctx!.strokeStyle = canvasColor;
       ctx!.globalAlpha = GRID_OPACITY;
       ctx!.lineWidth = 0.5;
 
@@ -182,7 +200,10 @@ export default function FinancialCanvas() {
       if (mouseX > -1000) {
         ctx!.save();
         const grad = ctx!.createRadialGradient(mouseX, mouseY, 0, mouseX, mouseY, 150);
-        grad.addColorStop(0, 'rgba(245, 166, 35, 0.04)');
+        // Using raw parsing for generic drop-ins based on CSS variables wouldn't natively match HSL/rgba intersections flawlessly. 
+        // Best approach is a raw color mapping off the theme variable base if needed, but for simplicity a static soft glow using raw CSS works.
+        const glowColor = getComputedStyle(document.documentElement).getPropertyValue('--gold-glow').trim() || '245 166 35 / 0.15';
+        grad.addColorStop(0, `hsl(${glowColor})`);
         grad.addColorStop(1, 'transparent');
         ctx!.fillStyle = grad;
         ctx!.beginPath();
@@ -220,14 +241,17 @@ export default function FinancialCanvas() {
         if (alpha <= 0 && dist >= 120) { n.y += currentSpeed; continue; }
 
         ctx!.globalAlpha = Math.max(0, Math.min(1, alpha));
-        ctx!.fillStyle = GRID_COLOR;
+        ctx!.fillStyle = canvasColor;
         ctx!.font = `500 ${n.fontSize}px Inter, monospace`;
         ctx!.fillText(n.text, n.x, n.y);
 
         n.y += currentSpeed;
-        if (n.y > h + 30) {
-          Object.assign(n, createFallingNumber(w, true));
+        if (n.y > h) {
+          n.y = -20;
+          n.x = Math.random() * w;
         }
+        if (n.x < -100) n.x = w;
+        if (n.x > w + 100) n.x = 0;
       }
       ctx!.restore();
 
@@ -251,7 +275,7 @@ export default function FinancialCanvas() {
         if (alpha <= 0 && dist >= 120) { c.y -= currentSpeed; continue; }
 
         ctx!.globalAlpha = Math.max(0, Math.min(1, alpha));
-        ctx!.strokeStyle = GRID_COLOR;
+        ctx!.strokeStyle = canvasColor;
         ctx!.lineWidth = 1;
 
         ctx!.save();
@@ -272,9 +296,12 @@ export default function FinancialCanvas() {
 
         c.y -= currentSpeed;
         c.rotation += c.rotationSpeed;
-        if (c.y < -40) {
-          Object.assign(c, createMiniChart(w, h));
+        if (c.y < -50) {
+          c.y = h + 50;
+          c.x = Math.random() * w;
         }
+        if (c.x < -100) c.x = w;
+        if (c.x > w + 100) c.x = 0;
       }
       ctx!.restore();
 
@@ -299,14 +326,17 @@ export default function FinancialCanvas() {
         if (alpha <= 0 && dist >= 120) { s.y -= currentSpeed; continue; }
 
         ctx!.globalAlpha = Math.max(0, Math.min(1, alpha));
-        ctx!.fillStyle = GRID_COLOR;
+        ctx!.fillStyle = canvasColor;
         ctx!.fillText(s.text, s.x, s.y);
 
         s.y -= currentSpeed;
         s.x += s.drift;
         if (s.y < -20) {
-          Object.assign(s, createFloatingSymbol(w, h));
+          s.y = h + 20;
+          s.x = Math.random() * w;
         }
+        if (s.x < -100) s.x = w;
+        if (s.x > w + 100) s.x = 0;
       }
       ctx!.restore();
 
@@ -318,6 +348,7 @@ export default function FinancialCanvas() {
     return () => {
       window.removeEventListener('resize', resize);
       window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('themechange', updateThemeColor);
       cancelAnimationFrame(rafRef.current);
     };
   }, []);

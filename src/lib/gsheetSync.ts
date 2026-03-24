@@ -14,6 +14,9 @@ const STATUS_MAP: Record<string, string> = {
   CANCELLED: 'CANCELLED_EARLY',
   UPCOMING: 'UPCOMING',
   'NO SHOW': 'NO_SHOW',
+  'No Show': 'NO_SHOW',
+  'NO_SHOW': 'NO_SHOW',
+  'NOSHOW': 'NO_SHOW',
 };
 
 const COST_CATEGORY_MAP: Record<string, string> = {
@@ -133,8 +136,21 @@ export async function syncMasterData(
 
     const channel = CHANNEL_MAP[cols[11]] || 'Other';
     const grossRevenue = parseEuro(cols[17]);
-    const commissionRate = parseNum(cols[18]);
-    const commissionAmount = +(grossRevenue * commissionRate / 100).toFixed(2);
+    
+    let commissionRateForm = parseFloat((cols[18] || '').replace(/[^0-9.]/g, '')) || 0;
+    if (commissionRateForm > 0 && commissionRateForm <= 1) {
+      commissionRateForm = +(commissionRateForm * 100).toFixed(2);
+    }
+    const commissionRate = commissionRateForm;
+    const marketplaceFee = parseEuro(cols[19]);
+    
+    let commissionAmount = 0;
+    if (marketplaceFee > 0) {
+      commissionAmount = marketplaceFee;
+    } else {
+      commissionAmount = +(grossRevenue * commissionRate / 100).toFixed(2);
+    }
+
     const netRevenue = parseEuro(cols[20]);
     const guideCost = parseEuro(cols[21]);
     const extraCost = parseEuro(cols[22]);
@@ -142,6 +158,7 @@ export async function syncMasterData(
     const netProfit = parseEuro(cols[24]);
     const statusRaw = (cols[25] || '').toUpperCase().trim();
     const status = STATUS_MAP[statusRaw] || 'UPCOMING';
+    const assignedGuide = cols[26] || '';
 
     const travelDate = parseLongDate(cols[9]);
     const bookingDate = parseLongDate(cols[33]);
@@ -150,7 +167,7 @@ export async function syncMasterData(
       user_id: userId,
       booking_ref: bookingRef,
       ext_ref: cols[3] || '',
-      product_name: cols[5] || '',
+      product_name: cols[4] || '',
       option_name: cols[5] || '',
       customer_name: cols[6] || '',
       customer_phone: cols[7] || '',
@@ -164,12 +181,14 @@ export async function syncMasterData(
       gross_revenue: grossRevenue,
       commission_rate: commissionRate,
       commission_amount: commissionAmount,
+      marketplace_fee: marketplaceFee,
       net_revenue: netRevenue,
       guide_cost: guideCost,
       extra_cost: extraCost,
       ticket_cost: ticketCost,
       net_profit: netProfit,
       status,
+      assigned_guide: assignedGuide,
       notes: '',
     };
 
