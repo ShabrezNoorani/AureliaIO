@@ -168,12 +168,16 @@ export async function syncMasterData(
     const travelDate = parseLongDate(cols[9]);
     const bookingDate = parseLongDate(cols[33]);
 
-    const ext_ref = (cols[3] && cols[3].toString().trim() !== '') ? cols[3].toString().trim() : null;
+    console.log('INSERTING:', {
+      booking_ref: cols[2],
+      ext_ref: cols[3],
+      channel: cols[11]
+    });
 
     const booking: Record<string, unknown> = {
       user_id: userId,
-      booking_ref: bookingRef,
-      ext_ref,
+      booking_ref: cols[2]?.toString().trim() || null,
+      ext_ref: cols[3]?.toString().trim() || null,
       product_name: cols[4] || '',
       option_name: cols[5] || '',
       customer_name: cols[6] || '',
