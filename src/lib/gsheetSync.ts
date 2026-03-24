@@ -166,7 +166,7 @@ export async function syncMasterData(
     const booking: Record<string, unknown> = {
       user_id: userId,
       booking_ref: bookingRef,
-      ext_ref: cols[3] || '',
+      ext_ref: (cols[3] || '').trim() || '—',
       product_name: cols[4] || '',
       option_name: cols[5] || '',
       customer_name: cols[6] || '',

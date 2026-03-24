@@ -1,15 +1,62 @@
-import { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { useNavigate } from 'react-router-dom';
 import { 
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, ScatterChart, Scatter, ZAxis, 
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
-import { Filter, Calendar, TrendingUp, AlertTriangle } from 'lucide-react';
+import { Filter, Calendar, TrendingUp, AlertTriangle, ArrowLeft, Package } from 'lucide-react';
 
 const COLORS = ['#3b82f6', '#10b981', '#f5a623', '#8b5cf6', '#64748b', '#f43f5e', '#06b6d4'];
 
-export default function AnalyticsPage() {
+class AnalyticsErrorBoundary extends Component<{children: ReactNode, resetError: () => void, navigate: any}, {hasError: boolean, error: any}> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Analytics Error Boundary Caught:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 pb-32 max-w-[1600px] mx-auto text-white animate-fade-in">
+          <div className="flex items-center gap-3 mb-8">
+            <button onClick={() => this.props.navigate('/app')} className="aurelia-ghost-btn p-2 mr-2">
+              <ArrowLeft size={20} />
+            </button>
+            <h1 className="text-2xl font-bold text-red-500 flex items-center gap-2"><AlertTriangle /> Analytics Error</h1>
+            <div className="flex-1" />
+            <button onClick={() => this.props.navigate('/app')} className="aurelia-ghost-btn px-4 py-2">Back to Dashboard</button>
+          </div>
+          <div className="aurelia-card p-8 border-red-500/30 bg-red-500/5 text-center flex flex-col items-center">
+            <AlertTriangle size={48} className="text-red-400 mb-4" />
+            <h2 className="text-xl font-bold text-red-400 mb-2">Something went wrong rendering the charts.</h2>
+            <p className="text-red-200/70 mb-6 max-w-lg">There was an unexpected error parsing the dataset. Please report this issue or try reloading the page.</p>
+            <button onClick={() => window.location.reload()} className="aurelia-gold-btn px-6 py-2">Reload Page</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+export default function AnalyticsPageWrapper() {
+  const navigate = useNavigate();
+  return (
+    <AnalyticsErrorBoundary navigate={navigate} resetError={() => {}}>
+      <AnalyticsPage />
+    </AnalyticsErrorBoundary>
+  );
+}
+
+function AnalyticsPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [bookings, setBookings] = useState<any[]>([]);
@@ -25,17 +72,24 @@ export default function AnalyticsPage() {
   // Load data
   useEffect(() => {
     if (!user) return;
+    setLoading(true);
     supabase.from('bookings').select('*').eq('user_id', user.id)
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) console.error("Error fetching bookings:", error);
         setBookings(data || []);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error("Caught error fetching bookings:", err);
+        setBookings([]);
         setLoading(false);
       });
   }, [user]);
 
   // Derived filter options
-  const uniqueProducts = useMemo(() => Array.from(new Set(bookings.map(b => b.product_name).filter(Boolean))), [bookings]);
-  const uniqueChannels = useMemo(() => Array.from(new Set(bookings.map(b => b.channel).filter(Boolean))), [bookings]);
-  const uniqueStatuses = useMemo(() => Array.from(new Set(bookings.map(b => b.status).filter(Boolean))), [bookings]);
+  const uniqueProducts = useMemo(() => Array.from(new Set((bookings || []).map(b => b?.product_name).filter(Boolean))), [bookings]);
+  const uniqueChannels = useMemo(() => Array.from(new Set((bookings || []).map(b => b?.channel).filter(Boolean))), [bookings]);
+  const uniqueStatuses = useMemo(() => Array.from(new Set((bookings || []).map(b => b?.status).filter(Boolean))), [bookings]);
 
   const handleReset = () => {
     setDateMode('travel');
@@ -49,21 +103,27 @@ export default function AnalyticsPage() {
 
   // Filter Data
   const filteredBookings = useMemo(() => {
+    if (!bookings || bookings.length === 0) return [];
     return bookings.filter(b => {
-      const dStr = dateMode === 'travel' ? b.travel_date : b.booking_date;
-      if (!dStr) return false;
-      const d = new Date(dStr);
+      try {
+        const dStr = dateMode === 'travel' ? b?.travel_date : b?.booking_date;
+        if (!dStr) return false;
+        const d = new Date(dStr);
+        if (isNaN(d.getTime())) return false;
 
-      if (yearFilter !== 'All' && d.getFullYear().toString() !== yearFilter) return false;
-      if (monthFilter !== 'All') {
-        const mIdx = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(monthFilter);
-        if (d.getMonth() !== mIdx) return false;
+        if (yearFilter !== 'All' && d.getFullYear().toString() !== yearFilter) return false;
+        if (monthFilter !== 'All') {
+          const mIdx = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(monthFilter);
+          if (d.getMonth() !== mIdx) return false;
+        }
+        if (productFilter !== 'All' && b?.product_name !== productFilter) return false;
+        if (channelFilter !== 'All' && b?.channel !== channelFilter) return false;
+        if (statusFilter !== 'All' && b?.status !== statusFilter) return false;
+        
+        return true;
+      } catch (err) {
+        return false;
       }
-      if (productFilter !== 'All' && b.product_name !== productFilter) return false;
-      if (channelFilter !== 'All' && b.channel !== channelFilter) return false;
-      if (statusFilter !== 'All' && b.status !== statusFilter) return false;
-      
-      return true;
     });
   }, [bookings, dateMode, yearFilter, monthFilter, productFilter, channelFilter, statusFilter]);
 
@@ -73,12 +133,13 @@ export default function AnalyticsPage() {
     let totPax = 0;
     let gross = 0;
     let net = 0;
-    filteredBookings.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status)) return;
+    const items = filteredBookings || [];
+    items.forEach(b => {
+      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
       totBk++;
-      totPax += (b.pax_adult||0) + (b.pax_youth||0) + (b.pax_child||0) + (b.pax_infant||0);
-      gross += (b.gross_revenue||0);
-      net += (b.net_profit||0); // Approximation assuming costs are per booking
+      totPax += (b?.pax_adult||0) + (b?.pax_youth||0) + (b?.pax_child||0) + (b?.pax_infant||0);
+      gross += (b?.gross_revenue||0);
+      net += (b?.net_profit||0); 
     });
     return { totBk, totPax, gross, net, margin: gross > 0 ? net / gross : 0 };
   }, [filteredBookings]);
@@ -88,31 +149,35 @@ export default function AnalyticsPage() {
   
   const trendData = useMemo(() => {
     const map: Record<string, any> = {};
-    filteredBookings.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status)) return;
-      const dStr = dateMode === 'travel' ? b.travel_date : b.booking_date;
-      const d = new Date(dStr);
-      if (isNaN(d.getTime())) return;
-      
-      const monStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-      if (!map[monStr]) map[monStr] = { month: monStr, sort: d.getTime(), Gross: 0, Net: 0 };
-      
-      if (trendMode === 'Monthly') {
-        map[monStr].Gross += (b.gross_revenue||0);
-        map[monStr].Net += (b.net_profit||0);
-      } else if (trendMode === 'By Product') {
-        const p = b.product_name || 'Unknown';
-        map[monStr][p] = (map[monStr][p] || 0) + (b.gross_revenue||0);
-      } else if (trendMode === 'By Channel') {
-        const c = b.channel || 'Unknown';
-        map[monStr][c] = (map[monStr][c] || 0) + (b.gross_revenue||0);
-      }
+    const items = filteredBookings || [];
+    items.forEach(b => {
+      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
+      try {
+        const dStr = dateMode === 'travel' ? b?.travel_date : b?.booking_date;
+        const d = new Date(dStr);
+        if (isNaN(d.getTime())) return;
+        
+        const monStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+        if (!map[monStr]) map[monStr] = { month: monStr, sort: d.getTime(), Gross: 0, Net: 0 };
+        
+        if (trendMode === 'Monthly') {
+          map[monStr].Gross += (b?.gross_revenue||0);
+          map[monStr].Net += (b?.net_profit||0);
+        } else if (trendMode === 'By Product') {
+          const p = b?.product_name || 'Unknown';
+          map[monStr][p] = (map[monStr][p] || 0) + (b?.gross_revenue||0);
+        } else if (trendMode === 'By Channel') {
+          const c = b?.channel || 'Unknown';
+          map[monStr][c] = (map[monStr][c] || 0) + (b?.gross_revenue||0);
+        }
+      } catch (e) {}
     });
     return Object.values(map).sort((a,b) => a.sort - b.sort);
   }, [filteredBookings, trendMode, dateMode]);
 
   const trendKeys = useMemo(() => {
     if (trendMode === 'Monthly') return [];
+    if (!trendData || trendData.length === 0) return [];
     const keys = new Set<string>();
     trendData.forEach(d => Object.keys(d).forEach(k => { if (k !== 'month' && k !== 'sort') keys.add(k); }));
     return Array.from(keys);
@@ -121,8 +186,9 @@ export default function AnalyticsPage() {
   // 3. CHARTS SIDE BY SIDE
   const donutData = useMemo(() => {
     const map: Record<string, number> = {};
-    filteredBookings.forEach(b => {
-      const s = b.status || 'UNKNOWN';
+    const items = filteredBookings || [];
+    items.forEach(b => {
+      const s = b?.status || 'UNKNOWN';
       map[s] = (map[s] || 0) + 1;
     });
     return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a,b) => b.value - a.value);
@@ -130,12 +196,13 @@ export default function AnalyticsPage() {
 
   const channelBarData = useMemo(() => {
     const map: Record<string, {Gross: number, Net: number}> = {};
-    filteredBookings.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status)) return;
-      const c = b.channel || 'Unknown';
+    const items = filteredBookings || [];
+    items.forEach(b => {
+      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
+      const c = b?.channel || 'Unknown';
       if (!map[c]) map[c] = {Gross:0, Net:0};
-      map[c].Gross += (b.gross_revenue||0);
-      map[c].Net += (b.net_profit||0);
+      map[c].Gross += (b?.gross_revenue||0);
+      map[c].Net += (b?.net_profit||0);
     });
     return Object.entries(map).map(([name, vals]) => ({ name, ...vals })).sort((a,b) => b.Gross - a.Gross);
   }, [filteredBookings]);
@@ -143,26 +210,29 @@ export default function AnalyticsPage() {
   // 4. MONTHLY BREAKDOWN TABLE
   const monthlyTable = useMemo(() => {
     const map: Record<string, any> = {};
-    filteredBookings.forEach(b => {
-      const dStr = dateMode === 'travel' ? b.travel_date : b.booking_date;
-      const d = new Date(dStr);
-      if (isNaN(d.getTime())) return;
-      const monStr = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]} ${d.getFullYear()}`;
-      
-      if (!map[monStr]) map[monStr] = { month: monStr, sort: d.getTime(), bk: 0, pax: 0, gross: 0, comm: 0, netr: 0, costs: 0, netp: 0, cancLoss: 0 };
-      
-      const isCanc = ['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status);
-      if (isCanc) {
-        map[monStr].cancLoss += (b.ticket_cost||0);
-      } else {
-        map[monStr].bk++;
-        map[monStr].pax += (b.pax_adult||0) + (b.pax_youth||0) + (b.pax_child||0) + (b.pax_infant||0);
-        map[monStr].gross += (b.gross_revenue||0);
-        map[monStr].comm += (b.marketplace_fee||0);
-        map[monStr].netr += (b.net_revenue||0);
-        map[monStr].costs += (b.ticket_cost||0) + (b.guide_cost||0) + (b.extra_cost||0);
-        map[monStr].netp += (b.net_profit||0);
-      }
+    const items = filteredBookings || [];
+    items.forEach(b => {
+      try {
+        const dStr = dateMode === 'travel' ? b?.travel_date : b?.booking_date;
+        const d = new Date(dStr);
+        if (isNaN(d.getTime())) return;
+        const monStr = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]} ${d.getFullYear()}`;
+        
+        if (!map[monStr]) map[monStr] = { month: monStr, sort: d.getTime(), bk: 0, pax: 0, gross: 0, comm: 0, netr: 0, costs: 0, netp: 0, cancLoss: 0 };
+        
+        const isCanc = ['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '');
+        if (isCanc) {
+          map[monStr].cancLoss += (b?.ticket_cost||0);
+        } else {
+          map[monStr].bk++;
+          map[monStr].pax += (b?.pax_adult||0) + (b?.pax_youth||0) + (b?.pax_child||0) + (b?.pax_infant||0);
+          map[monStr].gross += (b?.gross_revenue||0);
+          map[monStr].comm += (b?.marketplace_fee||0);
+          map[monStr].netr += (b?.net_revenue||0);
+          map[monStr].costs += (b?.ticket_cost||0) + (b?.guide_cost||0) + (b?.extra_cost||0);
+          map[monStr].netp += (b?.net_profit||0);
+        }
+      } catch (e) {}
     });
 
     const arr = Object.values(map).sort((a,b) => b.sort - a.sort).map(m => ({
@@ -170,7 +240,6 @@ export default function AnalyticsPage() {
       margin: m.gross > 0 ? m.netp / m.gross : 0
     }));
 
-    // Add total row
     if (arr.length > 0) {
       const tot = arr.reduce((s, row) => {
         s.bk += row.bk; s.pax += row.pax; s.gross += row.gross; 
@@ -189,13 +258,14 @@ export default function AnalyticsPage() {
 
   const productList = useMemo(() => {
     const map: Record<string, {bk: number, gross: number, net: number}> = {};
-    filteredBookings.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status)) return;
-      const p = b.product_name || 'Unknown';
+    const items = filteredBookings || [];
+    items.forEach(b => {
+      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
+      const p = b?.product_name || 'Unknown';
       if (!map[p]) map[p] = {bk: 0, gross: 0, net: 0};
       map[p].bk++;
-      map[p].gross += (b.gross_revenue||0);
-      map[p].net += (b.net_profit||0);
+      map[p].gross += (b?.gross_revenue||0);
+      map[p].net += (b?.net_profit||0);
     });
     return Object.entries(map).map(([name, vals]) => ({
       name, ...vals, margin: vals.gross > 0 ? vals.net / vals.gross : 0
@@ -204,26 +274,29 @@ export default function AnalyticsPage() {
 
   const activeProductData = useMemo(() => {
     if (!productDrilldown) return null;
-    const prodBks = filteredBookings.filter(b => b.product_name === productDrilldown && !['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status));
+    const items = filteredBookings || [];
+    const prodBks = items.filter(b => b?.product_name === productDrilldown && !['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || ''));
+    if (prodBks.length === 0) return null;
     
-    // Bar chart
     const monMap: Record<string, number> = {};
     const optMap: Record<string, any> = {};
     const chanMap: Record<string, number> = {};
 
     prodBks.forEach(b => {
-      const d = new Date(dateMode === 'travel' ? b.travel_date : b.booking_date);
-      if (!isNaN(d.getTime())) {
-        const m = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]} ${d.getFullYear()}`;
-        monMap[m] = (monMap[m] || 0) + (b.gross_revenue||0);
-      }
+      try {
+        const d = new Date(dateMode === 'travel' ? b?.travel_date : b?.booking_date);
+        if (!isNaN(d.getTime())) {
+          const m = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]} ${d.getFullYear()}`;
+          monMap[m] = (monMap[m] || 0) + (b?.gross_revenue||0);
+        }
+      } catch (e) {}
       
-      const opt = b.option_name || 'Default';
+      const opt = b?.option_name || 'Default';
       if (!optMap[opt]) optMap[opt] = { opt, bk: 0, gross: 0, net: 0 };
-      optMap[opt].bk++; optMap[opt].gross += (b.gross_revenue||0); optMap[opt].net += (b.net_profit||0);
+      optMap[opt].bk++; optMap[opt].gross += (b?.gross_revenue||0); optMap[opt].net += (b?.net_profit||0);
       
-      const c = b.channel || 'Unknown';
-      chanMap[c] = (chanMap[c] || 0) + (b.gross_revenue||0);
+      const c = b?.channel || 'Unknown';
+      chanMap[c] = (chanMap[c] || 0) + (b?.gross_revenue||0);
     });
 
     const monthBars = Object.entries(monMap).map(([m,v]) => ({ month: m, rev: v }));
@@ -241,30 +314,33 @@ export default function AnalyticsPage() {
   // 6. PIPELINE SCATTER PLOT
   const scatterData = useMemo(() => {
     const arr: any[] = [];
-    filteredBookings.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status)) return;
-      if (!b.booking_date || !b.travel_date) return;
-      const bd = new Date(b.booking_date).getTime();
-      const td = new Date(b.travel_date).getTime();
-      const leadMs = td - bd;
-      if (leadMs < 0) return;
-      const leadDays = Math.floor(leadMs / (1000*60*60*24));
-      
-      arr.push({
-        x: bd,
-        y: td,
-        z: (b.gross_revenue||0), // size
-        channel: b.channel || 'Other',
-        leadDays,
-        bookingRef: b.booking_ref,
-        travelDate: b.travel_date
-      });
+    const items = filteredBookings || [];
+    items.forEach(b => {
+      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
+      if (!b?.booking_date || !b?.travel_date) return;
+      try {
+        const bd = new Date(b.booking_date).getTime();
+        const td = new Date(b.travel_date).getTime();
+        const leadMs = td - bd;
+        if (leadMs < 0 || isNaN(leadMs)) return;
+        const leadDays = Math.floor(leadMs / (1000*60*60*24));
+        
+        arr.push({
+          x: bd,
+          y: td,
+          z: (b?.gross_revenue||0), // size
+          channel: b?.channel || 'Other',
+          leadDays,
+          bookingRef: b?.booking_ref,
+          travelDate: b?.travel_date
+        });
+      } catch (e) {}
     });
     return arr;
   }, [filteredBookings]);
 
   const pipelineStats = useMemo(() => {
-    if (scatterData.length === 0) return null;
+    if (!scatterData || scatterData.length === 0) return null;
     let sum = 0, max = 0;
     const freq: Record<number, number> = {};
     scatterData.forEach(d => {
@@ -280,38 +356,42 @@ export default function AnalyticsPage() {
 
   // 7. CANCELLATION ANALYSIS
   const cancelData = useMemo(() => {
-    const cancs = bookings.filter(b => ['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status));
-    const totBk = bookings.length;
+    const bks = bookings || [];
+    const cancs = bks.filter(b => ['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || ''));
+    const totBk = bks.length;
     
     let revLost = 0;
     let tickLost = 0;
     const monMap: Record<string, {c: number, t: number}> = {};
     
     cancs.forEach(b => {
-      revLost += (b.gross_revenue||0);
-      tickLost += (b.ticket_cost||0);
-      
-      const d = new Date(b.travel_date);
-      if (!isNaN(d.getTime())) {
-        const m = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        if (!monMap[m]) monMap[m] = {c:0, t:0};
-        monMap[m].c++;
-      }
+      revLost += (b?.gross_revenue||0);
+      tickLost += (b?.ticket_cost||0);
+      try {
+        const d = new Date(b?.travel_date);
+        if (!isNaN(d.getTime())) {
+          const m = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          if (!monMap[m]) monMap[m] = {c:0, t:0};
+          monMap[m].c++;
+        }
+      } catch (e) {}
     });
 
-    bookings.forEach(b => {
-       const d = new Date(b.travel_date);
-       if (!isNaN(d.getTime())) {
-        const m = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-        if (monMap[m]) monMap[m].t++;
-       }
+    bks.forEach(b => {
+      try {
+         const d = new Date(b?.travel_date);
+         if (!isNaN(d.getTime())) {
+          const m = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+          if (monMap[m]) monMap[m].t++;
+         }
+      } catch (e) {}
     });
 
     const chart = Object.entries(monMap).sort((a,b) => a[0].localeCompare(b[0])).map(([m,v]) => ({
       month: m, cancels: v.c, rate: v.t > 0 ? (v.c / v.t)*100 : 0
     }));
 
-    const table = [...cancs].sort((a,b) => (b.ticket_cost||0) - (a.ticket_cost||0)).slice(0, 50);
+    const table = [...cancs].sort((a,b) => (b?.ticket_cost||0) - (a?.ticket_cost||0)).slice(0, 50);
 
     return { 
       rate: totBk > 0 ? (cancs.length / totBk)*100 : 0, 
@@ -322,16 +402,58 @@ export default function AnalyticsPage() {
     };
   }, [bookings]);
 
-  const fmtE = (v: number) => `€${v.toLocaleString(undefined, {maximumFractionDigits:0})}`;
-  const fmtP = (v: number) => `${(v*100).toFixed(1)}%`;
+  const fmtE = (v: number) => `€${(v||0).toLocaleString(undefined, {maximumFractionDigits:0})}`;
+  const fmtP = (v: number) => `${((v||0)*100).toFixed(1)}%`;
 
-  if (loading) return <div className="p-16 flex justify-center"><div className="animate-spin w-8 h-8 rounded-full border-t-2 border-gold" /></div>;
+  if (loading) return (
+    <div className="p-8 pb-32 max-w-[1600px] mx-auto text-white">
+      <div className="flex items-center justify-between mb-8">
+        <h1 className="text-2xl font-bold flex items-center gap-2 text-muted-foreground"><Filter size={24} /> Analytics Explorer</h1>
+        <button onClick={() => navigate('/app')} className="aurelia-ghost-btn px-4 py-2 flex items-center gap-2"><ArrowLeft size={16} /> Back to Dashboard</button>
+      </div>
+      <div className="py-32 flex flex-col items-center justify-center">
+        <div className="w-12 h-12 border-4 border-gold border-t-transparent rounded-full animate-spin mb-4" />
+        <h2 className="text-xl font-bold text-muted-foreground">Loading Intelligence Data...</h2>
+      </div>
+    </div>
+  );
 
+  // EMPTY STATE //
+  if (!bookings || bookings.length === 0) {
+    return (
+      <div className="p-8 pb-32 max-w-[1600px] mx-auto text-white animate-fade-in">
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Filter className="text-gold" size={24} /> Analytics Explorer</h1>
+          <button onClick={() => navigate('/app')} className="aurelia-ghost-btn px-4 py-2 flex items-center gap-2"><ArrowLeft size={16} /> Back to Dashboard</button>
+        </div>
+        
+        <div className="aurelia-card p-16 flex flex-col items-center justify-center text-center max-w-2xl mx-auto mt-12 bg-muted/5 border-dashed">
+          <TrendingUp size={64} className="text-gold/40 mb-6" />
+          <h2 className="text-3xl font-black mb-4">No data yet. Sync your bookings first.</h2>
+          <p className="text-muted-foreground text-lg mb-8 max-w-lg">
+            Analytics intelligence requires booking data imported into your ledger. 
+            Navigate to the Financial Ledger to sync your data from Google Sheets or API channels.
+          </p>
+          <button onClick={() => navigate('/app/ledger')} className="aurelia-gold-btn px-8 py-4 font-bold text-lg rounded-xl shadow-lg shadow-gold/20">
+            Go to Financial Ledger
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // CONTENT STATE //
   return (
-    <div className="p-8 pb-32 max-w-[1600px] mx-auto animate-fade-in">
-      <div className="flex items-center gap-3 mb-8">
-        <Filter className="text-gold" size={24} />
-        <h1 className="text-2xl font-bold">Analytics Explorer</h1>
+    <div className="p-8 pb-32 max-w-[1600px] mx-auto animate-fade-in text-white">
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-3">
+          <button onClick={() => navigate('/app')} className="aurelia-ghost-btn p-2 mr-2">
+             <ArrowLeft size={20} />
+          </button>
+          <Filter className="text-gold" size={24} />
+          <h1 className="text-2xl font-bold">Analytics Explorer</h1>
+        </div>
+        <button onClick={() => navigate('/app')} className="aurelia-ghost-btn px-4 py-2 border border-white/20 hover:bg-white/10">Back to Dashboard</button>
       </div>
 
       {/* FILTERS */}
@@ -406,30 +528,34 @@ export default function AnalyticsPage() {
           </div>
         </div>
         <div className="h-[300px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={trendData} margin={{ top: 10, right: 30, left: 10, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
-              <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} tickMargin={12} />
-              <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={v => `€${v/1000}k`} />
-              <Tooltip 
-                contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px', fontSize: '12px' }}
-                formatter={(v: number) => fmtE(v)}
-                itemSorter={(item) => -(item.value as number)}
-              />
-              <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-              
-              {trendMode === 'Monthly' ? (
-                <>
-                  <Line yAxisId="left" type="monotone" dataKey="Gross" stroke="hsl(var(--theme-accent))" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                  <Line yAxisId="left" type="monotone" dataKey="Net" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
-                </>
-              ) : (
-                trendKeys.map((k, i) => (
-                  <Line key={k} yAxisId="left" type="monotone" dataKey={k} name={k} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} />
-                ))
-              )}
-            </LineChart>
-          </ResponsiveContainer>
+          {trendData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={trendData} margin={{ top: 10, right: 30, left: 10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
+                <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} tickMargin={12} />
+                <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={v => `€${v/1000}k`} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px', fontSize: '12px' }}
+                  formatter={(v: number) => fmtE(v)}
+                  itemSorter={(item) => -(item.value as number)}
+                />
+                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                
+                {trendMode === 'Monthly' ? (
+                  <>
+                    <Line yAxisId="left" type="monotone" dataKey="Gross" stroke="hsl(var(--theme-accent))" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                    <Line yAxisId="left" type="monotone" dataKey="Net" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
+                  </>
+                ) : (
+                  trendKeys.map((k, i) => (
+                    <Line key={k} yAxisId="left" type="monotone" dataKey={k} name={k} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} />
+                  ))
+                )}
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-muted-foreground">No trend data matching filters.</div>
+          )}
         </div>
       </div>
 
@@ -438,36 +564,42 @@ export default function AnalyticsPage() {
         <div className="aurelia-card p-5">
           <h2 className="text-sm font-bold tracking-widest text-muted-foreground uppercase mb-4">Bookings by Status</h2>
           <div className="h-[260px] relative">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={donutData} cx="50%" cy="50%" innerRadius={70} outerRadius={90} paddingAngle={2} dataKey="value" stroke="transparent">
-                  {donutData.map((e, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
-                </Pie>
-                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }} />
-                <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: '11px' }} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none pb-8">
-              <span className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-1">Total</span>
-              <span className="text-xl font-black">{kpi.totBk + (bookings.length - kpi.totBk)}</span>
-            </div>
+            {donutData.length > 0 ? (
+              <>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={donutData} cx="50%" cy="50%" innerRadius={70} outerRadius={90} paddingAngle={2} dataKey="value" stroke="transparent">
+                      {donutData.map((e, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }} />
+                    <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: '11px' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none pb-8">
+                  <span className="text-[10px] text-muted-foreground font-bold tracking-widest uppercase mb-1">Total</span>
+                  <span className="text-xl font-black">{kpi.totBk + (filteredBookings.length - kpi.totBk)}</span>
+                </div>
+              </>
+            ) : <div className="w-full h-full flex items-center justify-center text-muted-foreground">No data</div>}
           </div>
         </div>
 
         <div className="aurelia-card p-5">
           <h2 className="text-sm font-bold tracking-widest text-muted-foreground uppercase mb-4">Revenue by Channel</h2>
           <div className="h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={channelBarData} layout="vertical" margin={{ left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
-                <YAxis type="category" dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} width={80} />
-                <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={v => `€${v/1000}k`} />
-                <Tooltip cursor={{ fill: 'hsl(var(--hover))' }} contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }} formatter={(v: number) => fmtE(v)} />
-                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                <Bar dataKey="Gross" fill="hsl(var(--theme-accent))" radius={[0,4,4,0]} />
-                <Bar dataKey="Net" fill="#10b981" radius={[0,4,4,0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {channelBarData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={channelBarData} layout="vertical" margin={{ left: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
+                  <YAxis type="category" dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} width={80} />
+                  <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={v => `€${v/1000}k`} />
+                  <Tooltip cursor={{ fill: 'hsl(var(--hover))' }} contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }} formatter={(v: number) => fmtE(v)} />
+                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                  <Bar dataKey="Gross" fill="hsl(var(--theme-accent))" radius={[0,4,4,0]} />
+                  <Bar dataKey="Net" fill="#10b981" radius={[0,4,4,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+             ) : <div className="w-full h-full flex items-center justify-center text-muted-foreground">No data</div>}
           </div>
         </div>
       </div>
@@ -478,41 +610,43 @@ export default function AnalyticsPage() {
           <h2 className="text-sm font-bold tracking-widest text-muted-foreground uppercase">Month by Month Breakdown</h2>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead>
-              <tr className="bg-[#13131a] border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
-                <th className="py-3 px-4 font-bold">Month</th>
-                <th className="py-3 px-3 font-bold text-center">Bookings</th>
-                <th className="py-3 px-3 font-bold text-center">Pax</th>
-                <th className="py-3 px-3 font-bold text-right">Gross Rev</th>
-                <th className="py-3 px-3 font-bold text-right">Commission</th>
-                <th className="py-3 px-3 font-bold text-right">Net Rev</th>
-                <th className="py-3 px-3 font-bold text-right">Costs</th>
-                <th className="py-3 px-4 font-bold text-right">Net Profit</th>
-                <th className="py-3 px-4 font-bold text-right">Margin %</th>
-                <th className="py-3 px-4 font-bold text-right text-red-400">Cancel Loss</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/40">
-              {monthlyTable.map(m => (
-                <tr key={m.month} className={`hover:bg-white/5 transition-colors cursor-pointer ${m.sort === -1 ? 'bg-primary/5 font-bold' : ''}`}
-                    onClick={() => m.sort !== -1 && setMonthFilter(m.month.split(' ')[0])}>
-                  <td className="py-3 px-4 font-semibold">{m.month}</td>
-                  <td className="py-3 px-3 text-center tabular-nums">{m.bk}</td>
-                  <td className="py-3 px-3 text-center tabular-nums">{m.pax}</td>
-                  <td className="py-3 px-3 text-right tabular-nums">{fmtE(m.gross)}</td>
-                  <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">{fmtE(m.comm)}</td>
-                  <td className="py-3 px-3 text-right tabular-nums">{fmtE(m.netr)}</td>
-                  <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">{fmtE(m.costs)}</td>
-                  <td className="py-3 px-4 text-right tabular-nums">{fmtE(m.netp)}</td>
-                  <td className={`py-3 px-4 text-right tabular-nums font-bold ${
-                    m.margin > 0.4 ? 'text-profit-positive' : m.margin >= 0.2 ? 'text-gold' : 'text-profit-negative'
-                  }`}>{fmtP(m.margin)}</td>
-                  <td className="py-3 px-4 text-right tabular-nums text-red-400 font-medium">{m.cancLoss > 0 ? fmtE(m.cancLoss) : '—'}</td>
+          {monthlyTable.length > 0 ? (
+            <table className="w-full text-xs text-left">
+              <thead>
+                <tr className="bg-[#13131a] border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
+                  <th className="py-3 px-4 font-bold">Month</th>
+                  <th className="py-3 px-3 font-bold text-center">Bookings</th>
+                  <th className="py-3 px-3 font-bold text-center">Pax</th>
+                  <th className="py-3 px-3 font-bold text-right">Gross Rev</th>
+                  <th className="py-3 px-3 font-bold text-right">Commission</th>
+                  <th className="py-3 px-3 font-bold text-right">Net Rev</th>
+                  <th className="py-3 px-3 font-bold text-right">Costs</th>
+                  <th className="py-3 px-4 font-bold text-right">Net Profit</th>
+                  <th className="py-3 px-4 font-bold text-right">Margin %</th>
+                  <th className="py-3 px-4 font-bold text-right text-red-400">Cancel Loss</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border/40">
+                {monthlyTable.map(m => (
+                  <tr key={m.month} className={`hover:bg-white/5 transition-colors cursor-pointer ${m.sort === -1 ? 'bg-primary/5 font-bold' : ''}`}
+                      onClick={() => m.sort !== -1 && setMonthFilter(m.month.split(' ')[0])}>
+                    <td className="py-3 px-4 font-semibold">{m.month}</td>
+                    <td className="py-3 px-3 text-center tabular-nums">{m.bk}</td>
+                    <td className="py-3 px-3 text-center tabular-nums">{m.pax}</td>
+                    <td className="py-3 px-3 text-right tabular-nums">{fmtE(m.gross)}</td>
+                    <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">{fmtE(m.comm)}</td>
+                    <td className="py-3 px-3 text-right tabular-nums">{fmtE(m.netr)}</td>
+                    <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">{fmtE(m.costs)}</td>
+                    <td className="py-3 px-4 text-right tabular-nums">{fmtE(m.netp)}</td>
+                    <td className={`py-3 px-4 text-right tabular-nums font-bold ${
+                      m.margin > 0.4 ? 'text-profit-positive' : m.margin >= 0.2 ? 'text-gold' : 'text-profit-negative'
+                    }`}>{fmtP(m.margin)}</td>
+                    <td className="py-3 px-4 text-right tabular-nums text-red-400 font-medium">{m.cancLoss > 0 ? fmtE(m.cancLoss) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <div className="p-8 text-center text-muted-foreground">No monthly data matching filters.</div>}
         </div>
       </div>
 
@@ -526,7 +660,8 @@ export default function AnalyticsPage() {
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Select Product</h3>
           </div>
           <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1 aurelia-scrollbar">
-            {productList.map(p => (
+            {productList.length === 0 ? <div className="p-4 text-center text-muted-foreground text-xs">No products found.</div> : 
+             productList.map(p => (
               <button key={p.name} onClick={() => setProductDrilldown(p.name)}
                 className={`w-full text-left p-3 rounded-lg flex items-center justify-between border transition-all ${
                   productDrilldown === p.name ? 'border-primary bg-primary/10 pl-4' : 'border-transparent hover:bg-white/5 bg-white-[0.02]'
@@ -582,26 +717,28 @@ export default function AnalyticsPage() {
                 <div className="p-4 bg-muted/20 border-b border-border">
                   <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Option Performance</h3>
                 </div>
-                <table className="w-full text-xs text-left">
-                  <thead>
-                    <tr className="bg-[#13131a] border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
-                      <th className="py-2.5 px-4 font-bold">Option Name</th>
-                      <th className="py-2.5 px-3 font-bold text-center">Bookings</th>
-                      <th className="py-2.5 px-4 font-bold text-right">Gross Rev</th>
-                      <th className="py-2.5 px-4 font-bold text-right">Margin %</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/40">
-                    {activeProductData.options.map(o => (
-                      <tr key={o.opt} className="hover:bg-white/5 transition-colors">
-                        <td className="py-2.5 px-4 font-medium">{o.opt}</td>
-                        <td className="py-2.5 px-3 text-center tabular-nums">{o.bk}</td>
-                        <td className="py-2.5 px-4 text-right tabular-nums">{fmtE(o.gross)}</td>
-                        <td className={`py-2.5 px-4 text-right tabular-nums font-bold ${o.margin > 0.4 ? 'text-profit-positive' : o.margin >= 0.2 ? 'text-gold' : 'text-profit-negative'}`}>{fmtP(o.margin)}</td>
+                {activeProductData.options.length > 0 ? (
+                  <table className="w-full text-xs text-left">
+                    <thead>
+                      <tr className="bg-[#13131a] border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
+                        <th className="py-2.5 px-4 font-bold">Option Name</th>
+                        <th className="py-2.5 px-3 font-bold text-center">Bookings</th>
+                        <th className="py-2.5 px-4 font-bold text-right">Gross Rev</th>
+                        <th className="py-2.5 px-4 font-bold text-right">Margin %</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {activeProductData.options.map(o => (
+                        <tr key={o.opt} className="hover:bg-white/5 transition-colors">
+                          <td className="py-2.5 px-4 font-medium">{o.opt}</td>
+                          <td className="py-2.5 px-3 text-center tabular-nums">{o.bk}</td>
+                          <td className="py-2.5 px-4 text-right tabular-nums">{fmtE(o.gross)}</td>
+                          <td className={`py-2.5 px-4 text-right tabular-nums font-bold ${o.margin > 0.4 ? 'text-profit-positive' : o.margin >= 0.2 ? 'text-gold' : 'text-profit-negative'}`}>{fmtP(o.margin)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : <div className="p-4 text-xs text-center text-muted-foreground">No option records found.</div>}
               </div>
             </>
           )}
@@ -615,28 +752,30 @@ export default function AnalyticsPage() {
             <Calendar size={16} /> Booking Pipeline Analysis
           </h2>
           <div className="h-[300px]">
-             <ResponsiveContainer width="100%" height="100%">
-               <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--tw-border-opacity) / 0.1)" />
-                  <XAxis type="number" dataKey="x" domain={['auto', 'auto']} name="Booking Date" stroke="hsl(var(--muted-foreground))" fontSize={11} 
-                    tickFormatter={(unix) => new Date(unix).toLocaleDateString(undefined, {month:'short', year:'2-digit'})} />
-                  <YAxis type="number" dataKey="y" domain={['auto', 'auto']} name="Travel Date" stroke="hsl(var(--muted-foreground))" fontSize={11}
-                    tickFormatter={(unix) => new Date(unix).toLocaleDateString(undefined, {month:'short'})} />
-                  <ZAxis type="number" dataKey="z" range={[20, 400]} name="Revenue" />
-                  <Tooltip 
-                    cursor={{ strokeDasharray: '3 3' }}
-                    contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px', fontSize: '12px' }}
-                    formatter={(v: any, name: string) => {
-                      if (name === 'Booking Date' || name === 'Travel Date') return new Date(v).toLocaleDateString();
-                      if (name === 'Revenue') return fmtE(v as number);
-                      return v;
-                    }}
-                  />
-                  {uniqueChannels.map((c, i) => (
-                    <Scatter key={c} name={c} data={scatterData.filter(d => d.channel === c)} fill={COLORS[i % COLORS.length]} fillOpacity={0.6} />
-                  ))}
-               </ScatterChart>
-             </ResponsiveContainer>
+             {scatterData.length > 0 ? (
+               <ResponsiveContainer width="100%" height="100%">
+                 <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--tw-border-opacity) / 0.1)" />
+                    <XAxis type="number" dataKey="x" domain={['auto', 'auto']} name="Booking Date" stroke="hsl(var(--muted-foreground))" fontSize={11} 
+                      tickFormatter={(unix) => new Date(unix).toLocaleDateString(undefined, {month:'short', year:'2-digit'})} />
+                    <YAxis type="number" dataKey="y" domain={['auto', 'auto']} name="Travel Date" stroke="hsl(var(--muted-foreground))" fontSize={11}
+                      tickFormatter={(unix) => new Date(unix).toLocaleDateString(undefined, {month:'short'})} />
+                    <ZAxis type="number" dataKey="z" range={[20, 400]} name="Revenue" />
+                    <Tooltip 
+                      cursor={{ strokeDasharray: '3 3' }}
+                      contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px', fontSize: '12px' }}
+                      formatter={(v: any, name: string) => {
+                        if (name === 'Booking Date' || name === 'Travel Date') return new Date(v).toLocaleDateString();
+                        if (name === 'Revenue') return fmtE(v as number);
+                        return v;
+                      }}
+                    />
+                    {uniqueChannels.map((c, i) => (
+                      <Scatter key={c} name={c} data={scatterData.filter(d => d.channel === c)} fill={COLORS[i % COLORS.length]} fillOpacity={0.6} />
+                    ))}
+                 </ScatterChart>
+               </ResponsiveContainer>
+             ) : <div className="w-full h-full flex items-center justify-center text-muted-foreground">No pipeline data</div>}
           </div>
         </div>
         
@@ -688,18 +827,20 @@ export default function AnalyticsPage() {
         <div className="aurelia-card p-5">
            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-4">Cancellations by Month</h3>
             <div className="h-[250px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={cancelData.chart} margin={{ left: -10, bottom: 0, top: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
-                  <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <YAxis yAxisId="right" orientation="right" stroke="#ef4444" fontSize={11} tickFormatter={v => `${v}%`} />
-                  <Tooltip cursor={{ fill: 'hsl(var(--hover))' }} contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px', zIndex: 100 }} />
-                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                  <Bar yAxisId="left" dataKey="cancels" name="Cancel Count" fill="hsl(var(--muted-foreground)/0.5)" radius={[4,4,0,0]} />
-                  <Line yAxisId="right" type="monotone" dataKey="rate" name="Cancel Rate %" stroke="#ef4444" strokeWidth={2} dot={{ r: 3 }} />
-                </BarChart>
-              </ResponsiveContainer>
+              {cancelData.chart.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={cancelData.chart} margin={{ left: -10, bottom: 0, top: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
+                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <YAxis yAxisId="right" orientation="right" stroke="#ef4444" fontSize={11} tickFormatter={v => `${v}%`} />
+                    <Tooltip cursor={{ fill: 'hsl(var(--hover))' }} contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px', zIndex: 100 }} />
+                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                    <Bar yAxisId="left" dataKey="cancels" name="Cancel Count" fill="hsl(var(--muted-foreground)/0.5)" radius={[4,4,0,0]} />
+                    <Line yAxisId="right" type="monotone" dataKey="rate" name="Cancel Rate %" stroke="#ef4444" strokeWidth={2} dot={{ r: 3 }} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : <div className="w-full h-full flex items-center justify-center text-muted-foreground">No cancellations.</div>}
             </div>
         </div>
 
@@ -709,28 +850,30 @@ export default function AnalyticsPage() {
             <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded font-bold">TOTAL NON-REFUNDABLE: {fmtE(cancelData.tickLost)}</span>
           </div>
           <div className="overflow-x-auto h-[250px] aurelia-scrollbar">
-            <table className="w-full text-xs text-left">
-              <thead className="sticky top-0 bg-[#13131a] z-10">
-                <tr className="border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
-                  <th className="py-2 px-4 font-bold">Ref</th>
-                  <th className="py-2 px-3 font-bold">Product</th>
-                  <th className="py-2 px-3 font-bold">Travel</th>
-                  <th className="py-2 px-3 font-bold text-right">Rev. Lost</th>
-                  <th className="py-2 px-4 font-bold text-right text-red-400">Ticket Cost Lost</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/40">
-                {cancelData.table.map(b => (
-                  <tr key={b.id} className="hover:bg-white/5 transition-colors">
-                    <td className="py-2 px-4 font-semibold">{b.booking_ref || '—'}</td>
-                    <td className="py-2 px-3 text-muted-foreground truncate max-w-[120px]">{b.product_name}</td>
-                    <td className="py-2 px-3 tabular-nums">{b.travel_date}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{fmtE(b.gross_revenue)}</td>
-                    <td className="py-2 px-4 text-right tabular-nums text-red-400 font-bold">{b.ticket_cost > 0 ? fmtE(b.ticket_cost) : '—'}</td>
+            {cancelData.table.length > 0 ? (
+              <table className="w-full text-xs text-left">
+                <thead className="sticky top-0 bg-[#13131a] z-10">
+                  <tr className="border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
+                    <th className="py-2 px-4 font-bold">Ref</th>
+                    <th className="py-2 px-3 font-bold">Product</th>
+                    <th className="py-2 px-3 font-bold">Travel</th>
+                    <th className="py-2 px-3 font-bold text-right">Rev. Lost</th>
+                    <th className="py-2 px-4 font-bold text-right text-red-400">Ticket Cost Lost</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border/40">
+                  {cancelData.table.map(b => (
+                    <tr key={b?.id || b?.booking_ref || Math.random()} className="hover:bg-white/5 transition-colors">
+                      <td className="py-2 px-4 font-semibold">{b?.booking_ref || '—'}</td>
+                      <td className="py-2 px-3 text-muted-foreground truncate max-w-[120px]">{b?.product_name || 'Unknown'}</td>
+                      <td className="py-2 px-3 tabular-nums">{b?.travel_date || '—'}</td>
+                      <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{fmtE(b?.gross_revenue)}</td>
+                      <td className="py-2 px-4 text-right tabular-nums text-red-400 font-bold">{b?.ticket_cost > 0 ? fmtE(b?.ticket_cost) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <div className="w-full h-full flex items-center justify-center text-muted-foreground">No losses found.</div>}
           </div>
         </div>
       </div>

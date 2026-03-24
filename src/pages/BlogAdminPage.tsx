@@ -59,6 +59,7 @@ export default function BlogAdminPage() {
     title: '', slug: '', excerpt: '', content: '', category: 'Pricing', read_time: 5, published: false
   });
   const [saving, setSaving] = useState(false);
+  const [checkComplete, setCheckComplete] = useState(false);
 
   // AI Modal State
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
@@ -74,7 +75,8 @@ export default function BlogAdminPage() {
     try {
       setLoading(true);
       const data = await fetchAllBlogs();
-      setBlogs(data);
+      setBlogs(data || []);
+      setCheckComplete(true);
     } catch (err: any) {
       setError(err.message || 'Failed to load blogs');
     } finally {
@@ -289,7 +291,7 @@ Do not include a title — just the body.`
       {error && <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded">{error}</div>}
 
       {/* EMPTY SEED BANNER */}
-      {!loading && blogs.length === 0 && (
+      {!loading && checkComplete && blogs.length === 0 && (
         <div className="mb-8 p-6 bg-[#f5a623]/10 border border-[#f5a623] rounded-xl flex items-center justify-between shadow-lg shadow-[#f5a623]/10">
           <div>
             <h3 className="text-lg font-bold text-[#f5a623] mb-1">No articles yet. Add 3 sample articles to get started?</h3>
