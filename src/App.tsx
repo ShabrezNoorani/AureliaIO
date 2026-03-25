@@ -14,6 +14,7 @@ import AppLayout from "./pages/AppLayout";
 import BlogPage from "./pages/BlogPage";
 import BlogPostPage from "./pages/BlogPostPage";
 import BlogAdminPage from "./pages/BlogAdminPage";
+import MarketplacePage from "./pages/MarketplacePage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -46,6 +47,7 @@ const App = () => (
                 }
               >
                 <Route path="blog-admin" element={<BlogAdminPage />} />
+                <Route path="marketplace" element={<MarketplacePage />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />
