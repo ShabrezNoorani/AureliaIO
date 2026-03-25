@@ -42,7 +42,8 @@ export default function GuidesPage() {
     setLoading(true);
     
     // Load Guides
-    const { data: gd } = await supabase.from('guides').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
+    const { data: gd, error: gError } = await supabase.from('guides').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
+    if (gError) console.error('Guides fetch error:', gError);
     if (gd) setGuides(gd);
 
     // Load MTD assignments
@@ -187,10 +188,20 @@ export default function GuidesPage() {
                     <tr><td colSpan={8} className="text-center py-12 text-gray-400">Loading guides...</td></tr>
                   ) : guides.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-16">
-                        <UserCircle2 size={48} className="mx-auto text-white/10 mb-4" />
-                        <p className="text-lg font-bold text-white mb-2">No guides added yet</p>
-                        <p className="text-gray-400">Assign guides to tours and track their monthly earnings.</p>
+                      <td colSpan={8} className="text-center py-24">
+                        <div className="flex flex-col items-center justify-center space-y-4">
+                          <div className="text-6xl mb-2">👤</div>
+                          <h3 className="text-2xl font-extrabold text-white">No guides added yet</h3>
+                          <p className="text-gray-400 max-w-sm mx-auto">
+                            Add your first guide to start tracking assignments, tour performance, and monthly earnings.
+                          </p>
+                          <button 
+                            onClick={() => openPanel()}
+                            className="aurelia-gold-btn px-6 py-3 flex items-center gap-2 font-bold mt-4"
+                          >
+                            <Plus size={20} /> Add Your First Guide
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ) : (

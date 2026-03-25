@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { Clock, Calendar as CalendarIcon, CheckCircle2, UserPlus, Users, X } from 'lucide-react';
-import AureliaSidebar from '@/components/AureliaSidebar';
 import { useNavigate } from 'react-router-dom';
 
 export default function TodayToursPage() {
@@ -134,10 +133,8 @@ export default function TodayToursPage() {
   };
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground antialiased">
-      <AureliaSidebar activeView="today" companyName="AURELIA" onNavigate={(v) => navigate('/app')} onNewProduct={() => {}} />
-      <main className="flex-1 ml-[240px] relative">
-        <div className="p-8 pb-32 max-w-5xl mx-auto space-y-8 animate-fade-in">
+    <div className="relative">
+      <div className="p-8 pb-32 max-w-5xl mx-auto space-y-8 animate-fade-in">
           
           {/* HEADER */}
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-border/50">
@@ -343,8 +340,7 @@ export default function TodayToursPage() {
             />
           </div>
         )}
-      </main>
-    </div>
+      </div>
   );
 }
 

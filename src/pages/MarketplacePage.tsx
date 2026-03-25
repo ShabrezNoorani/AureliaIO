@@ -222,15 +222,25 @@ export default function MarketplacePage() {
                 </tr>
               </thead>
               <tbody>
-                {items.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className="text-center py-16 text-gray-400">
-                      <Box size={48} className="mx-auto text-white/10 mb-4" />
-                      <p className="text-lg font-bold text-white mb-2">No marketplace listings configured</p>
-                      <p className="text-gray-500 text-sm">Create specific product matrices here explicitly verifying platform coverage maps.</p>
-                    </td>
-                  </tr>
-                ) : (
+                  {items.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="text-center py-24">
+                        <div className="flex flex-col items-center justify-center space-y-4">
+                          <div className="text-6xl mb-2">🗺️</div>
+                          <h3 className="text-2xl font-extrabold text-white">No products listed yet</h3>
+                          <p className="text-gray-400 max-w-sm mx-auto">
+                            Add your first product to start tracking your marketplace coverage across all major platforms.
+                          </p>
+                          <button 
+                            onClick={() => openPanel()}
+                            className="aurelia-gold-btn px-6 py-3 flex items-center gap-2 font-bold mt-4"
+                          >
+                            <Plus size={20} /> Add Your First Product
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
                   items.map(item => (
                     <tr key={item.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
                       <td className="px-5 py-4 sticky left-0 z-10" style={{ backgroundColor: 'hsl(var(--theme-card))' }}>
@@ -342,7 +352,7 @@ export default function MarketplacePage() {
                             <div>
                               <select value={lst.platform} onChange={e => { const v = [...fListings]; v[idx].platform = e.target.value; setFListings(v); }} className="aurelia-input font-bold">
                                 {OTAS.map(o => <option key={o} value={o}>{o}</option>)}
-                                <option value="Custom">Custom Component</option>
+                                <option value="Custom">Custom</option>
                               </select>
                             </div>
                             <div>
