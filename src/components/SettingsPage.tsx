@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw } from 'lucide-react';
+import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw, Key, Database, Percent, Globe, Trash2, User } from 'lucide-react';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -11,32 +11,42 @@ const DEFAULT_SHEET_ID = '1EAI0SHtkJD5HHVj25rJcnzmoksTug249eIT4_JmiOR8';
 export default function SettingsPage() {
   const { user, profile } = useAuth();
   
-  const [sheetId, setSheetId] = useState('');
+  // Account & Company
   const [companyName, setCompanyName] = useState('');
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(getTheme());
-  const [autoSync, setAutoSync] = useState(false);
-  const [syncInterval, setSyncInterval] = useState('1800000');
-  
-  const [sheetSaved, setSheetSaved] = useState(false);
   const [companySaved, setCompanySaved] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
 
-  // Bokun Integration
+  // Connections (Bokun)
   const [bokunAccess, setBokunAccess] = useState('');
   const [bokunSecret, setBokunSecret] = useState('');
   const [bokunSaved, setBokunSaved] = useState(false);
   const [bokunSyncing, setBokunSyncing] = useState(false);
   const [bokunSyncResult, setBokunSyncResult] = useState('');
   const [syncStartDate, setSyncStartDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 90);
+    const d = new Date(); d.setDate(d.getDate() - 30);
     return d.toISOString().split('T')[0];
   });
   const [syncEndDate, setSyncEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+
+  // Sync Preferences (GSheets)
+  const [sheetId, setSheetId] = useState('');
+  const [autoSync, setAutoSync] = useState(false);
+  const [syncInterval, setSyncInterval] = useState('1800000');
   const [syncSources, setSyncSources] = useState<string[]>(['gsheet']);
+  const [syncSaved, setSyncSaved] = useState(false);
+
+  // Operational Defaults
+  const [margin, setMargin] = useState('20');
+  const [taxRate, setTaxRate] = useState('10');
+  const [currency, setCurrency] = useState('EUR');
+  const [defaultsSaved, setDefaultsSaved] = useState(false);
+
+  // Danger Zone
+  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    setSheetId(stored || DEFAULT_SHEET_ID);
+    // Load local settings
+    setSheetId(localStorage.getItem(STORAGE_KEY) || DEFAULT_SHEET_ID);
     setBokunAccess(localStorage.getItem('aurelia_bokun_access') || '');
     setBokunSecret(localStorage.getItem('aurelia_bokun_secret') || '');
     setAutoSync(localStorage.getItem('aurelia_autosync_enabled') === 'true');
@@ -45,56 +55,23 @@ export default function SettingsPage() {
     const storedSources = localStorage.getItem('aurelia_autosync_sources');
     if (storedSources) setSyncSources(JSON.parse(storedSources));
 
+    setMargin(localStorage.getItem('aurelia_default_margin') || '20');
+    setTaxRate(localStorage.getItem('aurelia_default_tax') || '10');
+    setCurrency(localStorage.getItem('aurelia_default_currency') || 'EUR');
+
     if (profile) setCompanyName(profile.company_name || '');
   }, [profile]);
-
-  const handleToggleAutoSync = (checked: boolean) => {
-    setAutoSync(checked);
-    localStorage.setItem('aurelia_autosync_enabled', String(checked));
-    if (checked && !localStorage.getItem('aurelia_autosync_interval')) {
-      localStorage.setItem('aurelia_autosync_interval', '1800000');
-    }
-    window.dispatchEvent(new Event('autosync_changed'));
-  };
-
-  const handleIntervalChange = (val: string) => {
-    setSyncInterval(val);
-    localStorage.setItem('aurelia_autosync_interval', val);
-    window.dispatchEvent(new Event('autosync_changed'));
-  };
-
-  const toggleSyncSource = (source: string) => {
-    const next = syncSources.includes(source) 
-      ? syncSources.filter(s => s !== source)
-      : [...syncSources, source];
-    setSyncSources(next);
-    localStorage.setItem('aurelia_autosync_sources', JSON.stringify(next));
-    window.dispatchEvent(new Event('autosync_changed'));
-  };
-
-  const handleSaveSheet = () => {
-    localStorage.setItem(STORAGE_KEY, sheetId);
-    setSheetSaved(true);
-    setTimeout(() => setSheetSaved(false), 2000);
-  };
 
   const handleSaveCompany = async () => {
     if (!user) return;
     try {
-      await supabase
-        .from('profiles')
-        .update({ company_name: companyName })
-        .eq('id', user.id);
-        
+      await supabase.from('profiles').update({ company_name: companyName }).eq('id', user.id);
       setCompanySaved(true);
       setTimeout(() => setCompanySaved(false), 2000);
-      // Wait for auth context to re-poll and update sidebar live
-    } catch (e) {
-      alert('Failed to update company name');
-    }
+    } catch (e) { alert('Failed to update company name'); }
   };
 
-  const handleSaveBokun = () => {
+  const handleSaveConnections = () => {
     localStorage.setItem('aurelia_bokun_access', bokunAccess);
     localStorage.setItem('aurelia_bokun_secret', bokunSecret);
     setBokunSaved(true);
@@ -102,17 +79,35 @@ export default function SettingsPage() {
   };
 
   const handleSyncBokun = async () => {
-    if (!user || !bokunAccess || !bokunSecret) return alert("Keys required.");
+    if (!user || !bokunAccess || !bokunSecret) return alert("API keys required.");
     setBokunSyncing(true);
     setBokunSyncResult('');
     try {
       const res = await syncFromBokun(bokunAccess, bokunSecret, user.id, supabase, syncStartDate, syncEndDate);
-      setBokunSyncResult(`✅ Imported ${res.imported} · Updated ${res.updated} (Skipped ${res.skipped})`);
+      setBokunSyncResult(`✅ Imported ${res.imported} · Updated ${res.updated}`);
     } catch (e: any) {
-      setBokunSyncResult(`❌ Sync failed: ${e.message}`);
+      setBokunSyncResult(`❌ Error: ${e.message}`);
     } finally {
       setBokunSyncing(false);
     }
+  };
+
+  const handleSaveSync = () => {
+    localStorage.setItem(STORAGE_KEY, sheetId);
+    localStorage.setItem('aurelia_autosync_enabled', String(autoSync));
+    localStorage.setItem('aurelia_autosync_interval', syncInterval);
+    localStorage.setItem('aurelia_autosync_sources', JSON.stringify(syncSources));
+    setSyncSaved(true);
+    setTimeout(() => setSyncSaved(false), 2000);
+    window.dispatchEvent(new Event('autosync_changed'));
+  };
+
+  const handleSaveDefaults = () => {
+    localStorage.setItem('aurelia_default_margin', margin);
+    localStorage.setItem('aurelia_default_tax', taxRate);
+    localStorage.setItem('aurelia_default_currency', currency);
+    setDefaultsSaved(true);
+    setTimeout(() => setDefaultsSaved(false), 2000);
   };
 
   const handleThemeChange = (theme: ThemeName) => {
@@ -122,268 +117,304 @@ export default function SettingsPage() {
 
   const handleResetData = async () => {
     if (!user) return;
-    const confirm1 = window.confirm("WARNING: This will delete ALL products, options, ledger bookings, and costs. Are you absolutely sure?");
-    if (!confirm1) return;
-    const confirm2 = window.prompt("Type 'DELETE' to confirm wiping all data.");
-    if (confirm2 !== 'DELETE') return;
+    if (!window.confirm("CRITICAL: Delete all operational data?")) return;
+    if (window.prompt("Type 'PURGE' to confirm deletion") !== 'PURGE') return;
     
     setIsResetting(true);
     try {
-      // Products cascade deletes options, tickets, guides etc.
       await supabase.from('products').delete().eq('user_id', user.id);
       await supabase.from('bookings').delete().eq('user_id', user.id);
       await supabase.from('admin_costs').delete().eq('user_id', user.id);
-      
-      alert("All data has been reset.");
+      await supabase.from('guides').delete().eq('user_id', user.id);
+      alert("All data cleared.");
       window.location.reload();
-    } catch (e) {
-      alert("Error resetting data.");
-    } finally {
-      setIsResetting(false);
-    }
+    } catch (e) { alert("Reset failed."); } finally { setIsResetting(false); }
   };
 
   return (
-    <div className="p-8 pb-32 max-w-3xl mx-auto animate-fade-in text-foreground">
-      <h1 className="text-2xl font-bold mb-2">Settings</h1>
-      <p className="text-sm text-muted-foreground mb-8">Configure integrations, appearance, and company preferences.</p>
+    <div className="p-8 pb-32 max-w-5xl mx-auto animate-fade-in text-white">
+      <div className="mb-12">
+        <h1 className="text-4xl font-extrabold tracking-tight">Settings</h1>
+        <p className="text-gray-400 mt-2">Manage your platform architecture, integrations, and global defaults.</p>
+      </div>
 
-      <div className="space-y-6">
-        {/* SECTION 1 — Company Settings */}
-        <div className="aurelia-card p-6 border-l-[3px] border-l-gold">
-          <div className="flex items-center gap-3 mb-5">
-            <Building2 size={18} className="text-gold" />
-            <h2 className="text-sm font-bold uppercase tracking-wider">Company Settings</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        
+        {/* 1. ACCOUNT & COMPANY */}
+        <div className="aurelia-card p-8 border-t-[4px] border-t-gold space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gold/10 flex items-center justify-center text-gold">
+              <Building2 size={20} />
+            </div>
+            <div>
+              <h2 className="text-lg font-extrabold">Account & Company</h2>
+              <p className="text-xs text-gray-500 uppercase tracking-widest">Branding and Appearance</p>
+            </div>
           </div>
-          
+
           <div className="space-y-4">
+            <div className="flex items-center gap-4 p-4 bg-white/5 rounded-2xl border border-white/5">
+              <div className="w-12 h-12 rounded-full bg-gold/20 flex items-center justify-center text-xl">
+                {user?.email?.[0].toUpperCase()}
+              </div>
+              <div>
+                <div className="font-bold text-sm">{user?.email}</div>
+                <div className="text-[10px] text-gray-500 uppercase font-mono">{user?.id}</div>
+              </div>
+            </div>
+
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                Company Name
-              </label>
-              <input
-                className="aurelia-input text-sm"
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                placeholder="Enter Company Name"
-              />
-            </div>
-            
-            <div className="flex items-center gap-3">
-              <button onClick={handleSaveCompany} className="aurelia-gold-btn text-xs flex items-center gap-2">
-                <Save size={14} /> Save Company Details
-              </button>
-              {companySaved && (
-                <span className="text-xs text-profit-positive font-bold animate-fade-in">✓ Saved</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* SECTION 2 — Google Sheets Integration */}
-        <div className="aurelia-card p-6 border-l-[3px] border-l-gold">
-          <div className="flex items-center gap-3 mb-5">
-            <Settings size={18} className="text-gold" />
-            <h2 className="text-sm font-bold uppercase tracking-wider">Google Sheets Integration</h2>
-          </div>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                Spreadsheet ID
-              </label>
-              <input
-                className="aurelia-input font-mono text-xs"
-                value={sheetId}
-                onChange={(e) => setSheetId(e.target.value)}
-                placeholder="Enter your Google Sheets spreadsheet ID"
-              />
-            </div>
-            <div className="flex items-center gap-3">
-              <button onClick={handleSaveSheet} className="aurelia-gold-btn text-xs">
-                Save Spreadsheet ID
-              </button>
-              {sheetSaved && (
-                <span className="text-xs text-profit-positive font-bold animate-fade-in">✓ Saved</span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* SECTION 2a — Bokun Integration */}
-        <div className="aurelia-card p-6 border-l-[3px] border-l-[#f5a623]">
-          <div className="flex items-center gap-3 mb-5">
-            <RefreshCw size={18} className="text-[#f5a623]" />
-            <h2 className="text-sm font-bold uppercase tracking-wider">Bokun Integration</h2>
-          </div>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Access Key</label>
-                <input type="password" value={bokunAccess} onChange={e => setBokunAccess(e.target.value)} className="aurelia-input font-mono text-xs" placeholder="API Access Key" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Secret Key</label>
-                <input type="password" value={bokunSecret} onChange={e => setBokunSecret(e.target.value)} className="aurelia-input font-mono text-xs" placeholder="API Secret Key" />
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button onClick={handleSaveBokun} className="aurelia-gold-btn text-xs">Save Keys</button>
-              {bokunSaved && <span className="text-xs text-profit-positive font-bold animate-fade-in">✓ Saved</span>}
-            </div>
-            
-            <div className="mt-6 pt-6 border-t border-border/50 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">From Date</label>
-                  <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="aurelia-input" />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">To Date</label>
-                  <input type="date" value={syncEndDate} onChange={e => setSyncEndDate(e.target.value)} className="aurelia-input" />
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <button onClick={handleSyncBokun} disabled={bokunSyncing} className="aurelia-ghost-btn text-xs flex items-center gap-2 border border-white/10">
-                  <RefreshCw size={14} className={bokunSyncing ? 'animate-spin' : ''} />
-                  {bokunSyncing ? 'Syncing from Bokun...' : '🔄 Sync from Bokun'}
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Company Name</label>
+              <div className="flex gap-2">
+                <input 
+                  className="aurelia-input flex-1" 
+                  value={companyName} 
+                  onChange={e => setCompanyName(e.target.value)} 
+                />
+                <button onClick={handleSaveCompany} className="aurelia-gold-btn px-4 flex items-center gap-2">
+                  <Save size={16} /> {companySaved ? 'Saved' : 'Save'}
                 </button>
-                {bokunSyncResult && <span className="text-xs font-bold animate-fade-in text-white">{bokunSyncResult}</span>}
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-4 border-t border-white/5">
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                <Palette size={12} /> Visual Theme
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {(Object.keys(THEMES) as ThemeName[]).map(t => (
+                  <button 
+                    key={t}
+                    onClick={() => handleThemeChange(t)}
+                    className={`p-3 rounded-xl text-xs font-bold border transition-all ${
+                      currentTheme === t ? 'bg-gold/10 border-gold text-gold' : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                    }`}
+                  >
+                    {THEMES[t].name}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
         </div>
 
-        {/* SECTION 2b — Auto Sync */}
-        <div className="aurelia-card p-6 border-l-[3px] border-l-blue-500">
-          <div className="flex items-center gap-3 mb-5">
-            <RefreshCw size={18} className="text-blue-500" />
-            <h2 className="text-sm font-bold uppercase tracking-wider">Auto Sync</h2>
+        {/* 2. CONNECTIONS */}
+        <div className="aurelia-card p-8 border-t-[4px] border-t-[#f5a623] space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center text-orange-400">
+              <Key size={20} />
+            </div>
+            <div>
+              <h2 className="text-lg font-extrabold">Connections</h2>
+              <p className="text-xs text-gray-500 uppercase tracking-widest">API Integrations</p>
+            </div>
           </div>
+
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-bold">Enable Auto Sync</label>
+            <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Bokun Access Key</label>
+                <input 
+                  type="password" 
+                  value={bokunAccess} 
+                  onChange={e => setBokunAccess(e.target.value)} 
+                  className="aurelia-input font-mono text-sm" 
+                  placeholder="X-Bokun-AccessKey" 
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Bokun Secret Key</label>
+                <input 
+                  type="password" 
+                  value={bokunSecret} 
+                  onChange={e => setBokunSecret(e.target.value)} 
+                  className="aurelia-input font-mono text-sm" 
+                  placeholder="HMAC Secret Key" 
+                />
+              </div>
+            </div>
+
+            <button onClick={handleSaveConnections} className="w-full aurelia-gold-btn py-3 font-extrabold shadow-xl shadow-orange-500/10">
+              {bokunSaved ? '✅ Keys Secured' : 'Save Connection Keys'}
+            </button>
+
+            <div className="pt-6 border-t border-white/5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Manual Data Sync</h3>
+                <div className="text-[10px] text-orange-400 font-bold uppercase tracking-widest">Bokun.io</div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="aurelia-input text-xs" />
+                <input type="date" value={syncEndDate} onChange={e => setSyncEndDate(e.target.value)} className="aurelia-input text-xs" />
+              </div>
               <button 
-                onClick={() => handleToggleAutoSync(!autoSync)} 
-                className={`w-10 h-6 rounded-full transition-colors relative ${autoSync ? 'bg-blue-500' : 'bg-[#2a2a3e]'}`}
+                onClick={handleSyncBokun} 
+                disabled={bokunSyncing}
+                className="w-full flex items-center justify-center gap-2 p-3 bg-white/5 border border-white/10 rounded-xl text-sm font-bold hover:bg-white/10 transition-colors"
               >
-                <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${autoSync ? 'left-5' : 'left-1'}`} />
+                <RefreshCw size={16} className={bokunSyncing ? 'animate-spin' : ''} />
+                {bokunSyncing ? 'Pulling Data...' : 'Sync Operation Data'}
+              </button>
+              {bokunSyncResult && <div className="text-center text-[10px] font-bold uppercase text-gray-400 animate-fade-in">{bokunSyncResult}</div>}
+            </div>
+          </div>
+        </div>
+
+        {/* 3. SYNC PREFERENCES */}
+        <div className="aurelia-card p-8 border-t-[4px] border-t-blue-500 space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400">
+              <Database size={20} />
+            </div>
+            <div>
+              <h2 className="text-lg font-extrabold">Sync Preferences</h2>
+              <p className="text-xs text-gray-500 uppercase tracking-widest">Automation Controls</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Google Sheet ID</label>
+              <input 
+                className="aurelia-input font-mono text-sm" 
+                value={sheetId} 
+                onChange={e => setSheetId(e.target.value)} 
+                placeholder="1EAI0SH...JmiOR8" 
+              />
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
+              <div>
+                <div className="text-sm font-bold">Auto-Sync Enabled</div>
+                <div className="text-[10px] text-gray-500 uppercase tracking-widest">Runs in background</div>
+              </div>
+              <button 
+                onClick={() => setAutoSync(!autoSync)} 
+                className={`w-12 h-7 rounded-full transition-all relative ${autoSync ? 'bg-blue-500 shadow-lg shadow-blue-500/20' : 'bg-white/10'}`}
+              >
+                <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-all ${autoSync ? 'left-6' : 'left-1'}`} />
               </button>
             </div>
-            
-            {autoSync && (
-              <div className="space-y-4 mt-4 animate-fade-in p-4 bg-white/5 rounded-lg border border-white/10">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">
-                    Active Sync Sources
-                  </label>
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2 text-sm font-bold cursor-pointer hover:text-white text-gray-400">
-                      <input type="checkbox" checked={syncSources.includes('gsheet')} onChange={() => toggleSyncSource('gsheet')} className="w-4 h-4 rounded border-white/10 bg-black/50 text-[#f5a623] focus:ring-[#f5a623]" />
-                      Google Sheets
-                    </label>
-                    <label className="flex items-center gap-2 text-sm font-bold cursor-pointer hover:text-white text-gray-400">
-                      <input type="checkbox" checked={syncSources.includes('bokun')} onChange={() => toggleSyncSource('bokun')} className="w-4 h-4 rounded border-white/10 bg-black/50 text-[#f5a623] focus:ring-[#f5a623]" />
-                      Bokun API
-                    </label>
-                  </div>
-                </div>
 
+            {autoSync && (
+              <div className="space-y-4 animate-slide-up">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                    Sync every
-                  </label>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Frequency</label>
                   <select 
-                    className="aurelia-input w-full text-sm font-bold" 
-                    value={syncInterval}
-                    onChange={(e) => handleIntervalChange(e.target.value)}
+                    value={syncInterval} 
+                    onChange={e => setSyncInterval(e.target.value)} 
+                    className="aurelia-input text-xs font-bold"
                   >
-                    <option value="300000">5 minutes</option>
-                    <option value="900000">15 minutes</option>
-                    <option value="1800000">30 minutes</option>
-                    <option value="3600000">1 hour</option>
-                    <option value="7200000">2 hours</option>
-                    <option value="21600000">6 hours</option>
-                    <option value="43200000">12 hours</option>
+                    <option value="900000">Every 15 Minutes</option>
+                    <option value="1800000">Every 30 Minutes</option>
+                    <option value="3600000">Every Hour</option>
                   </select>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button 
+                    onClick={() => {
+                      const next = syncSources.includes('gsheet') ? syncSources.filter(s => s !== 'gsheet') : [...syncSources, 'gsheet'];
+                      setSyncSources(next);
+                    }}
+                    className={`p-2 rounded-lg text-[10px] font-bold uppercase tracking-widest border border-white/10 ${syncSources.includes('gsheet') ? 'bg-blue-500/20 text-blue-400' : 'text-gray-600'}`}
+                  >
+                    GSheet
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const next = syncSources.includes('bokun') ? syncSources.filter(s => s !== 'bokun') : [...syncSources, 'bokun'];
+                      setSyncSources(next);
+                    }}
+                    className={`p-2 rounded-lg text-[10px] font-bold uppercase tracking-widest border border-white/10 ${syncSources.includes('bokun') ? 'bg-orange-500/20 text-orange-400' : 'text-gray-600'}`}
+                  >
+                    Bokun API
+                  </button>
                 </div>
               </div>
             )}
-            
-            <p className="text-xs text-muted-foreground mt-4 leading-relaxed">
-              Auto sync pulls latest data from your Google Sheet automatically. Your sheet data is read-only — AURELIA never writes to your Google Sheet.
-            </p>
+
+            <button onClick={handleSaveSync} className="w-full aurelia-gold-btn py-3 font-extrabold flex items-center justify-center gap-2">
+              <RefreshCw size={16} /> {syncSaved ? 'Sync Config Saved' : 'Update Sync Config'}
+            </button>
           </div>
         </div>
 
-        {/* SECTION 3 — Appearance */}
-        <div className="aurelia-card p-6 border-l-[3px] border-l-gold">
-          <div className="flex items-center gap-3 mb-5">
-            <Palette size={18} className="text-gold" />
-            <h2 className="text-sm font-bold uppercase tracking-wider">Appearance</h2>
-          </div>
-          
-          <div className="space-y-4">
-            <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-              Color Theme
-            </label>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {(Object.entries(THEMES) as [ThemeName, typeof THEMES[ThemeName]][]).map(([key, theme]) => (
-                <button
-                  key={key}
-                  onClick={() => handleThemeChange(key)}
-                  className={`relative flex flex-col p-4 rounded-xl border text-left transition-all hover:-translate-y-1
-                    ${currentTheme === key ? 'ring-2 ring-offset-2 ring-offset-background' : 'opacity-80 hover:opacity-100'}
-                  `}
-                  style={{
-                    backgroundColor: theme.colors.bg,
-                    borderColor: currentTheme === key ? theme.colors.accent : theme.colors.border,
-                    boxShadow: theme.shadows.cardHover
-                  }}
-                >
-                  {/* Mini Preview Header */}
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: theme.colors.accent }} />
-                    <span className="text-sm font-bold" style={{ color: theme.colors.text }}>{theme.name}</span>
-                  </div>
-                  {/* Miniature Elements */}
-                  <div className="space-y-2 w-full">
-                    <div className="h-2 w-3/4 rounded-full" style={{ backgroundColor: theme.colors.sidebar }} />
-                    <div className="h-8 w-full rounded-md border" style={{ backgroundColor: theme.colors.card, borderColor: theme.colors.border }} />
-                    <div className="h-6 w-1/2 rounded-md mt-1" style={{ backgroundColor: theme.colors.btnBg }} />
-                  </div>
-                  
-                  {/* Checked indicator */}
-                  {currentTheme === key && (
-                    <div className="absolute top-4 right-4 text-xs font-extrabold" style={{ color: theme.colors.accent }}>
-                      ✓
-                    </div>
-                  )}
-                </button>
-              ))}
+        {/* 4. OPERATIONAL DEFAULTS */}
+        <div className="aurelia-card p-8 border-t-[4px] border-t-purple-500 space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400">
+              <Percent size={20} />
+            </div>
+            <div>
+              <h2 className="text-lg font-extrabold">Operational Defaults</h2>
+              <p className="text-xs text-gray-500 uppercase tracking-widest">Business Rules</p>
             </div>
           </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Target Margin (%)</label>
+                <div className="relative">
+                  <input className="aurelia-input pl-10" value={margin} onChange={e => setMargin(e.target.value)} type="number" />
+                  <Percent className="absolute left-3 top-3 text-gray-600" size={16} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Tax / VAT Rate (%)</label>
+                <div className="relative">
+                  <input className="aurelia-input pl-10" value={taxRate} onChange={e => setTaxRate(e.target.value)} type="number" />
+                  <Percent className="absolute left-3 top-3 text-gray-600" size={16} />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Base Currency</label>
+              <div className="flex gap-2">
+                {['EUR', 'USD', 'GBP'].map(c => (
+                  <button 
+                    key={c}
+                    onClick={() => setCurrency(c)}
+                    className={`flex-1 p-3 rounded-xl text-sm font-extrabold border transition-all ${
+                      currency === c ? 'bg-purple-500 text-white border-purple-500' : 'bg-white/5 border-white/10 text-gray-500 hover:bg-white/10'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button onClick={handleSaveDefaults} className="w-full aurelia-gold-btn py-3 font-extrabold flex items-center justify-center gap-2 shadow-xl shadow-purple-500/10">
+              <Globe size={16} /> {defaultsSaved ? 'Defaults Applied' : 'Save Global Defaults'}
+            </button>
+          </div>
         </div>
 
-        {/* SECTION 4 — Danger Zone */}
-        <div className="aurelia-card p-6 border-l-[3px] border-l-red-500 bg-red-500/5">
-          <div className="flex items-center gap-3 mb-5">
-            <ShieldAlert size={18} className="text-red-500" />
-            <h2 className="text-sm font-bold text-red-500 uppercase tracking-wider">Danger Zone</h2>
+        {/* 5. DANGER ZONE */}
+        <div className="lg:col-span-2 aurelia-card p-8 border-t-[4px] border-t-red-500 bg-red-500/[0.02] flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-red-500/10 flex items-center justify-center text-red-500">
+              <ShieldAlert size={28} />
+            </div>
+            <div>
+              <h2 className="text-xl font-extrabold text-red-500">Danger Zone</h2>
+              <p className="text-sm text-gray-500 max-w-md">Irreversible actions. Purging data will delete all products, bookings, and guide history permanently.</p>
+            </div>
           </div>
           
-          <p className="text-sm text-muted-foreground mb-4">
-            Once you delete your data, there is no going back. Please be certain.
-          </p>
-          
           <button 
-            onClick={handleResetData} 
+            onClick={handleResetData}
             disabled={isResetting}
-            className="px-4 py-2 font-bold rounded-lg bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white transition-colors"
+            className="px-8 py-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded-2xl font-extrabold hover:bg-red-500 hover:text-white transition-all flex items-center gap-2"
           >
-            {isResetting ? 'Resetting...' : 'Reset all data'}
+            <Trash2 size={20} /> {isResetting ? 'Processing Purge...' : 'Purge All Operational Data'}
           </button>
         </div>
+
       </div>
     </div>
   );
 }
+

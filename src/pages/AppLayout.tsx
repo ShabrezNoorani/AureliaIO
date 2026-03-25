@@ -9,13 +9,16 @@ import SettingsPage from '@/components/SettingsPage';
 import TodayToursPage from '@/pages/TodayToursPage';
 import ExecutiveDashboard from '@/pages/ExecutiveDashboard';
 import AnalyticsPage from '@/pages/AnalyticsPage';
+import GuidesPage from '@/pages/GuidesPage';
+import GuideDashboard from '@/pages/GuideDashboard';
+import MarketplacePage from '@/pages/MarketplacePage';
 import { useAppData } from '@/lib/useAppData';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { syncMasterData } from '@/lib/gsheetSync';
 import { syncFromBokun } from '@/lib/bokunSync';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace';
 
 const AppLayout = () => {
   const { user } = useAuth();
@@ -41,7 +44,21 @@ const AppLayout = () => {
     updateAgeBuckets,
   } = useAppData();
 
-  const [view, setView] = useState<View>('executive'); // Default is now Executive Dashboard
+  const [view, setView] = useState<View>('executive'); 
+
+  useEffect(() => {
+    const path = window.location.pathname;
+    if (path.includes('/guides')) setView('guides');
+    else if (path.includes('/guide-dashboard')) setView('guide-dashboard');
+    else if (path.includes('/marketplace')) setView('marketplace');
+    else if (path.includes('/today')) setView('today');
+    else if (path.includes('/ledger')) setView('ledger');
+    else if (path.includes('/admin-costs')) setView('admin-costs');
+    else if (path.includes('/analytics')) setView('analytics');
+    else if (path.includes('/settings')) setView('settings');
+    else if (path.includes('/products')) setView('products');
+  }, []);
+
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
   const [activeChannelIdx, setActiveChannelIdx] = useState(0);
 
@@ -218,6 +235,9 @@ const AppLayout = () => {
         {view === 'executive' && <ExecutiveDashboard />}
         {view === 'analytics' && <AnalyticsPage />}
         {view === 'settings' && <SettingsPage />}
+        {view === 'guides' && <GuidesPage />}
+        {view === 'guide-dashboard' && <GuideDashboard />}
+        {view === 'marketplace' && <MarketplacePage />}
       </main>
 
       {lastSynced && (

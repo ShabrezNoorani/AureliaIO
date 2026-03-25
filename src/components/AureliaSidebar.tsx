@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -176,9 +176,9 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
               <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => onNavigate('ledger')} indent />
               <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => onNavigate('admin-costs')} indent />
               <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => onNavigate('today')} indent />
-              <SidebarItem icon={Users} label="Guides" active={window.location.pathname.includes('/guides')} onClick={() => navigate('/app/guides')} indent />
-              <SidebarItem icon={BarChart3} label="Guide Dashboard" active={window.location.pathname.includes('/guide-dashboard')} onClick={() => navigate('/app/guide-dashboard')} indent />
-              <SidebarItem icon={Map} label="Marketplace" active={window.location.pathname.includes('/marketplace')} onClick={() => navigate('/app/marketplace')} indent />
+              <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => { onNavigate('guides'); navigate('/app/guides'); }} indent />
+              <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => { onNavigate('guide-dashboard'); navigate('/app/guide-dashboard'); }} indent />
+              <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => { onNavigate('marketplace'); navigate('/app/marketplace'); }} indent />
             </div>
           )}
         </div>
