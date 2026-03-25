@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw, Key, Database, Percent, Globe, Trash2, User } from 'lucide-react';
+import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw, Key, Database, Percent, Globe, Trash2, User, X } from 'lucide-react';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
-import { syncFromBokun } from '@/lib/bokunSync';
+import { fetchBokunProducts, syncBokunBookings } from '@/lib/bokunSync';
 
 const STORAGE_KEY = 'gsheet_id';
 const DEFAULT_SHEET_ID = '1EAI0SHtkJD5HHVj25rJcnzmoksTug249eIT4_JmiOR8';
@@ -27,6 +27,12 @@ export default function SettingsPage() {
     return d.toISOString().split('T')[0];
   });
   const [syncEndDate, setSyncEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  
+  // Bokun Product Import
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [bokunProducts, setBokunProducts] = useState<any[]>([]);
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
 
   // Sync Preferences (GSheets)
   const [sheetId, setSheetId] = useState('');
@@ -83,12 +89,61 @@ export default function SettingsPage() {
     setBokunSyncing(true);
     setBokunSyncResult('');
     try {
-      const res = await syncFromBokun(bokunAccess, bokunSecret, user.id, supabase, syncStartDate, syncEndDate);
-      setBokunSyncResult(`✅ Imported ${res.imported} · Updated ${res.updated}`);
+      const res = await syncBokunBookings(bokunAccess, bokunSecret, user.id, supabase, syncStartDate, syncEndDate);
+      setBokunSyncResult(`✅ Imported ${res.imported} · Updated ${res.updated} · Skipped ${res.skipped}`);
     } catch (e: any) {
       setBokunSyncResult(`❌ Error: ${e.message}`);
     } finally {
       setBokunSyncing(false);
+    }
+  };
+
+  const handleFetchBokunProducts = async () => {
+    if (!bokunAccess || !bokunSecret) return alert("API keys required.");
+    setBokunSyncing(true);
+    try {
+      const prods = await fetchBokunProducts(bokunAccess, bokunSecret);
+      setBokunProducts(prods);
+      setSelectedProductIds(prods.map(p => p.bokun_product_id));
+      setShowImportModal(true);
+    } catch (e: any) {
+      alert(`Bokun Error: ${e.message}`);
+    } finally {
+      setBokunSyncing(false);
+    }
+  };
+
+  const handleImportSelected = async () => {
+    if (!user) return;
+    setImporting(true);
+    try {
+      const toImport = bokunProducts.filter(p => selectedProductIds.includes(p.bokun_product_id));
+      for (const p of toImport) {
+        const { data: existing } = await supabase.from('products').select('id').eq('user_id', user.id).eq('name', p.name).single();
+        if (!existing) {
+          const { data: newProd, error: pError } = await supabase.from('products').insert({
+            user_id: user.id,
+            name: p.name,
+            code: p.code
+          }).select().single();
+          
+          if (!pError && newProd) {
+            for (const opt of p.options) {
+              await supabase.from('product_options').insert({
+                product_id: newProd.id,
+                name: opt.name,
+                user_id: user.id
+              });
+            }
+          }
+        }
+      }
+      setShowImportModal(false);
+      alert(`${toImport.length} products processed.`);
+    } catch (e) {
+      alert("Import failed.");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -240,22 +295,37 @@ export default function SettingsPage() {
 
             <div className="pt-6 border-t border-white/5 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Manual Data Sync</h3>
-                <div className="text-[10px] text-orange-400 font-bold uppercase tracking-widest">Bokun.io</div>
+                <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Inventory Management</h3>
+                <div className="text-[10px] text-orange-400 font-bold uppercase tracking-widest">Bokun Integration</div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="aurelia-input text-xs" />
-                <input type="date" value={syncEndDate} onChange={e => setSyncEndDate(e.target.value)} className="aurelia-input text-xs" />
+              
+              <div className="grid grid-cols-1 gap-3">
+                <button 
+                  onClick={handleFetchBokunProducts}
+                  className="flex items-center justify-center gap-2 p-3 bg-orange-500/10 border border-orange-500/20 rounded-xl text-sm font-bold text-orange-400 hover:bg-orange-500/20 transition-all"
+                >
+                  <Database size={16} /> 📦 Import Products from Bokun
+                </button>
+                
+                <div className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Bookings Sync Range</span>
+                    <RefreshCw size={12} className={bokunSyncing ? 'animate-spin text-orange-400' : 'text-gray-600'} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="aurelia-input text-xs" />
+                    <input type="date" value={syncEndDate} onChange={e => setSyncEndDate(e.target.value)} className="aurelia-input text-xs" />
+                  </div>
+                  <button 
+                    onClick={handleSyncBokun} 
+                    disabled={bokunSyncing}
+                    className="w-full flex items-center justify-center gap-2 p-3 bg-white/10 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-white/20 transition-all active:scale-[0.98]"
+                  >
+                    🔄 Sync Bookings from Bokun
+                  </button>
+                  {bokunSyncResult && <div className="text-center text-[10px] font-bold uppercase text-orange-400 animate-fade-in">{bokunSyncResult}</div>}
+                </div>
               </div>
-              <button 
-                onClick={handleSyncBokun} 
-                disabled={bokunSyncing}
-                className="w-full flex items-center justify-center gap-2 p-3 bg-white/5 border border-white/10 rounded-xl text-sm font-bold hover:bg-white/10 transition-colors"
-              >
-                <RefreshCw size={16} className={bokunSyncing ? 'animate-spin' : ''} />
-                {bokunSyncing ? 'Pulling Data...' : 'Sync Operation Data'}
-              </button>
-              {bokunSyncResult && <div className="text-center text-[10px] font-bold uppercase text-gray-400 animate-fade-in">{bokunSyncResult}</div>}
             </div>
           </div>
         </div>
@@ -414,6 +484,74 @@ export default function SettingsPage() {
         </div>
 
       </div>
+
+      {/* IMPORT MODAL */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-fade-in">
+          <div className="bg-[#0f0f12] border border-white/10 rounded-[32px] w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+              <div>
+                <h2 className="text-2xl font-black">Import Bokun Products</h2>
+                <p className="text-xs text-gray-500 uppercase tracking-widest mt-1">Select items to add to AURELIA</p>
+              </div>
+              <button onClick={() => setShowImportModal(false)} className="p-2 hover:bg-white/5 rounded-xl transition-colors text-gray-500 hover:text-white">
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-8 space-y-4">
+              <div className="flex items-center justify-between px-2 mb-4">
+                <button 
+                  onClick={() => setSelectedProductIds(selectedProductIds.length === bokunProducts.length ? [] : bokunProducts.map(p => p.bokun_product_id))}
+                  className="text-[10px] font-bold uppercase tracking-widest text-orange-400"
+                >
+                  {selectedProductIds.length === bokunProducts.length ? 'Deselect All' : 'Select All'}
+                </button>
+                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+                  {selectedProductIds.length} Products Selected
+                </div>
+              </div>
+
+              {bokunProducts.map(p => (
+                <div 
+                  key={p.bokun_product_id}
+                  onClick={() => setSelectedProductIds(prev => prev.includes(p.bokun_product_id) ? prev.filter(id => id !== p.bokun_product_id) : [...prev, p.bokun_product_id])}
+                  className={`p-5 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                    selectedProductIds.includes(p.bokun_product_id) ? 'bg-orange-500/10 border-orange-500/30' : 'bg-white/[0.02] border-white/5 hover:border-white/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-4">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${selectedProductIds.includes(p.bokun_product_id) ? 'bg-orange-500 text-white' : 'bg-white/5 text-gray-600'}`}>
+                      {selectedProductIds.includes(p.bokun_product_id) ? '✓' : '○'}
+                    </div>
+                    <div>
+                      <div className="font-bold text-sm">{p.name}</div>
+                      <div className="text-[10px] font-mono text-gray-500 mt-0.5">{p.code} · {p.options?.length || 0} Options</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-8 border-t border-white/5 bg-white/[0.02] flex gap-4">
+              <button 
+                onClick={() => setShowImportModal(false)}
+                className="flex-1 py-4 rounded-2xl font-bold border border-white/10 hover:bg-white/5 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleImportSelected}
+                disabled={importing || selectedProductIds.length === 0}
+                className="flex-[2] py-4 bg-orange-500 hover:bg-orange-400 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-orange-500/20 transition-all flex items-center justify-center gap-2"
+              >
+                {importing ? <RefreshCw className="animate-spin" size={18} /> : <Database size={18} />}
+                {importing ? 'Importing...' : `Import ${selectedProductIds.length} Products`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

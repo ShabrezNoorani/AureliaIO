@@ -1,80 +1,180 @@
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 
-export function generateGuideInvoice(guide: any, assignments: any[], period: string, companyName: string = 'AURELIA') {
-  const doc = new jsPDF();
-  
-  // Header
-  doc.setFontSize(20);
-  doc.setTextColor(40, 40, 40);
-  doc.text(`${companyName} — Guide Invoice`, 14, 22);
-  
-  doc.setFontSize(10);
-  doc.setTextColor(100, 100, 100);
-  doc.text(`Guide: ${guide?.name || 'Unknown'}`, 14, 30);
-  doc.text(`Guide Number: ${guide?.guide_number || 'N/A'}`, 14, 35);
-  doc.text(`Period: ${period}`, 14, 40);
-  doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 45);
-
-  // Calculate totals
-  const totalPay = assignments.reduce((sum, a) => sum + Number(a.calculated_pay || 0), 0);
-  const totalPax = assignments.reduce((sum, a) => sum + Number(a.pax_count || 0), 0);
-
-  // Table Data
-  const tableData = assignments.map(a => [
-    a.travel_date || '',
-    a.travel_time || '',
-    a.product_code || '',
-    a.pax_count || 0,
-    `EUR ${Number(a.calculated_pay || 0).toFixed(2)}`
-  ]);
-
-  // Add the table
-  autoTable(doc, {
-    startY: 55,
-    head: [['Date', 'Time', 'Tours/Product', 'Pax', 'Pay']],
-    body: tableData,
-    foot: [['TOTAL', '', '', String(totalPax), `EUR ${totalPay.toFixed(2)}`]],
-    theme: 'grid',
-    headStyles: { fillColor: [42, 42, 62] },
-    footStyles: { fillColor: [245, 166, 35], textColor: [0, 0, 0] }
-  });
-
-  doc.save(`Invoice_${guide?.name || 'Guide'}_${period}.pdf`);
+interface Guide {
+  name: string;
+  guide_number: string;
 }
 
-export function generateBookingInvoice(booking: any, companyName: string = 'AURELIA') {
-  const doc = new jsPDF();
-  
-  doc.setFontSize(20);
-  doc.setTextColor(40, 40, 40);
-  doc.text(`${companyName} — Booking Invoice`, 14, 22);
+interface GuideAssignment {
+  travel_date: string;
+  travel_time: string;
+  product_code: string;
+  option_name: string;
+  pax_count: number;
+  calculated_pay: number;
+}
+
+interface Booking {
+  booking_ref: string;
+  ext_ref?: string;
+  customer_name: string;
+  customer_phone?: string;
+  travel_date: string;
+  travel_time: string;
+  product_code: string;
+  option_name: string;
+  channel: string;
+  total_pax: number;
+  pax_adult: number;
+  pax_youth: number;
+  pax_child: number;
+  pax_infant: number;
+  gross_revenue: number;
+  status: string;
+}
+
+export function generateGuideInvoice(
+  guide: Guide,
+  assignments: GuideAssignment[],
+  companyName: string,
+  dateRange: { from: string, to: string }
+) {
+  const doc: any = new jsPDF();
+  const timestamp = new Date().getTime();
+
+  // Header
+  doc.setFontSize(24);
+  doc.setTextColor(197, 165, 114); // Gold
+  doc.text('AURELIA', 20, 25);
   
   doc.setFontSize(10);
-  doc.setTextColor(100, 100, 100);
-  doc.text(`Booking Ref: ${booking.booking_ref}`, 14, 35);
-  doc.text(`Customer Name: ${booking.customer_name}`, 14, 40);
-  doc.text(`Travel Date: ${booking.travel_date} at ${booking.travel_time}`, 14, 45);
-  doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 50);
+  doc.setTextColor(100);
+  doc.text(companyName.toUpperCase(), 20, 32);
 
-  const tableData = [
-    [
-      booking.product_code || 'Tour',
-      booking.option_name || 'Standard',
-      booking.total_pax || 0,
-      `EUR ${Number(booking.gross_revenue || 0).toFixed(2)}`
-    ]
-  ];
+  doc.setTextColor(0);
+  doc.setFontSize(16);
+  doc.text('GUIDE PAYMENT INVOICE', 120, 25);
+  
+  doc.setFontSize(9);
+  doc.text(`Invoice #: GUI-${timestamp}`, 120, 32);
+  doc.text(`Date: ${new Date().toLocaleDateString()}`, 120, 37);
 
-  autoTable(doc, {
-    startY: 60,
-    head: [['Product Code', 'Option', 'Total Pax', 'Gross Revenue']],
+  // Guide Info
+  doc.setDrawColor(240);
+  doc.line(20, 45, 190, 45);
+  
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('GUIDE INFORMATION', 20, 55);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Name: ${guide.name}`, 20, 62);
+  doc.text(`ID: ${guide.guide_number}`, 20, 67);
+  doc.text(`Period: ${dateRange.from} to ${dateRange.to}`, 20, 72);
+
+  // Table
+  const tableData = assignments.map(a => [
+    a.travel_date,
+    a.travel_time,
+    a.product_code,
+    a.option_name,
+    a.pax_count,
+    `€${(a.calculated_pay / a.pax_count).toFixed(2)}`,
+    `€${a.calculated_pay.toFixed(2)}`
+  ]);
+
+  const total = assignments.reduce((sum, a) => sum + Number(a.calculated_pay), 0);
+
+  doc.autoTable({
+    startY: 85,
+    head: [['Date', 'Time', 'Product', 'Option', 'Pax', 'Rate', 'Amount']],
     body: tableData,
-    foot: [['TOTAL DUE', '', '', `EUR ${Number(booking.gross_revenue || 0).toFixed(2)}`]],
-    theme: 'grid',
-    headStyles: { fillColor: [42, 42, 62] },
-    footStyles: { fillColor: [245, 166, 35], textColor: [0, 0, 0] }
+    headStyles: { fillColor: [197, 165, 114], textColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: [250, 250, 250] },
+    margin: { left: 20, right: 20 },
+    theme: 'striped'
   });
+
+  const finalY = (doc as any).lastAutoTable.finalY + 10;
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Total Due: €${total.toFixed(2)}`, 190, finalY, { align: 'right' });
+
+  // Footer
+  doc.setFontSize(8);
+  doc.setTextColor(150);
+  doc.text('Generated by AURELIA · aureliaio.netlify.app', 105, 285, { align: 'center' });
+  doc.text('This is an automatically generated document', 105, 290, { align: 'center' });
+
+  doc.save(`Guide_${guide.name.replace(/\s/g, '_')}_${dateRange.from}.pdf`);
+}
+
+export function generateBookingInvoice(
+  booking: Booking,
+  companyName: string
+) {
+  const doc: any = new jsPDF();
+
+  // Header
+  doc.setFontSize(20);
+  doc.setTextColor(197, 165, 114);
+  doc.text(companyName.toUpperCase(), 20, 25);
+  
+  doc.setTextColor(0);
+  doc.setFontSize(16);
+  doc.text('BOOKING INVOICE', 120, 25);
+
+  // Details
+  doc.setFontSize(10);
+  doc.text(`Ref: ${booking.booking_ref}`, 20, 45);
+  doc.text(`Ext Ref: ${booking.ext_ref || '—'}`, 20, 50);
+  doc.text(`Customer: ${booking.customer_name}`, 20, 55);
+  doc.text(`Phone: ${booking.customer_phone || '—'}`, 20, 60);
+  
+  doc.text(`Travel: ${booking.travel_date} at ${booking.travel_time}`, 120, 45);
+  doc.text(`Product: ${booking.product_code}`, 120, 50);
+  doc.text(`Option: ${booking.option_name}`, 120, 55);
+  doc.text(`Channel: ${booking.channel}`, 120, 60);
+
+  // Passengers
+  doc.setDrawColor(245);
+  doc.setFillColor(250, 250, 250);
+  doc.rect(20, 70, 170, 15, 'F');
+  doc.setFontSize(9);
+  doc.text(`Adults: ${booking.pax_adult} | Youth: ${booking.pax_youth} | Children: ${booking.pax_child} | Infant: ${booking.pax_infant} | TOTAL: ${booking.total_pax}`, 105, 79, { align: 'center' });
+
+  // Financials Mockup (as requested)
+  const otaComm = booking.gross_revenue * 0.2; // 20% default mockup
+  const netRev = booking.gross_revenue - otaComm;
+  
+  doc.autoTable({
+    startY: 95,
+    body: [
+      ['Gross Revenue', `€${booking.gross_revenue.toFixed(2)}`],
+      ['OTA Commission (Est. 20%)', `-€${otaComm.toFixed(2)}`],
+      ['Net Revenue', `€${netRev.toFixed(2)}`],
+      ['', ''],
+      ['Ticket Costs (Est.)', '-€0.00'],
+      ['Guide Costs (Est.)', '-€0.00'],
+      ['Extra Costs', '-€0.00'],
+      ['', ''],
+      ['NET PROFIT (Est.)', `€${netRev.toFixed(2)}`]
+    ],
+    theme: 'plain',
+    styles: { fontSize: 10, cellPadding: 4 },
+    columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } },
+    margin: { left: 40, right: 40 }
+  });
+
+  const finalY = (doc as any).lastAutoTable.finalY + 15;
+  doc.setFontSize(12);
+  const statusColor = booking.status === 'DONE' ? [34, 197, 94] : booking.status === 'CANCELLED_EARLY' ? [239, 68, 68] : [197, 165, 114];
+  doc.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
+  doc.text(`STATUS: ${booking.status}`, 105, finalY, { align: 'center' });
+
+  // Footer
+  doc.setFontSize(8);
+  doc.setTextColor(150);
+  doc.text('AURELIA PLATFORM · POWERING OPERATIONAL INTELLIGENCE', 105, 285, { align: 'center' });
 
   doc.save(`Invoice_${booking.booking_ref}.pdf`);
 }

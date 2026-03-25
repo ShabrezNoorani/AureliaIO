@@ -33,19 +33,46 @@ const FULL_MONTH_NAMES = [
 ];
 
 function parseCsvText(text: string): string[][] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  return lines.map((line) => {
-    const vals: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (const ch of line) {
-      if (ch === '"') { inQuotes = !inQuotes; continue; }
-      if (ch === ',' && !inQuotes) { vals.push(current.trim()); current = ''; continue; }
-      current += ch;
+  const result: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+  
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const nextChar = text[i + 1];
+    
+    if (inQuotes) {
+      if (char === '"' && nextChar === '"') {
+        cell += '"';
+        i++;
+      } else if (char === '"') {
+        inQuotes = false;
+      } else {
+        cell += char;
+      }
+    } else {
+      if (char === '"') {
+        inQuotes = true;
+      } else if (char === ',') {
+        row.push(cell.trim());
+        cell = '';
+      } else if (char === '\n' || (char === '\r' && nextChar === '\n')) {
+        row.push(cell.trim());
+        result.push(row);
+        row = [];
+        cell = '';
+        if (char === '\r') i++;
+      } else {
+        cell += char;
+      }
     }
-    vals.push(current.trim());
-    return vals;
-  });
+  }
+  if (row.length > 0 || cell) {
+    row.push(cell.trim());
+    result.push(row);
+  }
+  return result;
 }
 
 function parseLongDate(dateStr: string): string | null {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, CheckCircle2, UserPlus, Users, X } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, CheckCircle2, UserPlus, Users, X, Share2, Copy, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export default function TodayToursPage() {
@@ -20,6 +20,7 @@ export default function TodayToursPage() {
   // Modal states
   const [assignModal, setAssignModal] = useState<any | null>(null);
   const [checkinModal, setCheckinModal] = useState<any | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const loadData = async () => {
     if (!user) return;
@@ -132,6 +133,13 @@ export default function TodayToursPage() {
     loadData();
   };
 
+  const copyCheckinLink = () => {
+    const url = `${window.location.origin}/checkin?date=${todayStrDate}`;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div className="relative">
       <div className="p-8 pb-32 max-w-5xl mx-auto space-y-8 animate-fade-in">
@@ -145,11 +153,18 @@ export default function TodayToursPage() {
                 <span>{todayStr}</span>
               </div>
             </div>
-            <div className="text-right">
+            <div className="text-right flex flex-col items-end gap-3">
               <div className="flex items-center justify-end gap-2 text-2xl font-mono font-bold text-[#f5a623] drop-shadow-md mb-2">
                 <Clock size={20} />
                 <span>{timeStr}</span>
               </div>
+              <button 
+                onClick={copyCheckinLink}
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold"
+              >
+                {copied ? <Check size={14} className="text-green-500" /> : <Share2 size={14} />}
+                {copied ? 'Link Copied!' : 'Copy Check-in Link'}
+              </button>
             </div>
           </div>
 

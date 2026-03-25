@@ -82,7 +82,7 @@ interface LedgerPageProps {
 
 export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoaded }: LedgerPageProps) {
   const { data: appData } = useAppData();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const productNames = useMemo(() => appData.products.map((p) => p.name), [appData.products]);
 
   // Panel state
@@ -452,7 +452,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                           case 'guide': return <span className="text-muted-foreground">{b.assigned_guide || '—'}</span>;
                           case 'actions': return (
                             <div className="flex gap-2">
-                              <button onClick={() => generateBookingInvoice(b)} className="p-1 px-1.5 rounded transition-colors text-gold border border-gold/20 hover:bg-gold/10" title="Download Invoice">
+                              <button onClick={() => generateBookingInvoice(b, profile?.company_name || 'AURELIA Suite')} className="p-1 px-1.5 rounded transition-colors text-gold border border-gold/20 hover:bg-gold/10" title="Download Invoice">
                                 <FileDown size={12} />
                               </button>
                               <button onClick={() => handleEdit(b)} className="p-1 px-1.5 rounded transition-colors" style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'hsl(var(--theme-text-sec))' }}>
