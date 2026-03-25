@@ -1,9 +1,10 @@
 import { useState, useMemo, useRef } from 'react';
-import { Plus, Upload, Trash2, Pencil, FileSpreadsheet, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Plus, Upload, Trash2, Pencil, FileSpreadsheet, RefreshCw, AlertTriangle, FileDown } from 'lucide-react';
 import { useAppData } from '@/lib/useAppData';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { syncMasterData } from '@/lib/gsheetSync';
+import { generateBookingInvoice } from '@/lib/generateInvoice';
 import BookingPanel from './BookingPanel';
 import CsvUploadModal from './CsvUploadModal';
 import MultiSelect from './MultiSelect';
@@ -451,6 +452,9 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                           case 'guide': return <span className="text-muted-foreground">{b.assigned_guide || '—'}</span>;
                           case 'actions': return (
                             <div className="flex gap-2">
+                              <button onClick={() => generateBookingInvoice(b)} className="p-1 px-1.5 rounded transition-colors text-gold border border-gold/20 hover:bg-gold/10" title="Download Invoice">
+                                <FileDown size={12} />
+                              </button>
                               <button onClick={() => handleEdit(b)} className="p-1 px-1.5 rounded transition-colors" style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'hsl(var(--theme-text-sec))' }}>
                                 <Pencil size={12} />
                               </button>

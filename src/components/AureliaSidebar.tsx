@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map } from 'lucide-react';
+import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, Profile } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -176,6 +176,8 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
               <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => onNavigate('ledger')} indent />
               <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => onNavigate('admin-costs')} indent />
               <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => onNavigate('today')} indent />
+              <SidebarItem icon={Users} label="Guides" active={window.location.pathname.includes('/guides')} onClick={() => navigate('/app/guides')} indent />
+              <SidebarItem icon={BarChart3} label="Guide Dashboard" active={window.location.pathname.includes('/guide-dashboard')} onClick={() => navigate('/app/guide-dashboard')} indent />
               <SidebarItem icon={Map} label="Marketplace" active={window.location.pathname.includes('/marketplace')} onClick={() => navigate('/app/marketplace')} indent />
             </div>
           )}
@@ -183,9 +185,6 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
 
         <div className="my-2 mx-4 border-t opacity-30" style={{ borderColor: 'hsl(var(--theme-border))' }} />
 
-        {/* SINGLE: BLOG */}
-        <SidebarItem icon={BookOpen} label="Blog" active={activeView === 'blog'} onClick={() => onNavigate('blog')} />
-        
         {/* SINGLE: NEW PRODUCT */}
         <SidebarItem icon={Plus} label="New Product" active={false} onClick={onNewProduct} />
       </div>

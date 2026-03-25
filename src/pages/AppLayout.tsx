@@ -13,6 +13,7 @@ import { useAppData } from '@/lib/useAppData';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { syncMasterData } from '@/lib/gsheetSync';
+import { syncFromBokun } from '@/lib/bokunSync';
 
 export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics';
 
@@ -87,15 +88,40 @@ const AppLayout = () => {
       
       const intervalMs = parseInt(localStorage.getItem('aurelia_autosync_interval') || '1800000', 10);
       intervalId = setInterval(async () => {
-        const sheetId = localStorage.getItem('gsheet_id');
-        if (sheetId && user) {
-          try {
-            await syncMasterData(sheetId, user.id, supabase);
+        if (!user) return;
+        
+        const sources = JSON.parse(localStorage.getItem('aurelia_autosync_sources') || '["gsheet"]');
+        let syncedAtLeastOne = false;
+
+        try {
+          // Google Sheets
+          if (sources.includes('gsheet')) {
+            const sheetId = localStorage.getItem('gsheet_id');
+            if (sheetId) {
+              await syncMasterData(sheetId, user.id, supabase);
+              syncedAtLeastOne = true;
+            }
+          }
+
+          // Bokun API
+          if (sources.includes('bokun')) {
+            const access = localStorage.getItem('aurelia_bokun_access');
+            const secret = localStorage.getItem('aurelia_bokun_secret');
+            if (access && secret) {
+              const d = new Date(); d.setDate(d.getDate() - 90);
+              const startStr = d.toISOString().split('T')[0];
+              const endStr = new Date().toISOString().split('T')[0];
+              await syncFromBokun(access, secret, user.id, supabase, startStr, endStr);
+              syncedAtLeastOne = true;
+            }
+          }
+
+          if (syncedAtLeastOne) {
             setLastSynced(Date.now());
             setBookingsLoaded(false); 
-          } catch (e) {
-            console.error('Auto sync failed:', e);
           }
+        } catch (e) {
+          console.error('Auto sync failed:', e);
         }
       }, intervalMs);
     };

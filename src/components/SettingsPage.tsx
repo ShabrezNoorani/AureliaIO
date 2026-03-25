@@ -3,6 +3,7 @@ import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw } from 'luci
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { syncFromBokun } from '@/lib/bokunSync';
 
 const STORAGE_KEY = 'gsheet_id';
 const DEFAULT_SHEET_ID = '1EAI0SHtkJD5HHVj25rJcnzmoksTug249eIT4_JmiOR8';
@@ -20,11 +21,30 @@ export default function SettingsPage() {
   const [companySaved, setCompanySaved] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
+  // Bokun Integration
+  const [bokunAccess, setBokunAccess] = useState('');
+  const [bokunSecret, setBokunSecret] = useState('');
+  const [bokunSaved, setBokunSaved] = useState(false);
+  const [bokunSyncing, setBokunSyncing] = useState(false);
+  const [bokunSyncResult, setBokunSyncResult] = useState('');
+  const [syncStartDate, setSyncStartDate] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 90);
+    return d.toISOString().split('T')[0];
+  });
+  const [syncEndDate, setSyncEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [syncSources, setSyncSources] = useState<string[]>(['gsheet']);
+
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     setSheetId(stored || DEFAULT_SHEET_ID);
+    setBokunAccess(localStorage.getItem('aurelia_bokun_access') || '');
+    setBokunSecret(localStorage.getItem('aurelia_bokun_secret') || '');
     setAutoSync(localStorage.getItem('aurelia_autosync_enabled') === 'true');
     setSyncInterval(localStorage.getItem('aurelia_autosync_interval') || '1800000');
+    
+    const storedSources = localStorage.getItem('aurelia_autosync_sources');
+    if (storedSources) setSyncSources(JSON.parse(storedSources));
+
     if (profile) setCompanyName(profile.company_name || '');
   }, [profile]);
 
@@ -40,6 +60,15 @@ export default function SettingsPage() {
   const handleIntervalChange = (val: string) => {
     setSyncInterval(val);
     localStorage.setItem('aurelia_autosync_interval', val);
+    window.dispatchEvent(new Event('autosync_changed'));
+  };
+
+  const toggleSyncSource = (source: string) => {
+    const next = syncSources.includes(source) 
+      ? syncSources.filter(s => s !== source)
+      : [...syncSources, source];
+    setSyncSources(next);
+    localStorage.setItem('aurelia_autosync_sources', JSON.stringify(next));
     window.dispatchEvent(new Event('autosync_changed'));
   };
 
@@ -62,6 +91,27 @@ export default function SettingsPage() {
       // Wait for auth context to re-poll and update sidebar live
     } catch (e) {
       alert('Failed to update company name');
+    }
+  };
+
+  const handleSaveBokun = () => {
+    localStorage.setItem('aurelia_bokun_access', bokunAccess);
+    localStorage.setItem('aurelia_bokun_secret', bokunSecret);
+    setBokunSaved(true);
+    setTimeout(() => setBokunSaved(false), 2000);
+  };
+
+  const handleSyncBokun = async () => {
+    if (!user || !bokunAccess || !bokunSecret) return alert("Keys required.");
+    setBokunSyncing(true);
+    setBokunSyncResult('');
+    try {
+      const res = await syncFromBokun(bokunAccess, bokunSecret, user.id, supabase, syncStartDate, syncEndDate);
+      setBokunSyncResult(`✅ Imported ${res.imported} · Updated ${res.updated} (Skipped ${res.skipped})`);
+    } catch (e: any) {
+      setBokunSyncResult(`❌ Sync failed: ${e.message}`);
+    } finally {
+      setBokunSyncing(false);
     }
   };
 
@@ -159,6 +209,50 @@ export default function SettingsPage() {
           </div>
         </div>
 
+        {/* SECTION 2a — Bokun Integration */}
+        <div className="aurelia-card p-6 border-l-[3px] border-l-[#f5a623]">
+          <div className="flex items-center gap-3 mb-5">
+            <RefreshCw size={18} className="text-[#f5a623]" />
+            <h2 className="text-sm font-bold uppercase tracking-wider">Bokun Integration</h2>
+          </div>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Access Key</label>
+                <input type="password" value={bokunAccess} onChange={e => setBokunAccess(e.target.value)} className="aurelia-input font-mono text-xs" placeholder="API Access Key" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Secret Key</label>
+                <input type="password" value={bokunSecret} onChange={e => setBokunSecret(e.target.value)} className="aurelia-input font-mono text-xs" placeholder="API Secret Key" />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button onClick={handleSaveBokun} className="aurelia-gold-btn text-xs">Save Keys</button>
+              {bokunSaved && <span className="text-xs text-profit-positive font-bold animate-fade-in">✓ Saved</span>}
+            </div>
+            
+            <div className="mt-6 pt-6 border-t border-border/50 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">From Date</label>
+                  <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="aurelia-input" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">To Date</label>
+                  <input type="date" value={syncEndDate} onChange={e => setSyncEndDate(e.target.value)} className="aurelia-input" />
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={handleSyncBokun} disabled={bokunSyncing} className="aurelia-ghost-btn text-xs flex items-center gap-2 border border-white/10">
+                  <RefreshCw size={14} className={bokunSyncing ? 'animate-spin' : ''} />
+                  {bokunSyncing ? 'Syncing from Bokun...' : '🔄 Sync from Bokun'}
+                </button>
+                {bokunSyncResult && <span className="text-xs font-bold animate-fade-in text-white">{bokunSyncResult}</span>}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* SECTION 2b — Auto Sync */}
         <div className="aurelia-card p-6 border-l-[3px] border-l-blue-500">
           <div className="flex items-center gap-3 mb-5">
@@ -177,23 +271,41 @@ export default function SettingsPage() {
             </div>
             
             {autoSync && (
-              <div className="space-y-2 mt-4 animate-fade-in p-4 bg-white/5 rounded-lg border border-white/10">
-                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                  Sync every
-                </label>
-                <select 
-                  className="aurelia-input w-full text-sm font-bold" 
-                  value={syncInterval}
-                  onChange={(e) => handleIntervalChange(e.target.value)}
-                >
-                  <option value="300000">5 minutes</option>
-                  <option value="900000">15 minutes</option>
-                  <option value="1800000">30 minutes</option>
-                  <option value="3600000">1 hour</option>
-                  <option value="7200000">2 hours</option>
-                  <option value="21600000">6 hours</option>
-                  <option value="43200000">12 hours</option>
-                </select>
+              <div className="space-y-4 mt-4 animate-fade-in p-4 bg-white/5 rounded-lg border border-white/10">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2 block">
+                    Active Sync Sources
+                  </label>
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 text-sm font-bold cursor-pointer hover:text-white text-gray-400">
+                      <input type="checkbox" checked={syncSources.includes('gsheet')} onChange={() => toggleSyncSource('gsheet')} className="w-4 h-4 rounded border-white/10 bg-black/50 text-[#f5a623] focus:ring-[#f5a623]" />
+                      Google Sheets
+                    </label>
+                    <label className="flex items-center gap-2 text-sm font-bold cursor-pointer hover:text-white text-gray-400">
+                      <input type="checkbox" checked={syncSources.includes('bokun')} onChange={() => toggleSyncSource('bokun')} className="w-4 h-4 rounded border-white/10 bg-black/50 text-[#f5a623] focus:ring-[#f5a623]" />
+                      Bokun API
+                    </label>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                    Sync every
+                  </label>
+                  <select 
+                    className="aurelia-input w-full text-sm font-bold" 
+                    value={syncInterval}
+                    onChange={(e) => handleIntervalChange(e.target.value)}
+                  >
+                    <option value="300000">5 minutes</option>
+                    <option value="900000">15 minutes</option>
+                    <option value="1800000">30 minutes</option>
+                    <option value="3600000">1 hour</option>
+                    <option value="7200000">2 hours</option>
+                    <option value="21600000">6 hours</option>
+                    <option value="43200000">12 hours</option>
+                  </select>
+                </div>
               </div>
             )}
             
