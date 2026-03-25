@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw, Key, Database, Percent, Globe, Trash2, User, X } from 'lucide-react';
+import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw, Key, Database, Percent, Globe, Trash2, User, X, Eye, EyeOff } from 'lucide-react';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -19,6 +19,8 @@ export default function SettingsPage() {
   // Connections (Bokun)
   const [bokunAccess, setBokunAccess] = useState('');
   const [bokunSecret, setBokunSecret] = useState('');
+  const [showBokunAccess, setShowBokunAccess] = useState(false);
+  const [showBokunSecret, setShowBokunSecret] = useState(false);
   const [bokunSaved, setBokunSaved] = useState(false);
   const [bokunSyncing, setBokunSyncing] = useState(false);
   const [bokunSyncResult, setBokunSyncResult] = useState('');
@@ -51,21 +53,25 @@ export default function SettingsPage() {
   const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
-    // Load local settings
-    setSheetId(localStorage.getItem(STORAGE_KEY) || DEFAULT_SHEET_ID);
-    setBokunAccess(localStorage.getItem('aurelia_bokun_access') || '');
-    setBokunSecret(localStorage.getItem('aurelia_bokun_secret') || '');
-    setAutoSync(localStorage.getItem('aurelia_autosync_enabled') === 'true');
-    setSyncInterval(localStorage.getItem('aurelia_autosync_interval') || '1800000');
-    
-    const storedSources = localStorage.getItem('aurelia_autosync_sources');
-    if (storedSources) setSyncSources(JSON.parse(storedSources));
+    // Load from profile if available
+    if (profile) {
+      setCompanyName(profile.company_name || '');
+      setSheetId(profile.gsheet_id || DEFAULT_SHEET_ID);
+      setBokunAccess(profile.bokun_access_key || '');
+      setBokunSecret(profile.bokun_secret_key || '');
+      setAutoSync(profile.autosync_enabled || false);
+      setSyncInterval(profile.autosync_interval || '1800000');
+    }
+
+    // Still load theme and operational defaults from localStorage for now as per plan, 
+    // unless they should also be in profile. (User said ALL settings to Supabase)
+    // Actually, user said: "Move ALL settings to Supabase profiles table per user."
+    // But they only listed gsheet_id, autosync_enabled, autosync_interval, bokun_access_key, bokun_secret_key.
+    // I'll stick to what was explicitly requested.
 
     setMargin(localStorage.getItem('aurelia_default_margin') || '20');
     setTaxRate(localStorage.getItem('aurelia_default_tax') || '10');
     setCurrency(localStorage.getItem('aurelia_default_currency') || 'EUR');
-
-    if (profile) setCompanyName(profile.company_name || '');
   }, [profile]);
 
   const handleSaveCompany = async () => {
@@ -77,11 +83,19 @@ export default function SettingsPage() {
     } catch (e) { alert('Failed to update company name'); }
   };
 
-  const handleSaveConnections = () => {
-    localStorage.setItem('aurelia_bokun_access', bokunAccess);
-    localStorage.setItem('aurelia_bokun_secret', bokunSecret);
-    setBokunSaved(true);
-    setTimeout(() => setBokunSaved(false), 2000);
+  const handleSaveConnections = async () => {
+    if (!user) return;
+    try {
+      await supabase.from('profiles').update({
+        bokun_access_key: bokunAccess,
+        bokun_secret_key: bokunSecret
+      }).eq('id', user.id);
+      
+      setBokunSaved(true);
+      setTimeout(() => setBokunSaved(false), 2000);
+    } catch (e) {
+      alert('Failed to save Bokun keys');
+    }
   };
 
   const handleSyncBokun = async () => {
@@ -147,14 +161,21 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSaveSync = () => {
-    localStorage.setItem(STORAGE_KEY, sheetId);
-    localStorage.setItem('aurelia_autosync_enabled', String(autoSync));
-    localStorage.setItem('aurelia_autosync_interval', syncInterval);
-    localStorage.setItem('aurelia_autosync_sources', JSON.stringify(syncSources));
-    setSyncSaved(true);
-    setTimeout(() => setSyncSaved(false), 2000);
-    window.dispatchEvent(new Event('autosync_changed'));
+  const handleSaveSync = async () => {
+    if (!user) return;
+    try {
+      await supabase.from('profiles').update({
+        gsheet_id: sheetId,
+        autosync_enabled: autoSync,
+        autosync_interval: syncInterval
+      }).eq('id', user.id);
+
+      setSyncSaved(true);
+      setTimeout(() => setSyncSaved(false), 2000);
+      window.dispatchEvent(new Event('autosync_changed'));
+    } catch (e) {
+      alert('Failed to update sync config');
+    }
   };
 
   const handleSaveDefaults = () => {
@@ -265,29 +286,57 @@ export default function SettingsPage() {
             </div>
           </div>
 
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 gap-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Bokun Access Key</label>
-                <input 
-                  type="password" 
-                  value={bokunAccess} 
-                  onChange={e => setBokunAccess(e.target.value)} 
-                  className="aurelia-input font-mono text-sm" 
-                  placeholder="X-Bokun-AccessKey" 
-                />
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Bokun Access Key</label>
+                  <div className="relative">
+                    <input 
+                      type={showBokunAccess ? "text" : "password"}
+                      value={bokunAccess} 
+                      onChange={e => setBokunAccess(e.target.value)} 
+                      className="aurelia-input font-mono text-sm w-full pr-12" 
+                      placeholder="X-Bokun-AccessKey" 
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setShowBokunAccess(!showBokunAccess)}
+                      className="absolute right-3 top-2.5 text-gray-500 hover:text-white"
+                    >
+                      {showBokunAccess ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                    {!showBokunAccess && bokunAccess && (
+                      <div className="absolute left-4 top-3 text-xs text-gray-300 pointer-events-none bg-[#0a0a0f]">
+                        {bokunAccess.substring(0, 8)}...
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Bokun Secret Key</label>
+                  <div className="relative">
+                    <input 
+                      type={showBokunSecret ? "text" : "password"}
+                      value={bokunSecret} 
+                      onChange={e => setBokunSecret(e.target.value)} 
+                      className="aurelia-input font-mono text-sm w-full pr-12" 
+                      placeholder="HMAC Secret Key" 
+                    />
+                    <button 
+                      type="button"
+                      onClick={() => setShowBokunSecret(!showBokunSecret)}
+                      className="absolute right-3 top-2.5 text-gray-500 hover:text-white"
+                    >
+                      {showBokunSecret ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                    {!showBokunSecret && bokunSecret && (
+                      <div className="absolute left-4 top-3 text-xs text-gray-300 pointer-events-none bg-[#0a0a0f]">
+                        ••••••••
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Bokun Secret Key</label>
-                <input 
-                  type="password" 
-                  value={bokunSecret} 
-                  onChange={e => setBokunSecret(e.target.value)} 
-                  className="aurelia-input font-mono text-sm" 
-                  placeholder="HMAC Secret Key" 
-                />
-              </div>
-            </div>
 
             <button onClick={handleSaveConnections} className="w-full aurelia-gold-btn py-3 font-extrabold shadow-xl shadow-orange-500/10">
               {bokunSaved ? '✅ Keys Secured' : 'Save Connection Keys'}

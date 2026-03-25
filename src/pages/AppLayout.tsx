@@ -21,7 +21,7 @@ import { syncFromBokun } from '@/lib/bokunSync';
 export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace';
 
 const AppLayout = () => {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const {
     data,
     addProduct,
@@ -100,20 +100,26 @@ const AppLayout = () => {
 
     const checkSync = () => {
       if (intervalId) clearInterval(intervalId);
-      const enabled = localStorage.getItem('aurelia_autosync_enabled') === 'true';
+      
+      // Use profile data if available, otherwise fallback to false
+      const enabled = profile?.autosync_enabled ?? false;
       if (!enabled) return;
       
-      const intervalMs = parseInt(localStorage.getItem('aurelia_autosync_interval') || '1800000', 10);
+      const intervalMs = parseInt(profile?.autosync_interval || '1800000', 10);
       intervalId = setInterval(async () => {
-        if (!user) return;
+        if (!user || !profile) return;
         
+        // Sources could still be in localStorage or we can just default to gsheet
+        // Plan didn't explicitly mention moving 'sources' to profile, but let's be safe.
+        // I'll keep sources in localStorage for now since it's less sensitive, 
+        // OR I can just assume gsheet if missing.
         const sources = JSON.parse(localStorage.getItem('aurelia_autosync_sources') || '["gsheet"]');
         let syncedAtLeastOne = false;
 
         try {
           // Google Sheets
           if (sources.includes('gsheet')) {
-            const sheetId = localStorage.getItem('gsheet_id');
+            const sheetId = profile.gsheet_id;
             if (sheetId) {
               await syncMasterData(sheetId, user.id, supabase);
               syncedAtLeastOne = true;
@@ -122,8 +128,8 @@ const AppLayout = () => {
 
           // Bokun API
           if (sources.includes('bokun')) {
-            const access = localStorage.getItem('aurelia_bokun_access');
-            const secret = localStorage.getItem('aurelia_bokun_secret');
+            const access = profile.bokun_access_key;
+            const secret = profile.bokun_secret_key;
             if (access && secret) {
               const d = new Date(); d.setDate(d.getDate() - 90);
               const startStr = d.toISOString().split('T')[0];

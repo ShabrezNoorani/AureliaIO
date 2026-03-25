@@ -12,6 +12,14 @@ interface Guide {
   base_rate: number;
   status: string;
   notes: string | null;
+  product_rates?: ProductRate[];
+}
+
+interface ProductRate {
+  id?: string;
+  product_code: string;
+  rate: number;
+  rate_type: 'Fixed' | 'Tier';
 }
 
 export default function GuidesPage() {
@@ -29,20 +37,23 @@ export default function GuidesPage() {
     phone: '',
     baseRate: 0,
     status: 'active',
-    notes: ''
+    notes: '',
+    productRates: [] as ProductRate[]
   });
 
   const fetchGuides = async () => {
     if (!user) return;
     setLoading(true);
-    const { data, error } = await supabase
+    
+    // Fetch guides and their product rates
+    const { data: guidesData, error: guidesError } = await supabase
       .from('guides')
-      .select('*')
+      .select('*, product_rates:guide_product_rates(*)')
       .eq('user_id', user.id)
       .order('created_at', { ascending: true });
     
-    if (error) console.error(error);
-    setGuides(data || []);
+    if (guidesError) console.error(guidesError);
+    setGuides(guidesData || []);
     setLoading(false);
   };
 
@@ -61,7 +72,8 @@ export default function GuidesPage() {
         phone: guide.phone || '',
         baseRate: guide.base_rate || 0,
         status: guide.status || 'active',
-        notes: guide.notes || ''
+        notes: guide.notes || '',
+        productRates: guide.product_rates || []
       });
     } else {
       setEditingGuide(null);
@@ -73,7 +85,8 @@ export default function GuidesPage() {
         phone: '',
         baseRate: 0,
         status: 'active',
-        notes: ''
+        notes: '',
+        productRates: []
       });
     }
     setPanelOpen(true);
@@ -94,6 +107,8 @@ export default function GuidesPage() {
       notes: form.notes
     };
 
+    let guideId = editingGuide?.id;
+
     if (editingGuide) {
       const { error } = await supabase
         .from('guides')
@@ -101,10 +116,29 @@ export default function GuidesPage() {
         .eq('id', editingGuide.id);
       if (error) console.error(error);
     } else {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('guides')
-        .insert(payload);
+        .insert(payload)
+        .select()
+        .single();
       if (error) console.error(error);
+      if (data) guideId = data.id;
+    }
+
+    if (guideId) {
+      // Update product rates
+      await supabase.from('guide_product_rates').delete().eq('guide_id', guideId);
+      
+      if (form.productRates.length > 0) {
+        const ratesPayload = form.productRates.map(r => ({
+          guide_id: guideId,
+          user_id: user.id,
+          product_code: r.product_code,
+          rate: Number(r.rate),
+          rate_type: r.rate_type
+        }));
+        await supabase.from('guide_product_rates').insert(ratesPayload);
+      }
     }
 
     setPanelOpen(false);
@@ -175,7 +209,11 @@ export default function GuidesPage() {
                       <td className="px-6 py-4 font-mono font-bold text-gold">{g.guide_number}</td>
                       <td className="px-6 py-4">
                         <div className="font-bold">{g.name}</div>
-                        <div className="text-xs text-gray-500">{g.email}</div>
+                        <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+                          {g.product_rates && g.product_rates.length > 0 ? (
+                            g.product_rates.map(r => `${r.product_code}:€${r.rate}`).join(' · ')
+                          ) : 'No special rates'}
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-gray-400">{g.phone || '—'}</td>
                       <td className="px-6 py-4 font-mono">€{g.base_rate}</td>
@@ -278,11 +316,74 @@ export default function GuidesPage() {
                   <div>
                     <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Notes</label>
                     <textarea 
-                      rows={4}
+                      rows={2}
                       value={form.notes}
                       onChange={e => setForm({...form, notes: e.target.value})}
                       className="aurelia-input resize-none"
                     />
+                  </div>
+
+                  <div className="pt-4 border-t border-white/5">
+                    <div className="flex items-center justify-between mb-4">
+                      <label className="text-[10px] font-bold text-gold uppercase tracking-widest">Rates Per Product</label>
+                      <button 
+                        onClick={() => setForm({...form, productRates: [...form.productRates, { product_code: '', rate: 0, rate_type: 'Fixed' }]})}
+                        className="text-[10px] bg-gold/10 text-gold px-2 py-1 rounded border border-gold/20 hover:bg-gold/20 transition-all font-bold"
+                      >
+                        + Add Rate
+                      </button>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      {form.productRates.map((r, i) => (
+                        <div key={i} className="flex gap-2 items-center bg-white/5 p-2 rounded-xl border border-white/5">
+                          <input 
+                            className="aurelia-input text-xs w-24 bg-transparent border-none focus:ring-0 px-1" 
+                            placeholder="Code"
+                            value={r.product_code}
+                            onChange={e => {
+                              const next = [...form.productRates];
+                              next[i].product_code = e.target.value.toUpperCase();
+                              setForm({...form, productRates: next});
+                            }}
+                          />
+                          <div className="w-[1px] h-4 bg-white/10" />
+                          <input 
+                            type="number"
+                            className="aurelia-input text-xs w-16 bg-transparent border-none focus:ring-0 px-1 text-gold font-bold" 
+                            placeholder="€"
+                            value={r.rate}
+                            onChange={e => {
+                              const next = [...form.productRates];
+                              next[i].rate = Number(e.target.value);
+                              setForm({...form, productRates: next});
+                            }}
+                          />
+                          <div className="w-[1px] h-4 bg-white/10" />
+                          <select 
+                            className="bg-transparent text-[10px] text-gray-500 font-bold border-none focus:ring-0"
+                            value={r.rate_type}
+                            onChange={e => {
+                              const next = [...form.productRates];
+                              next[i].rate_type = e.target.value as 'Fixed' | 'Tier';
+                              setForm({...form, productRates: next});
+                            }}
+                          >
+                            <option value="Fixed">Fixed</option>
+                            <option value="Tier">Tier</option>
+                          </select>
+                          <button 
+                            onClick={() => setForm({...form, productRates: form.productRates.filter((_, idx) => idx !== i)})}
+                            className="ml-auto text-gray-600 hover:text-red-400 p-1"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                      {form.productRates.length === 0 && (
+                        <p className="text-[10px] text-gray-600 italic text-center py-2">No product-specific rates set.</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

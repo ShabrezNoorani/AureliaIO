@@ -339,7 +339,7 @@ export default function CheckinApp() {
                           </div>
                           <div className="flex items-center gap-3 text-gray-400 justify-end">
                             <Users size={16} />
-                            <span className="text-white">A:{b.pax_adult} Y:{b.pax_youth} C:{b.pax_child} I:{b.pax_infant}</span>
+                            <span className="text-white">A:{b.pax_adult || 0} Y:{b.pax_youth || 0} C:{b.pax_child || 0} I:{b.pax_infant || 0}</span>
                           </div>
                         </div>
 
@@ -395,7 +395,13 @@ export default function CheckinApp() {
             <div className="text-center space-y-2">
               <h2 className="text-2xl font-black">Confirm Check-in</h2>
               <p className="text-xs text-gray-500 uppercase tracking-widest">Customer: {showConfirm.customer_name}</p>
-              <p className="text-gold font-bold">Pax: {(showConfirm.pax_adult + showConfirm.pax_youth + showConfirm.pax_child + showConfirm.pax_infant)}</p>
+              <div className="flex flex-col items-center gap-1 pt-2">
+                <div className="flex items-center gap-2 text-white font-bold">
+                  <span className="text-lg">👥</span>
+                  <span>A:{showConfirm.pax_adult || 0} Y:{showConfirm.pax_youth || 0} C:{showConfirm.pax_child || 0} I:{showConfirm.pax_infant || 0}</span>
+                </div>
+                <p className="text-[10px] font-black uppercase text-gold">({(showConfirm.pax_adult || 0) + (showConfirm.pax_youth || 0) + (showConfirm.pax_child || 0) + (showConfirm.pax_infant || 0)} total)</p>
+              </div>
             </div>
 
             <div 

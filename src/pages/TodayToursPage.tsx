@@ -11,6 +11,7 @@ export default function TodayToursPage() {
   const [bookings, setBookings] = useState<any[]>([]);
   const [guides, setGuides] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [productRates, setProductRates] = useState<any[]>([]);
   const [checkins, setCheckins] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
@@ -27,17 +28,19 @@ export default function TodayToursPage() {
     const today = new Date().toISOString().split('T')[0];
     setTodayStrDate(today);
 
-    const [bRes, gRes, aRes, cRes] = await Promise.all([
+    const [bRes, gRes, aRes, cRes, rRes] = await Promise.all([
       supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', today).order('travel_time', { ascending: true }),
       supabase.from('guides').select('*').eq('user_id', user.id).eq('status', 'active'),
       supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today),
-      supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today)
+      supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
+      supabase.from('guide_product_rates').select('*').eq('user_id', user.id)
     ]);
 
     if (bRes.data) setBookings(bRes.data);
     if (gRes.data) setGuides(gRes.data);
     if (aRes.data) setAssignments(aRes.data);
     if (cRes.data) setCheckins(cRes.data);
+    if (rRes.data) setProductRates(rRes.data);
     
     setLoading(false);
   };
@@ -247,24 +250,30 @@ export default function TodayToursPage() {
                             {grpAssigns.length > 0 && (
                               <div className="bg-[#13131a] border-b border-white/5 px-6 py-3 divide-y divide-white/5">
                                 {grpAssigns.map(a => {
-                                  const guideInfo = guides.find(g => g.id === a.guide_id);
-                                  return (
-                                    <div key={a.id} className="py-2.5 flex items-center justify-between">
-                                      <div className="flex items-center gap-3">
-                                        <div className="p-1.5 bg-purple-500/10 text-purple-400 rounded-md"><Users size={16} /></div>
-                                        <div>
-                                          <p className="font-bold text-sm text-white">{guideInfo?.name || 'Unknown Guide'}</p>
-                                          <p className="text-xs text-gray-400">Pax Assigned: {a.pax_count}</p>
+                                    const guideInfo = guides.find(g => g.id === a.guide_id);
+                                    const source = a.rate_override ? '(manual)' : (productRates.find(r => r.guide_id === a.guide_id && r.product_code === a.product_code) ? '(product rate)' : '(base rate)');
+                                    const sourceColor = a.rate_override ? 'text-gold' : 'text-gray-500';
+
+                                    return (
+                                      <div key={a.id} className="py-2.5 flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                          <div className="p-1.5 bg-purple-500/10 text-purple-400 rounded-md"><Users size={16} /></div>
+                                          <div>
+                                            <p className="font-bold text-sm text-white">{guideInfo?.name || 'Unknown Guide'}</p>
+                                            <p className="text-xs text-gray-400">Pax Assigned: {a.pax_count}</p>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                          <div className="text-right">
+                                            <p className="font-mono text-sm font-bold text-green-400">€{a.calculated_pay}</p>
+                                            <p className={`text-[10px] font-bold uppercase tracking-tight ${sourceColor}`}>{source}</p>
+                                          </div>
+                                          <button onClick={() => handleRemoveAssignment(a.id)} className="text-xs text-red-400 hover:text-red-300 transition-colors bg-red-500/10 px-3 py-1.5 rounded font-bold">
+                                            Remove
+                                          </button>
                                         </div>
                                       </div>
-                                      <div className="flex items-center gap-4">
-                                        <p className="font-mono text-sm font-bold text-green-400">Pay: €{a.calculated_pay}</p>
-                                        <button onClick={() => handleRemoveAssignment(a.id)} className="text-xs text-red-400 hover:text-red-300 transition-colors bg-red-500/10 px-3 py-1.5 rounded font-bold">
-                                          Remove
-                                        </button>
-                                      </div>
-                                    </div>
-                                  );
+                                    );
                                 })}
                               </div>
                             )}
@@ -338,6 +347,7 @@ export default function TodayToursPage() {
             <AssignGuideModal 
               modalData={assignModal}
               guides={guides}
+              productRates={productRates}
               onClose={() => setAssignModal(null)}
               onSave={handleSaveAssignment}
             />
@@ -361,51 +371,33 @@ export default function TodayToursPage() {
 
 // ────────── SUB-COMPONENTS ──────────
 
-function AssignGuideModal({ modalData, guides, onClose, onSave }: any) {
+function AssignGuideModal({ modalData, guides, productRates, onClose, onSave }: any) {
   const [guideId, setGuideId] = useState('');
   const [pax, setPax] = useState(modalData.totalPax || 0);
-  const [rType, setRType] = useState('fixed');
+  const [overridePay, setOverridePay] = useState<string>('');
   
-  // Fixed pay state
-  const [pay, setPay] = useState<number>(0);
-  
-  // Tier state tracking "1-X = Y" logic simply
-  const [tierData, setTierData] = useState('1-10 = 50\n11-20 = 80\n21+ = 120');
-
-  useEffect(() => {
-    if (guideId) {
-      const g = guides.find((x: any) => x.id === guideId);
-      if (g && rType === 'fixed') setPay(g.base_rate || 0);
-    }
-  }, [guideId, rType, guides]);
-
-  const calcPay = () => {
-    if (rType === 'fixed') return pay;
+  const calculateResult = useMemo(() => {
+    if (!guideId) return { amount: 0, source: 'none' };
     
-    // Evaluate tier
-    let tierPay = 0;
-    const lines = tierData.split('\n');
-    for (const line of lines) {
-      const parts = line.split('=');
-      if (parts.length === 2) {
-        const range = parts[0].trim();
-        const value = Number(parts[1].trim());
-        
-        if (range.includes('+')) {
-          const start = Number(range.replace('+', ''));
-          if (pax >= start) tierPay = value;
-        } else if (range.includes('-')) {
-          const [s, e] = range.split('-');
-          if (pax >= Number(s) && pax <= Number(e)) tierPay = value;
-        }
-      }
+    if (overridePay && !isNaN(parseFloat(overridePay))) {
+      return { amount: parseFloat(overridePay), source: 'manual' };
     }
-    return tierPay;
-  };
+
+    const guide = guides.find((x: any) => x.id === guideId);
+    if (!guide) return { amount: 0, source: 'none' };
+
+    // Level 2: Product rate
+    const pRate = productRates.find((r: any) => r.guide_id === guideId && r.product_code === modalData.prod);
+    if (pRate) {
+      return { amount: pRate.rate, source: 'product' };
+    }
+
+    // Level 3: Base rate
+    return { amount: guide.base_rate || 0, source: 'base' };
+  }, [guideId, overridePay, guides, productRates, modalData.prod]);
 
   const handleSave = () => {
     if (!guideId) return alert('Select a guide');
-    const finalPay = calcPay();
     
     onSave({
       guide_id: guideId,
@@ -414,10 +406,8 @@ function AssignGuideModal({ modalData, guides, onClose, onSave }: any) {
       product_code: modalData.prod,
       option_name: modalData.opt,
       pax_count: pax,
-      rate_type: rType,
-      rate_override: rType === 'fixed' ? pay : null,
-      calculated_pay: finalPay,
-      notes: rType === 'tier' ? tierData : ''
+      rate_override: overridePay ? parseFloat(overridePay) : null,
+      calculated_pay: calculateResult.amount
     });
   };
 
@@ -432,14 +422,14 @@ function AssignGuideModal({ modalData, guides, onClose, onSave }: any) {
         <div className="bg-white/5 p-3 rounded-lg border border-white/5 text-sm">
           <p className="text-gray-400">Tour Group</p>
           <p className="font-bold text-white mt-1">{modalData.prod} <span className="text-[#f5a623]">{modalData.opt}</span></p>
-          <p className="text-gray-400 mt-0.5">{modalData.time} &middot; {modalData.totalPax} pax total</p>
+          <p className="text-gray-400 mt-0.5">{modalData.time} &middot; {pax} pax assigned</p>
         </div>
 
         <div>
           <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Select Guide</label>
           <select value={guideId} onChange={e => setGuideId(e.target.value)} className="aurelia-input bg-[#13131a]">
             <option value="">-- Choose Active Guide --</option>
-            {guides.map((g: any) => <option key={g.id} value={g.id}>{g.name} (Base: €{g.base_rate})</option>)}
+            {guides.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </div>
 
@@ -449,37 +439,39 @@ function AssignGuideModal({ modalData, guides, onClose, onSave }: any) {
             <input type="number" min="0" value={pax} onChange={e => setPax(Number(e.target.value))} className="aurelia-input" />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Rate Type</label>
-            <select value={rType} onChange={e => setRType(e.target.value)} className="aurelia-input bg-[#13131a]">
-              <option value="fixed">Fixed Rate</option>
-              <option value="tier">Tier pricing</option>
-            </select>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Override €</label>
+            <input 
+              type="number" 
+              placeholder="Manual €"
+              value={overridePay} 
+              onChange={e => setOverridePay(e.target.value)} 
+              className="aurelia-input text-gold font-bold" 
+            />
           </div>
         </div>
 
-        {rType === 'fixed' ? (
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Final Pay €</label>
-            <input type="number" value={pay} onChange={e => setPay(Number(e.target.value))} className="aurelia-input text-[#f5a623] font-bold" />
-          </div>
-        ) : (
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Tier Structure</label>
-            <textarea 
-              rows={4} 
-              value={tierData} 
-              onChange={e => setTierData(e.target.value)} 
-              className="aurelia-input font-mono text-sm leading-relaxed" 
-              placeholder="1-10 = 50\n11-20 = 80..."
-            />
-            <p className="text-xs text-gray-500 mt-2">Calculated pay based on {pax} pax: <strong className="text-green-400 text-sm pl-2">€{calcPay()}</strong></p>
+        {guideId && (
+          <div className="p-4 bg-white/5 rounded-xl border border-white/5 flex items-center justify-between">
+            <div>
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Calculated Pay</p>
+              <div className="flex items-center gap-2 mt-1">
+                <p className="text-2xl font-black text-white">€{calculateResult.amount}</p>
+                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                  calculateResult.source === 'manual' ? 'bg-gold/20 text-gold' : 
+                  calculateResult.source === 'product' ? 'bg-blue-500/20 text-blue-400' : 
+                  'bg-gray-500/20 text-gray-400'
+                }`}>
+                  {calculateResult.source} rate
+                </span>
+              </div>
+            </div>
           </div>
         )}
       </div>
 
       <div className="p-6 border-t border-white/5 bg-[#0a0a0f] flex justify-end gap-3">
         <button onClick={onClose} className="aurelia-ghost-btn px-6 py-2 border border-white/20 text-gray-300">Cancel</button>
-        <button onClick={handleSave} className="aurelia-gold-btn px-6 py-2 font-bold">Save Assignment</button>
+        <button onClick={handleSave} className="aurelia-gold-btn px-6 py-2 font-bold focus:scale-95 transition-all">Save Assignment</button>
       </div>
     </div>
   );

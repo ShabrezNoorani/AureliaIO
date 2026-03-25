@@ -8,6 +8,11 @@ export interface Profile {
   trial_start: string;
   subscription_status: 'trial' | 'active' | 'expired';
   promo_code_used?: string;
+  gsheet_id?: string;
+  autosync_enabled?: boolean;
+  autosync_interval?: string;
+  bokun_access_key?: string;
+  bokun_secret_key?: string;
 }
 
 interface AuthContextType {
@@ -18,6 +23,7 @@ interface AuthContextType {
   setLoading: (l: boolean) => void;
   refreshProfile: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -28,6 +34,7 @@ const AuthContext = createContext<AuthContextType>({
   setLoading: () => {},
   refreshProfile: async () => {},
   signIn: async () => ({}),
+  signOut: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -110,6 +117,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [fetchProfile]);
 
+  const signOut = useCallback(async () => {
+    await supabase.auth.signOut();
+    
+    // Clear ALL app-related localStorage
+    const keysToRemove = [
+      'aurelia_v3',
+      'aurelia_buckets_v3',
+      'aurelia_marketplace',
+      'aurelia_autosync_enabled',
+      'aurelia_autosync_interval',
+      'aurelia_autosync_sources',
+      'aurelia_bokun_access',
+      'aurelia_bokun_secret',
+      'gsheet_id',
+      'checkin_guide_id',
+      'checkin_guide_name',
+      'checkin_user_id',
+      'aurelia_default_margin',
+      'aurelia_default_tax',
+      'aurelia_default_currency'
+    ];
+    
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    
+    setProfile(null);
+    setUser(null);
+    setSession(null);
+  }, []);
+
   useEffect(() => {
     let mounted = true;
 
@@ -145,7 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [fetchProfile]);
 
   return (
-    <AuthContext.Provider value={{ user, session, profile, loading, setLoading, refreshProfile, signIn }}>
+    <AuthContext.Provider value={{ user, session, profile, loading, setLoading, refreshProfile, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );
