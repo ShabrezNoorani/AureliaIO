@@ -3,20 +3,20 @@ export type ThemeName = 'dark' | 'ocean' | 'light';
 export const THEMES = {
   dark: { 
     name: 'Dark', 
-    colors: { bg: '#0a0a0f', sidebar: '#0f1117', card: '#13131a', border: '#1e1e2e', accent: '#f5a623', btnBg: '#f5a623', btnText: '#0a0a0f', text: '#f8fafc', textSecondary: '#94a3b8' },
+    colors: { bg: '#0a0a0f', sidebar: '#0f1117', card: '#13131a', border: '#1e1e2e', accent: '#f5a623', btnBg: '#f5a623', btnText: '#0a0a0f', text: '#f8fafc', textSecondary: '#94a3b8', textMuted: '#4b5563' },
     shadows: { card: '0 0 0 1px rgba(255,255,255,0.03), 0 2px 8px rgba(0,0,0,0.3)', cardHover: '0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.4)' },
     isLight: false
   },
   ocean: { 
     name: 'Ocean', 
-    colors: { bg: '#080c14', sidebar: '#0c1220', card: '#101828', border: '#1e2d45', accent: '#3b82f6', btnBg: '#3b82f6', btnText: '#ffffff', text: '#f0f4ff', textSecondary: '#94a3b8' },
+    colors: { bg: '#080c14', sidebar: '#0c1220', card: '#101828', border: '#1e2d45', accent: '#3b82f6', btnBg: '#3b82f6', btnText: '#ffffff', text: '#f0f4ff', textSecondary: '#94a3b8', textMuted: '#4b5563' },
     shadows: { card: '0 0 0 1px rgba(255,255,255,0.03), 0 2px 8px rgba(0,0,0,0.3)', cardHover: '0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.4)' },
     isLight: false
   },
   light: { 
     name: 'Light', 
-    colors: { bg: '#f8fafc', sidebar: '#ffffff', card: '#ffffff', border: '#e2e8f0', accent: '#1e293b', btnBg: '#1e293b', btnText: '#ffffff', text: '#0f172a', textSecondary: '#64748b' },
-    shadows: { card: '0 1px 3px rgba(0,0,0,0.1)', cardHover: '0 4px 12px rgba(0,0,0,0.1)' },
+    colors: { bg: '#f0f4f8', sidebar: '#ffffff', card: '#ffffff', border: '#e2e8f0', accent: '#1e293b', btnBg: '#1e293b', btnText: '#ffffff', text: '#0f172a', textSecondary: '#475569', textMuted: '#94a3b8' },
+    shadows: { card: '0 1px 3px rgba(0,0,0,0.08)', cardHover: '0 4px 12px rgba(0,0,0,0.1)' },
     isLight: true
   }
 };
@@ -66,10 +66,15 @@ export function applyTheme(themeName: ThemeName) {
   
   // Custom parsing for accent hex just to get rgb for glow or set directly
   root.style.setProperty('--gold', hexToHslParams(theme.colors.accent));
-  root.style.setProperty('--gold-glow', `${hexToHslParams(theme.colors.accent)} / 0.15`);
-  
   root.style.setProperty('--theme-text', hexToHslParams(theme.colors.text));
   root.style.setProperty('--theme-text-sec', hexToHslParams(theme.colors.textSecondary));
+  root.style.setProperty('--theme-text-muted', hexToHslParams(theme.colors.textMuted));
+
+  if (themeName === 'light') {
+    root.style.setProperty('--gold-glow', '30 41 59 / 0.08');
+  } else {
+    root.style.setProperty('--gold-glow', `${hexToHslParams(theme.colors.accent)} / 0.15`);
+  }
   
   // Conditionally toggle light class for specific CSS overrides (e.g. alternate rows)
   if (theme.isLight) {

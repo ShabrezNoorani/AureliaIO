@@ -1,63 +1,15 @@
-/**
- * Bokun API Sync Library
- * Authentication: HMAC-SHA1 signature using SubtleCrypto
- */
+import { callBokunProxy } from './bokunProxy';
 
-async function getBokunHeaders(
-  accessKey: string,
-  secretKey: string,
-  method: string,
-  path: string
-): Promise<HeadersInit> {
-  const date = new Date()
-    .toISOString()
-    .replace('T', ' ')
-    .substring(0, 19);
-  
-  const message = `${date}${accessKey}${method.toUpperCase()}${path}`;
-  
-  const encoder = new TextEncoder();
-  const keyData = encoder.encode(secretKey);
-  const msgData = encoder.encode(message);
-  
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw', 
-    keyData,
-    { name: 'HMAC', hash: 'SHA-1' },
-    false, 
-    ['sign']
-  );
-  
-  const signature = await crypto.subtle.sign(
-    'HMAC', 
-    cryptoKey, 
-    msgData
-  );
-  
-  const signatureB64 = btoa(
-    String.fromCharCode(...new Uint8Array(signature))
-  );
-  
-  return {
-    'X-Bokun-Date': date,
-    'X-Bokun-AccessKey': accessKey,
-    'X-Bokun-Signature': signatureB64,
-    'Accept': 'application/json',
-    'Content-Type': 'application/json'
-  };
+export async function testBokunConnection(
+  supabase: any
+): Promise<any> {
+  return await callBokunProxy(supabase, '/vendor.json/user/self', 'GET');
 }
 
 export async function fetchBokunProducts(
-  accessKey: string,
-  secretKey: string
+  supabase: any
 ): Promise<any[]> {
-  const path = '/activity.json/product/list';
-  const headers = await getBokunHeaders(accessKey, secretKey, 'GET', path);
-  
-  const response = await fetch(`https://api.bokun.io${path}`, { headers });
-  if (!response.ok) throw new Error(`Bokun API error: ${response.statusText}`);
-  
-  const products = await response.json();
+  const products = await callBokunProxy(supabase, '/vendor.json/product/list', 'GET');
   
   return products.map((product: any) => ({
     bokun_product_id: product.id || product.uuid,
@@ -77,26 +29,24 @@ export async function fetchBokunProducts(
 }
 
 export async function syncBokunBookings(
-  accessKey: string,
-  secretKey: string,
-  userId: string,
   supabase: any,
+  userId: string,
   startDate: string,
   endDate: string
 ): Promise<{imported: number, updated: number, skipped: number}> {
-  const path = '/activity.json/booking/list';
-  const params = new URLSearchParams({
-    startDate,
-    endDate,
-    includeCancelled: 'true'
-  });
   
-  const headers = await getBokunHeaders(accessKey, secretKey, 'GET', `${path}?${params.toString()}`);
+  const body = {
+    filter: {
+      startDate,
+      endDate,
+      includeCancelled: true
+    }
+  };
   
-  const response = await fetch(`https://api.bokun.io${path}?${params.toString()}`, { headers });
-  if (!response.ok) throw new Error(`Bokun API error: ${response.statusText}`);
+  const searchResult = await callBokunProxy(supabase, '/booking.json/booking-search', 'POST', {}, body);
+  // booking-search usually returns { items: [...] } or just [...]
+  const bookings = searchResult.items || searchResult || [];
   
-  const bookings = await response.json();
   let imported = 0;
   let updated = 0;
   let skipped = 0;
@@ -104,7 +54,7 @@ export async function syncBokunBookings(
   for (const b of bookings) {
     try {
       const booking_ref = b.confirmationCode;
-      const total_pax = b.participants || 0;
+      const total_pax = b.totalParticipants || b.participants || 0;
       
       // Basic pax type detection
       let pax_adult = 0, pax_youth = 0, pax_child = 0, pax_infant = 0;
@@ -122,7 +72,7 @@ export async function syncBokunBookings(
         ext_ref: b.externalBookingRef || null,
         product_code: b.productBookings?.[0]?.product?.extranetRef || `P${b.productBookings?.[0]?.product?.id}`,
         option_name: b.productBookings?.[0]?.rate?.title || '',
-        customer_name: `${b.customer?.firstName || ''} ${b.customer?.lastName || ''}`.trim(),
+        customer_name: `${b.customer?.firstName || b.customerName?.split(' ')[0] || ''} ${b.customer?.lastName || b.customerName?.split(' ').slice(1).join(' ') || ''}`.trim(),
         customer_phone: b.customer?.phoneNumber || null,
         travel_date: b.startDate,
         travel_time: b.startTime || '',
@@ -141,22 +91,22 @@ export async function syncBokunBookings(
                 (b.status === 'DONE' || b.status === 'COMPLETED') ? 'DONE' :
                 b.status === 'CANCELLED' ? 'CANCELLED_EARLY' :
                 b.status === 'NO_SHOW' ? 'NO_SHOW' : 'UPCOMING',
-        user_id: userId
+        user_id: userId,
+        sync_source: 'bokun'
       };
 
-      const { data: existing } = await supabase
+      const { error: upsertErr } = await supabase
         .from('bookings')
-        .select('id')
-        .eq('booking_ref', booking_ref)
-        .eq('user_id', userId)
-        .single();
+        .upsert(payload, {
+          onConflict: 'booking_ref,user_id',
+          ignoreDuplicates: false
+        });
 
-      if (existing) {
-        await supabase.from('bookings').update(payload).eq('id', existing.id);
-        updated++;
+      if (upsertErr) {
+        console.error(`Failed to upsert booking ${booking_ref}`, upsertErr);
+        skipped++;
       } else {
-        await supabase.from('bookings').insert(payload);
-        imported++;
+        imported++; 
       }
     } catch (e) {
       console.error(`Failed to sync booking ${b.confirmationCode}`, e);

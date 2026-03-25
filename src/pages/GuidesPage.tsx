@@ -1,7 +1,15 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Plus, X, PenSquare, Trash2, CheckCircle2 } from 'lucide-react';
+import { logChange } from '@/lib/changeLog';
+import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight, Search } from 'lucide-react';
+
+interface GuideOptionRate {
+  id?: string;
+  product_code: string;
+  option_name: string;
+  rate: number;
+}
 
 interface Guide {
   id: string;
@@ -12,14 +20,7 @@ interface Guide {
   base_rate: number;
   status: string;
   notes: string | null;
-  product_rates?: ProductRate[];
-}
-
-interface ProductRate {
-  id?: string;
-  product_code: string;
-  rate: number;
-  rate_type: 'Fixed' | 'Tier';
+  option_rates?: GuideOptionRate[];
 }
 
 export default function GuidesPage() {
@@ -29,6 +30,7 @@ export default function GuidesPage() {
   const [loading, setLoading] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingGuide, setEditingGuide] = useState<Guide | null>(null);
+  const [existingOptions, setExistingOptions] = useState<string[]>([]);
   
   const [form, setForm] = useState({
     guideNumber: '',
@@ -38,7 +40,7 @@ export default function GuidesPage() {
     baseRate: 0,
     status: 'active',
     notes: '',
-    productRates: [] as ProductRate[]
+    optionRates: [] as GuideOptionRate[]
   });
 
   const fetchGuides = async () => {
@@ -48,7 +50,7 @@ export default function GuidesPage() {
     // Fetch guides and their product rates
     const { data: guidesData, error: guidesError } = await supabase
       .from('guides')
-      .select('*, product_rates:guide_product_rates(*)')
+      .select('*, option_rates:guide_option_rates(*)')
       .eq('user_id', user.id)
       .order('created_at', { ascending: true });
     
@@ -57,9 +59,23 @@ export default function GuidesPage() {
     setLoading(false);
   };
 
+  const loadExistingOptions = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('bookings')
+      .select('option_name')
+      .eq('user_id', user.id);
+    
+    if (data) {
+      const unique = Array.from(new Set(data.map(b => b.option_name).filter(Boolean)));
+      setExistingOptions(unique as string[]);
+    }
+  };
+
   useEffect(() => {
     if (!user) return;
     fetchGuides();
+    loadExistingOptions();
   }, [user]);
 
   const openPanel = (guide: Guide | null = null) => {
@@ -73,7 +89,7 @@ export default function GuidesPage() {
         baseRate: guide.base_rate || 0,
         status: guide.status || 'active',
         notes: guide.notes || '',
-        productRates: guide.product_rates || []
+        optionRates: guide.option_rates || []
       });
     } else {
       setEditingGuide(null);
@@ -86,7 +102,7 @@ export default function GuidesPage() {
         baseRate: 0,
         status: 'active',
         notes: '',
-        productRates: []
+        optionRates: []
       });
     }
     setPanelOpen(true);
@@ -126,19 +142,34 @@ export default function GuidesPage() {
     }
 
     if (guideId) {
-      // Update product rates
-      await supabase.from('guide_product_rates').delete().eq('guide_id', guideId);
+      // Update option rates
+      await supabase.from('guide_option_rates').delete().eq('guide_id', guideId);
       
-      if (form.productRates.length > 0) {
-        const ratesPayload = form.productRates.map(r => ({
-          guide_id: guideId,
-          user_id: user.id,
-          product_code: r.product_code,
-          rate: Number(r.rate),
-          rate_type: r.rate_type
-        }));
-        await supabase.from('guide_product_rates').insert(ratesPayload);
+      if (form.optionRates.length > 0) {
+        const ratesPayload = form.optionRates
+          .filter(r => r.product_code.trim())
+          .map(r => ({
+            guide_id: guideId,
+            user_id: user.id,
+            product_code: r.product_code.toUpperCase(),
+            option_name: r.option_name,
+            rate: Number(r.rate)
+          }));
+        
+        if (ratesPayload.length > 0) {
+          await supabase.from('guide_option_rates').insert(ratesPayload);
+        }
       }
+
+      // Log the change
+      await logChange(supabase, user.id, {
+        tableName: 'guide_option_rates',
+        recordId: guideId,
+        fieldName: 'rates',
+        oldValue: editingGuide?.option_rates || [],
+        newValue: form.optionRates,
+        description: `Rates updated for guide ${form.name}`
+      });
     }
 
     setPanelOpen(false);
@@ -210,8 +241,16 @@ export default function GuidesPage() {
                       <td className="px-6 py-4">
                         <div className="font-bold">{g.name}</div>
                         <div className="text-[10px] text-gray-500 font-mono mt-0.5">
-                          {g.product_rates && g.product_rates.length > 0 ? (
-                            g.product_rates.map(r => `${r.product_code}:€${r.rate}`).join(' · ')
+                          {g.option_rates && g.option_rates.length > 0 ? (
+                            <>
+                              {g.option_rates.slice(0, 3).map((r, idx) => (
+                                <span key={idx}>
+                                  {r.product_code}{r.option_name ? `/${r.option_name.slice(0, 10)}` : ''}:€{r.rate}
+                                  {idx < Math.min(g.option_rates!.length, 3) - 1 ? ' · ' : ''}
+                                </span>
+                              ))}
+                              {g.option_rates.length > 3 && ` · +${g.option_rates.length - 3} more`}
+                            </>
                           ) : 'No special rates'}
                         </div>
                       </td>
@@ -324,64 +363,73 @@ export default function GuidesPage() {
                   </div>
 
                   <div className="pt-4 border-t border-white/5">
-                    <div className="flex items-center justify-between mb-4">
-                      <label className="text-[10px] font-bold text-gold uppercase tracking-widest">Rates Per Product</label>
-                      <button 
-                        onClick={() => setForm({...form, productRates: [...form.productRates, { product_code: '', rate: 0, rate_type: 'Fixed' }]})}
-                        className="text-[10px] bg-gold/10 text-gold px-2 py-1 rounded border border-gold/20 hover:bg-gold/20 transition-all font-bold"
-                      >
-                        + Add Rate
-                      </button>
+                    <div className="flex flex-col mb-4">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] font-bold text-gold uppercase tracking-widest">Rates Per Tour Option</label>
+                        <button 
+                          onClick={() => setForm({...form, optionRates: [...form.optionRates, { product_code: '', option_name: '', rate: 0 }]})}
+                          className="text-[10px] bg-gold/10 text-gold px-2 py-1 rounded border border-gold/20 hover:bg-gold/20 transition-all font-bold flex items-center gap-1"
+                        >
+                          <Plus size={10} /> Add Rate
+                        </button>
+                      </div>
+                      <p className="text-[9px] text-gray-600 leading-tight uppercase tracking-wider">
+                        Set specific pay rates per tour option. Leave empty to use base rate.
+                      </p>
                     </div>
                     
                     <div className="space-y-3">
-                      {form.productRates.map((r, i) => (
-                        <div key={i} className="flex gap-2 items-center bg-white/5 p-2 rounded-xl border border-white/5">
+                      {form.optionRates.map((r, i) => (
+                        <div key={i} className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-2">
+                          <div className="flex gap-2">
+                            <input 
+                              className="aurelia-input text-xs w-20" 
+                              placeholder="Code"
+                              value={r.product_code}
+                              onChange={e => {
+                                const next = [...form.optionRates];
+                                next[i].product_code = e.target.value.toUpperCase();
+                                setForm({...form, optionRates: next});
+                              }}
+                            />
+                            <input 
+                              type="number"
+                              className="aurelia-input text-xs w-24 text-gold font-bold" 
+                              placeholder="Rate €"
+                              value={r.rate}
+                              onChange={e => {
+                                const next = [...form.optionRates];
+                                next[i].rate = Number(e.target.value);
+                                setForm({...form, optionRates: next});
+                              }}
+                            />
+                            <button 
+                              onClick={() => setForm({...form, optionRates: form.optionRates.filter((_, idx) => idx !== i)})}
+                              className="ml-auto text-gray-600 hover:text-red-400 p-1"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
                           <input 
-                            className="aurelia-input text-xs w-24 bg-transparent border-none focus:ring-0 px-1" 
-                            placeholder="Code"
-                            value={r.product_code}
+                            list="existing-options-datalist"
+                            className="aurelia-input text-[11px] py-1.5" 
+                            placeholder="Option Name (e.g. Interior only)"
+                            value={r.option_name}
                             onChange={e => {
-                              const next = [...form.productRates];
-                              next[i].product_code = e.target.value.toUpperCase();
-                              setForm({...form, productRates: next});
+                              const next = [...form.optionRates];
+                              next[i].option_name = e.target.value;
+                              setForm({...form, optionRates: next});
                             }}
                           />
-                          <div className="w-[1px] h-4 bg-white/10" />
-                          <input 
-                            type="number"
-                            className="aurelia-input text-xs w-16 bg-transparent border-none focus:ring-0 px-1 text-gold font-bold" 
-                            placeholder="€"
-                            value={r.rate}
-                            onChange={e => {
-                              const next = [...form.productRates];
-                              next[i].rate = Number(e.target.value);
-                              setForm({...form, productRates: next});
-                            }}
-                          />
-                          <div className="w-[1px] h-4 bg-white/10" />
-                          <select 
-                            className="bg-transparent text-[10px] text-gray-500 font-bold border-none focus:ring-0"
-                            value={r.rate_type}
-                            onChange={e => {
-                              const next = [...form.productRates];
-                              next[i].rate_type = e.target.value as 'Fixed' | 'Tier';
-                              setForm({...form, productRates: next});
-                            }}
-                          >
-                            <option value="Fixed">Fixed</option>
-                            <option value="Tier">Tier</option>
-                          </select>
-                          <button 
-                            onClick={() => setForm({...form, productRates: form.productRates.filter((_, idx) => idx !== i)})}
-                            className="ml-auto text-gray-600 hover:text-red-400 p-1"
-                          >
-                            <X size={14} />
-                          </button>
                         </div>
                       ))}
-                      {form.productRates.length === 0 && (
-                        <p className="text-[10px] text-gray-600 italic text-center py-2">No product-specific rates set.</p>
+                      
+                      <datalist id="existing-options-datalist">
+                        {existingOptions.map(opt => <option key={opt} value={opt} />)}
+                      </datalist>
+
+                      {form.optionRates.length === 0 && (
+                        <p className="text-[10px] text-gray-600 italic text-center py-2">No option-specific rates set.</p>
                       )}
                     </div>
                   </div>

@@ -17,6 +17,9 @@ import BlogAdminPage from "./pages/BlogAdminPage";
 import MarketplacePage from "./pages/MarketplacePage";
 import GuidesPage from "./pages/GuidesPage";
 import GuideDashboard from "./pages/GuideDashboard";
+import AnalyticsPage from "./pages/AnalyticsPage";
+import TodayToursPage from "./pages/TodayToursPage";
+import ChangeLogPage from "./pages/ChangeLogPage";
 import CheckinApp from "./pages/CheckinApp";
 import NotFound from "./pages/NotFound";
 import { setupGuideTables } from "./lib/setupTables";
@@ -41,7 +44,7 @@ const AppContent = () => {
           <Route path="/pricing" element={<PricingPage />} />
           <Route path="/blog" element={<BlogPage />} />
           <Route path="/blog/:slug" element={<BlogPostPage />} />
-          <Route path="/checkin" element={<CheckinApp />} />
+          <Route path="/checkin/:token" element={<CheckinApp />} />
 
           {/* Protected app */}
           <Route
@@ -56,6 +59,9 @@ const AppContent = () => {
             <Route path="marketplace" element={<MarketplacePage />} />
             <Route path="guides" element={<GuidesPage />} />
             <Route path="guide-dashboard" element={<GuideDashboard />} />
+            <Route path="today" element={<TodayToursPage />} />
+            <Route path="analytics" element={<AnalyticsPage />} />
+            <Route path="changelog" element={<ChangeLogPage />} />
           </Route>
 
           <Route path="*" element={<NotFound />} />

@@ -3,15 +3,16 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { Clock, Calendar as CalendarIcon, CheckCircle2, UserPlus, Users, X, Share2, Copy, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { logChange } from '@/lib/changeLog';
 
 export default function TodayToursPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
 
   const [bookings, setBookings] = useState<any[]>([]);
   const [guides, setGuides] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
-  const [productRates, setProductRates] = useState<any[]>([]);
+  const [optionRates, setOptionRates] = useState<any[]>([]);
   const [checkins, setCheckins] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
@@ -33,14 +34,14 @@ export default function TodayToursPage() {
       supabase.from('guides').select('*').eq('user_id', user.id).eq('status', 'active'),
       supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today),
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
-      supabase.from('guide_product_rates').select('*').eq('user_id', user.id)
+      supabase.from('guide_option_rates').select('*').eq('user_id', user.id)
     ]);
 
     if (bRes.data) setBookings(bRes.data);
     if (gRes.data) setGuides(gRes.data);
     if (aRes.data) setAssignments(aRes.data);
     if (cRes.data) setCheckins(cRes.data);
-    if (rRes.data) setProductRates(rRes.data);
+    if (rRes.data) setOptionRates(rRes.data);
     
     setLoading(false);
   };
@@ -123,6 +124,17 @@ export default function TodayToursPage() {
     setCheckinModal(null);
     await supabase.from('checkins').insert(cPayload);
     await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
+    
+    // Log Booking Status Change
+    await logChange(supabase, user.id, {
+      tableName: 'bookings',
+      recordId: b.booking_ref,
+      fieldName: 'status',
+      oldValue: b.status || 'CONFIRMED',
+      newValue: 'DONE',
+      description: `${b.booking_ref} status changed to DONE (Checked In)`
+    });
+
     loadData();
   };
 
@@ -137,7 +149,8 @@ export default function TodayToursPage() {
   };
 
   const copyCheckinLink = () => {
-    const url = `${window.location.origin}/checkin?date=${todayStrDate}`;
+    if (!profile?.checkin_token) return alert('No check-in token found. Please visit Settings to generate one.');
+    const url = `${window.location.origin}/checkin/${profile.checkin_token}?date=${todayStrDate}`;
     navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -251,8 +264,20 @@ export default function TodayToursPage() {
                               <div className="bg-[#13131a] border-b border-white/5 px-6 py-3 divide-y divide-white/5">
                                 {grpAssigns.map(a => {
                                     const guideInfo = guides.find(g => g.id === a.guide_id);
-                                    const source = a.rate_override ? '(manual)' : (productRates.find(r => r.guide_id === a.guide_id && r.product_code === a.product_code) ? '(product rate)' : '(base rate)');
-                                    const sourceColor = a.rate_override ? 'text-gold' : 'text-gray-500';
+                                    
+                                    const exactMatch = optionRates.find(r => 
+                                      r.guide_id === a.guide_id && 
+                                      r.product_code === (a.product_code || a.product_name) && 
+                                      r.option_name?.toLowerCase() === a.option_name?.toLowerCase()
+                                    );
+                                    const productMatch = exactMatch ? null : optionRates.find(r => 
+                                      r.guide_id === a.guide_id && 
+                                      r.product_code === (a.product_code || a.product_name) && 
+                                      (!r.option_name || r.option_name === '')
+                                    );
+
+                                    const source = a.rate_override ? '(manual)' : (exactMatch ? '(option rate)' : (productMatch ? '(product rate)' : '(base rate)'));
+                                    const sourceColor = a.rate_override ? 'text-gold' : (exactMatch || productMatch ? 'text-blue-400' : 'text-gray-500');
 
                                     return (
                                       <div key={a.id} className="py-2.5 flex items-center justify-between">
@@ -347,7 +372,7 @@ export default function TodayToursPage() {
             <AssignGuideModal 
               modalData={assignModal}
               guides={guides}
-              productRates={productRates}
+              optionRates={optionRates}
               onClose={() => setAssignModal(null)}
               onSave={handleSaveAssignment}
             />
@@ -371,7 +396,7 @@ export default function TodayToursPage() {
 
 // ────────── SUB-COMPONENTS ──────────
 
-function AssignGuideModal({ modalData, guides, productRates, onClose, onSave }: any) {
+function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: any) {
   const [guideId, setGuideId] = useState('');
   const [pax, setPax] = useState(modalData.totalPax || 0);
   const [overridePay, setOverridePay] = useState<string>('');
@@ -386,15 +411,25 @@ function AssignGuideModal({ modalData, guides, productRates, onClose, onSave }: 
     const guide = guides.find((x: any) => x.id === guideId);
     if (!guide) return { amount: 0, source: 'none' };
 
-    // Level 2: Product rate
-    const pRate = productRates.find((r: any) => r.guide_id === guideId && r.product_code === modalData.prod);
-    if (pRate) {
-      return { amount: pRate.rate, source: 'product' };
-    }
+    // Level 2: exact product + option match
+    const exactMatch = optionRates.find((r: any) => 
+      r.guide_id === guideId &&
+      r.product_code === modalData.prod &&
+      r.option_name?.toLowerCase() === modalData.opt?.toLowerCase()
+    );
+    if (exactMatch) return { amount: exactMatch.rate, source: 'option' };
 
-    // Level 3: Base rate
+    // Level 3: product code only
+    const productMatch = optionRates.find((r: any) =>
+      r.guide_id === guideId &&
+      r.product_code === modalData.prod &&
+      (!r.option_name || r.option_name === '')
+    );
+    if (productMatch) return { amount: productMatch.rate, source: 'product' };
+
+    // Level 4: base rate fallback
     return { amount: guide.base_rate || 0, source: 'base' };
-  }, [guideId, overridePay, guides, productRates, modalData.prod]);
+  }, [guideId, overridePay, guides, optionRates, modalData.prod, modalData.opt]);
 
   const handleSave = () => {
     if (!guideId) return alert('Select a guide');
@@ -458,6 +493,7 @@ function AssignGuideModal({ modalData, guides, productRates, onClose, onSave }: 
                 <p className="text-2xl font-black text-white">€{calculateResult.amount}</p>
                 <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
                   calculateResult.source === 'manual' ? 'bg-gold/20 text-gold' : 
+                  calculateResult.source === 'option' ? 'bg-purple-500/20 text-purple-400' : 
                   calculateResult.source === 'product' ? 'bg-blue-500/20 text-blue-400' : 
                   'bg-gray-500/20 text-gray-400'
                 }`}>

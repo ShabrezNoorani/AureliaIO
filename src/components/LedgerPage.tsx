@@ -16,6 +16,7 @@ const PER_PAGE = 50;
 
 const DEFAULT_COLS = [
   { id: 'ref', label: 'Booking Ref', width: 140, sticky: 'left', stickyZ: 20 },
+  { id: 'source', label: 'Source', width: 80 },
   { id: 'extId', label: 'Ext. Ref', width: 120 },
   { id: 'prod', label: 'Product Code', width: 90 },
   { id: 'opt', label: 'Option', width: 160 },
@@ -62,6 +63,24 @@ function formatPax(b: any) {
   return `A:${b.pax_adult || 0} Y:${b.pax_youth || 0} C:${b.pax_child || 0} I:${b.pax_infant || 0}`;
 }
 
+function SourceBadge({ source }: { source: string }) {
+  const styles: Record<string, string> = {
+    bokun: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+    gsheet: 'bg-green-500/10 text-green-400 border-green-500/20',
+    manual: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
+  };
+  const label: Record<string, string> = {
+    bokun: 'Bokun',
+    gsheet: 'Sheet',
+    manual: 'Manual',
+  };
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter border ${styles[source] || styles.manual}`}>
+      {label[source] || 'Manual'}
+    </span>
+  );
+}
+
 function calcTotalPax(b: any) {
   return (b.pax_adult || 0) + (b.pax_youth || 0) + (b.pax_child || 0) + (b.pax_infant || 0);
 }
@@ -96,6 +115,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   const [search, setSearch] = useState('');
   const [channelFilter, setChannelFilter] = useState<string[]>(['All']);
   const [statusFilter, setStatusFilter] = useState<string[]>(['All']);
+  const [sourceFilter, setSourceFilter] = useState<string[]>(['All']);
   const [travelMonth, setTravelMonth] = useState('All');
   const [travelYear, setTravelYear] = useState('');
   const [bookingMonth, setBookingMonth] = useState('All');
@@ -142,6 +162,9 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
     }
     if (!statusFilter.includes('All')) {
       out = out.filter((b) => statusFilter.includes(b.status || 'UPCOMING'));
+    }
+    if (!sourceFilter.includes('All')) {
+      out = out.filter((b) => sourceFilter.includes(b.sync_source || 'manual'));
     }
     if (travelMonth !== 'All') {
       const mi = MONTHS.indexOf(travelMonth); 
@@ -309,6 +332,17 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
           selected={statusFilter}
           onChange={(s) => { setStatusFilter(s); setPage(0); }}
         />
+        <MultiSelect 
+          label="Source" 
+          options={[
+            { value: 'All', label: 'All Sources' },
+            { value: 'bokun', label: 'Bokun' },
+            { value: 'gsheet', label: 'Sheet' },
+            { value: 'manual', label: 'Manual' }
+          ]}
+          selected={sourceFilter}
+          onChange={(s) => { setSourceFilter(s); setPage(0); }}
+        />
         <div className="flex items-center gap-1">
           <select className="aurelia-input w-28 text-[11px]" value={travelMonth} onChange={(e) => { setTravelMonth(e.target.value); setPage(0); }}>
             <option value="All">Travel Month</option>
@@ -428,6 +462,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                       const renderCell = () => {
                         switch(col.id) {
                           case 'ref': return <span className="font-semibold text-foreground">{b.booking_ref || '—'}</span>;
+                          case 'source': return <SourceBadge source={b.sync_source || 'manual'} />;
                           case 'extId': return <span className="text-muted-foreground">{b.ext_ref || '—'}</span>;
                           case 'prod': return b.product_name || '—';
                           case 'opt': return b.option_name || '—';

@@ -11,7 +11,7 @@ export default function GuideDashboard() {
 
   const [guides, setGuides] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
-  const [productRates, setProductRates] = useState<any[]>([]);
+  const [optionRates, setOptionRates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<'today' | 'yesterday' | 'month' | 'mtd' | 'ytd'>('month');
   
@@ -36,7 +36,7 @@ export default function GuideDashboard() {
 
     if (gRes.data) setGuides(gRes.data);
     if (aRes.data) setAssignments(aRes.data);
-    if (rRes.data) setProductRates(rRes.data);
+    if (rRes.data) setOptionRates(rRes.data);
     setLoading(false);
   };
 
@@ -249,8 +249,19 @@ export default function GuideDashboard() {
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {filteredAssignments.filter(a => a.guide_id === selectedGuide.id).map(a => {
-                      const source = a.rate_override ? '(manual)' : (productRates.find(r => r.guide_id === a.guide_id && r.product_code === a.product_code) ? '(product)' : '(base)');
-                      const sourceColor = a.rate_override ? 'text-gold' : 'text-gray-500';
+                      const exactMatch = optionRates.find(r => 
+                        r.guide_id === a.guide_id && 
+                        r.product_code === (a.product_code || a.product_name) && 
+                        r.option_name?.toLowerCase() === a.option_name?.toLowerCase()
+                      );
+                      const productMatch = exactMatch ? null : optionRates.find(r => 
+                        r.guide_id === a.guide_id && 
+                        r.product_code === (a.product_code || a.product_name) && 
+                        (!r.option_name || r.option_name === '')
+                      );
+
+                      const source = a.rate_override ? '(manual)' : (exactMatch ? '(option)' : (productMatch ? '(product)' : '(base)'));
+                      const sourceColor = a.rate_override ? 'text-gold' : (exactMatch || productMatch ? 'text-blue-400' : 'text-gray-500');
 
                       return (
                         <tr key={a.id} className="hover:bg-white/[0.02] transition-colors">

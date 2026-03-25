@@ -228,59 +228,26 @@ export async function syncMasterData(
       status,
       assigned_guide: assignedGuide,
       notes: '',
+      sync_source: 'gsheet'
     };
 
     // Only include dates if valid
     if (travelDate) booking.travel_date = travelDate;
     if (bookingDate) booking.booking_date = bookingDate;
 
-    // Check if exists — with proper error handling
-    const { data: existing, error: checkError } = await supabase
+    // Unified UPSERT
+    const { error: upsertErr } = await supabase
       .from('bookings')
-      .select('id')
-      .eq('booking_ref', bookingRef)
-      .eq('user_id', userId)
-      .maybeSingle();
+      .upsert(booking, { 
+        onConflict: 'booking_ref,user_id',
+        ignoreDuplicates: false 
+      });
 
-    if (checkError) {
-      console.error('[GSheet Sync] Check error for ref', bookingRef, ':', checkError);
-      // Treat as new row — attempt insert
-      const { error: insertErr } = await supabase
-        .from('bookings')
-        .insert(booking);
-      if (insertErr) {
-        console.error('[GSheet Sync] Insert error (after check fail):', insertErr);
-        skipped++;
-      } else {
-        imported++;
-      }
-      continue;
-    }
-
-    if (existing?.id) {
-      // Update existing row
-      const { user_id: _uid, ...updateFields } = booking;
-      const { error: updateErr } = await supabase
-        .from('bookings')
-        .update(updateFields)
-        .eq('id', existing.id);
-      if (updateErr) {
-        console.error('[GSheet Sync] Update error:', updateErr);
-        skipped++;
-      } else {
-        updated++;
-      }
+    if (upsertErr) {
+      console.error('[GSheet Sync] Upsert error for ref', bookingRef, ':', upsertErr);
+      skipped++;
     } else {
-      // Insert new row
-      const { error: insertErr } = await supabase
-        .from('bookings')
-        .insert(booking);
-      if (insertErr) {
-        console.error('[GSheet Sync] Insert error:', insertErr);
-        skipped++;
-      } else {
-        imported++;
-      }
+      imported++; // For simplicity, treating all upserts as imported/updated
     }
   }
 

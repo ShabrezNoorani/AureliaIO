@@ -13,6 +13,7 @@ export interface Profile {
   autosync_interval?: string;
   bokun_access_key?: string;
   bokun_secret_key?: string;
+  checkin_token?: string;
 }
 
 interface AuthContextType {

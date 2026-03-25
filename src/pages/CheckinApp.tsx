@@ -5,7 +5,7 @@ import {
   XCircle, Users, Clock, Camera, Check, X, 
   Phone, Calendar, Tag, UserPlus, Info
 } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useParams } from 'react-router-dom';
 
 interface Guide {
   id: string;
@@ -50,17 +50,22 @@ interface Assignment {
 }
 
 export default function CheckinApp() {
+  const { token } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const [guides, setGuides] = useState<Guide[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [checkins, setCheckins] = useState<Checkin[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isValidToken, setIsValidToken] = useState<boolean | null>(null);
   
-  // Local storage state
+  // Local storage state for Guide Selection
   const [selectedGuideId, setSelectedGuideId] = useState<string | null>(localStorage.getItem('checkin_guide_id'));
-  const [companyUserId, setCompanyUserId] = useState<string | null>(localStorage.getItem('checkin_user_id'));
   const [guideName, setGuideName] = useState<string | null>(localStorage.getItem('checkin_guide_name'));
+  
+  // Company state from token
+  const [companyUserId, setCompanyUserId] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
 
   const dateParam = searchParams.get('date') || new Date().toISOString().split('T')[0];
 
@@ -70,8 +75,8 @@ export default function CheckinApp() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetchGuides();
-  }, []);
+    validateToken();
+  }, [token]);
 
   useEffect(() => {
     if (companyUserId) {
@@ -81,10 +86,34 @@ export default function CheckinApp() {
     }
   }, [companyUserId, dateParam]);
 
-  const fetchGuides = async () => {
-    // 1. COMPANY ISOLATION: Fetch all guides first to populate select
+  const validateToken = async () => {
+    if (!token) {
+      setIsValidToken(false);
+      setLoading(false);
+      return;
+    }
+
+    const { data: profile, error } = await supabase
+      .from('profiles')
+      .select('id, company_name')
+      .eq('checkin_token', token)
+      .single();
+
+    if (error || !profile) {
+      setIsValidToken(false);
+      setLoading(false);
+    } else {
+      setCompanyUserId(profile.id);
+      setCompanyName(profile.company_name);
+      setIsValidToken(true);
+      fetchGuides(profile.id);
+    }
+  };
+
+  const fetchGuides = async (userId: string) => {
     const { data } = await supabase.from('guides')
       .select('id, name, guide_number, user_id')
+      .eq('user_id', userId)
       .eq('status', 'active')
       .order('name');
     if (data) setGuides(data);
@@ -116,11 +145,9 @@ export default function CheckinApp() {
 
   const handleSelectSelf = (guide: Guide) => {
     setSelectedGuideId(guide.id);
-    setCompanyUserId(guide.user_id);
     setGuideName(guide.name);
     localStorage.setItem('checkin_guide_id', guide.id);
     localStorage.setItem('checkin_guide_name', guide.name);
-    localStorage.setItem('checkin_user_id', guide.user_id);
   };
 
   const handleCheckInAttempt = (booking: Booking) => {
@@ -201,8 +228,8 @@ export default function CheckinApp() {
   const logout = () => {
     localStorage.removeItem('checkin_guide_id');
     localStorage.removeItem('checkin_guide_name');
-    localStorage.removeItem('checkin_user_id');
-    window.location.reload();
+    setSelectedGuideId(null);
+    setGuideName(null);
   };
 
   const grouped = useMemo(() => {
@@ -222,12 +249,37 @@ export default function CheckinApp() {
     return { done, noShow, pending };
   }, [bookings, checkins]);
 
+  if (isValidToken === false) {
+    return (
+      <div className="min-h-screen bg-[#060608] text-white p-6 flex flex-col items-center justify-center max-w-[480px] mx-auto font-sans text-center">
+        <div className="text-4xl font-black text-red-500 mb-6 italic tracking-tighter">AURELIA</div>
+        <div className="w-20 h-20 rounded-full bg-red-500/10 flex items-center justify-center text-3xl mb-8">❌</div>
+        <h1 className="text-2xl font-black mb-4">Invalid Link</h1>
+        <p className="text-gray-400 text-sm leading-relaxed max-w-[280px]">
+          This check-in link is invalid or has expired. Please contact your tour coordinator for a new link.
+        </p>
+      </div>
+    );
+  }
+
+  if (loading && isValidToken === null) {
+    return (
+      <div className="min-h-screen bg-[#060608] flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-gold border-t-transparent animate-spin rounded-full" />
+      </div>
+    );
+  }
+
   if (!selectedGuideId) {
     return (
       <div className="min-h-screen bg-[#060608] text-white p-6 flex flex-col items-center justify-center max-w-[480px] mx-auto font-sans">
         <div className="text-center mb-12 animate-fade-in">
-          <div className="text-4xl font-black text-gold mb-3 tracking-tighter italic">AURELIA</div>
-          <h1 className="text-xl font-bold text-gray-400">Select your name to start</h1>
+          <div className="text-4xl font-black text-gold mb-1 tracking-tighter italic">AURELIA</div>
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-8 flex items-center justify-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+            {companyName}
+          </div>
+          <h1 className="text-xl font-bold text-gray-300">Select your name</h1>
         </div>
         <div className="grid grid-cols-2 gap-4 w-full">
           {guides.map(g => (
@@ -250,7 +302,10 @@ export default function CheckinApp() {
     <div className="min-h-screen bg-[#060608] text-white max-w-[480px] mx-auto flex flex-col pb-44 font-sans antialiased">
       {/* HEADER */}
       <header className="sticky top-0 z-50 bg-[#060608]/90 backdrop-blur-2xl border-b border-white/5 p-4 flex items-center justify-between">
-        <div className="text-2xl font-black text-gold tracking-tighter italic">AUR.</div>
+        <div className="flex flex-col">
+          <div className="text-2xl font-black text-gold tracking-tighter italic leading-none">AUR.</div>
+          <div className="text-[8px] font-black uppercase text-gray-500 tracking-widest mt-1 opacity-60">✦ {companyName}</div>
+        </div>
         <div className="flex items-center gap-2">
           <button onClick={() => changeDate(-1)} className="p-2.5 bg-white/5 rounded-xl"><ChevronLeft size={20} /></button>
           <div className="text-sm font-bold bg-white/5 px-4 py-2 rounded-xl border border-white/5">

@@ -12,13 +12,14 @@ import AnalyticsPage from '@/pages/AnalyticsPage';
 import GuidesPage from '@/pages/GuidesPage';
 import GuideDashboard from '@/pages/GuideDashboard';
 import MarketplacePage from '@/pages/MarketplacePage';
+import ChangeLogPage from '@/pages/ChangeLogPage';
 import { useAppData } from '@/lib/useAppData';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { syncMasterData } from '@/lib/gsheetSync';
 import { syncFromBokun } from '@/lib/bokunSync';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 const AppLayout = () => {
   const { user, profile } = useAuth();
@@ -40,6 +41,7 @@ const AppLayout = () => {
     deleteExtraCost,
     addTier,
     deleteTier,
+    addBucketCount,
     updateBucketCount,
     updateAgeBuckets,
   } = useAppData();
@@ -57,12 +59,12 @@ const AppLayout = () => {
     else if (path.includes('/analytics')) setView('analytics');
     else if (path.includes('/settings')) setView('settings');
     else if (path.includes('/products')) setView('products');
+    else if (path.includes('/changelog')) setView('changelog');
   }, []);
 
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
   const [activeChannelIdx, setActiveChannelIdx] = useState(0);
 
-  // FIX 1: Lift state
   const [bookings, setBookings] = useState<any[]>([]);
   const [adminCosts, setAdminCosts] = useState<any[]>([]);
   const [bookingsLoaded, setBookingsLoaded] = useState(false);
@@ -101,7 +103,6 @@ const AppLayout = () => {
     const checkSync = () => {
       if (intervalId) clearInterval(intervalId);
       
-      // Use profile data if available, otherwise fallback to false
       const enabled = profile?.autosync_enabled ?? false;
       if (!enabled) return;
       
@@ -109,15 +110,10 @@ const AppLayout = () => {
       intervalId = setInterval(async () => {
         if (!user || !profile) return;
         
-        // Sources could still be in localStorage or we can just default to gsheet
-        // Plan didn't explicitly mention moving 'sources' to profile, but let's be safe.
-        // I'll keep sources in localStorage for now since it's less sensitive, 
-        // OR I can just assume gsheet if missing.
         const sources = JSON.parse(localStorage.getItem('aurelia_autosync_sources') || '["gsheet"]');
         let syncedAtLeastOne = false;
 
         try {
-          // Google Sheets
           if (sources.includes('gsheet')) {
             const sheetId = profile.gsheet_id;
             if (sheetId) {
@@ -126,15 +122,12 @@ const AppLayout = () => {
             }
           }
 
-          // Bokun API
           if (sources.includes('bokun')) {
-            const access = profile.bokun_access_key;
-            const secret = profile.bokun_secret_key;
-            if (access && secret) {
+            if (profile.bokun_access_key && profile.bokun_secret_key) {
               const d = new Date(); d.setDate(d.getDate() - 90);
               const startStr = d.toISOString().split('T')[0];
               const endStr = new Date().toISOString().split('T')[0];
-              await syncFromBokun(access, secret, user.id, supabase, startStr, endStr);
+              await syncFromBokun(supabase, user.id, startStr, endStr);
               syncedAtLeastOne = true;
             }
           }
@@ -151,12 +144,11 @@ const AppLayout = () => {
 
     checkSync();
     window.addEventListener('autosync_changed', checkSync);
-
     return () => {
       if (intervalId) clearInterval(intervalId);
       window.removeEventListener('autosync_changed', checkSync);
     };
-  }, [user]);
+  }, [user, profile]);
 
   const handleEditOption = (optionId: string, channelIdx?: number) => {
     setActiveOptionId(optionId);
@@ -244,6 +236,7 @@ const AppLayout = () => {
         {view === 'guides' && <GuidesPage />}
         {view === 'guide-dashboard' && <GuideDashboard />}
         {view === 'marketplace' && <MarketplacePage />}
+        {view === 'changelog' && <ChangeLogPage />}
       </main>
 
       {lastSynced && (

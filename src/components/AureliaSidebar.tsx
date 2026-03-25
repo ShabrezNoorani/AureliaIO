@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users } from 'lucide-react';
+import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, Profile } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -177,8 +177,9 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
               <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => onNavigate('admin-costs')} indent />
               <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => onNavigate('today')} indent />
               <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => { onNavigate('guides'); navigate('/app/guides'); }} indent />
-              <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => { onNavigate('guide-dashboard'); navigate('/app/guide-dashboard'); }} indent />
+               <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => { onNavigate('guide-dashboard'); navigate('/app/guide-dashboard'); }} indent />
               <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => { onNavigate('marketplace'); navigate('/app/marketplace'); }} indent />
+              <SidebarItem icon={List} label="Change Log" active={activeView === 'changelog'} onClick={() => { onNavigate('changelog'); navigate('/app/changelog'); }} indent />
             </div>
           )}
         </div>

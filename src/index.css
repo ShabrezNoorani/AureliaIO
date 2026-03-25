@@ -23,7 +23,7 @@
     --secondary-foreground: var(--theme-text, 210 40% 98%);
 
     --muted: var(--theme-border, 240 15% 13%);
-    --muted-foreground: var(--theme-text-sec, 215 16% 62%);
+    --muted-foreground: var(--theme-text-muted, 215 16% 62%);
 
     --accent: var(--theme-card, 240 12% 15%);
     --accent-foreground: var(--theme-text, 210 40% 98%);
@@ -164,9 +164,9 @@
   /* Auth form inputs */
   .auth-input {
     @apply w-full px-4 py-3 text-sm rounded-lg border outline-none transition-all duration-200;
-    background: #13131a;
-    border-color: #1e1e2e;
-    color: #f8fafc;
+    background: hsl(var(--card));
+    border-color: hsl(var(--border));
+    color: hsl(var(--foreground));
   }
 
   .auth-input::placeholder {
@@ -180,9 +180,9 @@
 }
 
 .theme-light table tr:nth-child(even) td {
-  background-color: #ffffff !important;
+  background-color: hsl(var(--theme-card)) !important;
 }
 
 .theme-light table tr:nth-child(odd) td {
-  background-color: #f8fafc !important;
+  background-color: hsl(var(--theme-bg)) !important;
 }
