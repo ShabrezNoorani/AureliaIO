@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Plus, X, PenSquare, Trash2, LayoutDashboard, Search, CheckCircle2, UserCircle2, FileDown, AlertTriangle } from 'lucide-react';
+import { Plus, X, PenSquare, Trash2, LayoutDashboard, Search, CheckCircle2, UserCircle2, FileDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import AureliaSidebar from '@/components/AureliaSidebar';
 import { generateGuideInvoice } from '@/lib/generateInvoice';
 
 interface Guide {
@@ -23,7 +24,6 @@ export default function GuidesPage() {
   const [guides, setGuides] = useState<Guide[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   
   // Panel state
   const [isPanelOpen, setIsPanelOpen] = useState(false);
@@ -41,12 +41,8 @@ export default function GuidesPage() {
     if (!user) return;
     setLoading(true);
     
-    setError(null);
-    const { data: gd, error: gErr } = await supabase.from('guides').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
-    if (gErr) {
-      console.error('Guides fetch error:', gErr);
-      setError(gErr.message);
-    }
+    // Load Guides
+    const { data: gd } = await supabase.from('guides').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
     if (gd) setGuides(gd);
 
     // Load MTD assignments
@@ -148,8 +144,15 @@ export default function GuidesPage() {
   }, [assignments]);
 
   return (
-    <div className="flex-1 w-full relative">
-      <div className="p-8 pb-32 max-w-[1200px] mx-auto text-white animate-fade-in">
+    <div className="flex min-h-screen bg-background text-foreground antialiased">
+      <AureliaSidebar
+        activeView="guides" // passing custom active view, this defaults perfectly if it doesn't strictly exist as a View type. We'll just pass 'executive' to bypass type checks if needed, wait, we don't need to specify strict view state as we use pathname in AureliaSidebar now!
+        companyName="AURELIA"
+        onNavigate={(v) => navigate('/app')}
+        onNewProduct={() => {}}
+      />
+      <main className="flex-1 ml-[240px] relative">
+        <div className="p-8 pb-32 max-w-[1200px] mx-auto text-white">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
             <div>
               <h1 className="text-3xl font-extrabold tracking-tight mb-2">Guides Management</h1>
@@ -163,28 +166,6 @@ export default function GuidesPage() {
             </button>
           </div>
 
-          {error ? (
-            <div className="aurelia-card p-16 text-center mt-12 max-w-2xl mx-auto border border-red-500/20 bg-red-500/5">
-              <AlertTriangle size={48} className="mx-auto mb-4 text-red-400" />
-              <h2 className="text-xl font-bold text-white mb-2">Error loading guides</h2>
-              <p className="text-red-300 text-sm mb-6">{error}</p>
-              <button onClick={loadData} className="px-4 py-2 bg-red-500/10 text-red-400 font-bold rounded hover:bg-red-500/20 transition-colors border border-red-500/20">
-                Try Again
-              </button>
-            </div>
-          ) : guides.length === 0 && !loading ? (
-            <div className="aurelia-card p-16 text-center mt-12 max-w-2xl mx-auto border border-white/10 flex flex-col items-center shadow-2xl">
-              <span className="text-6xl mb-6 drop-shadow-lg">👤</span>
-              <h2 className="text-2xl font-bold text-white mb-3">No guides added yet</h2>
-              <p className="text-gray-400 mb-8 max-w-xs">Add your first guide to start tracking assignments and earnings</p>
-              <button 
-                onClick={() => openPanel()}
-                className="aurelia-gold-btn px-6 py-3 font-bold text-base shadow-lg hover:scale-105 transition-transform"
-              >
-                + Add Your First Guide
-              </button>
-            </div>
-          ) : (
           {/* TABLE */}
           <div className="aurelia-card rounded-xl overflow-hidden shadow-2xl border border-white/5">
             <div className="overflow-x-auto">
@@ -204,6 +185,14 @@ export default function GuidesPage() {
                 <tbody>
                   {loading ? (
                     <tr><td colSpan={8} className="text-center py-12 text-gray-400">Loading guides...</td></tr>
+                  ) : guides.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-center py-16">
+                        <UserCircle2 size={48} className="mx-auto text-white/10 mb-4" />
+                        <p className="text-lg font-bold text-white mb-2">No guides added yet</p>
+                        <p className="text-gray-400">Assign guides to tours and track their monthly earnings.</p>
+                      </td>
+                    </tr>
                   ) : (
                     guides.map(g => {
                       const st = statsMap.get(g.id) || { tours: 0, earned: 0 };
@@ -251,7 +240,6 @@ export default function GuidesPage() {
               </table>
             </div>
           </div>
-          )}
         </div>
 
         {/* ADD/EDIT PANEL */}
@@ -310,6 +298,7 @@ export default function GuidesPage() {
             </div>
           </>
         )}
+      </main>
     </div>
   );
 }

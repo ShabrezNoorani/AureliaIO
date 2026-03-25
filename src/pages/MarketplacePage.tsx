@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import AureliaSidebar from '@/components/AureliaSidebar';
 import { Settings, Plus, X, Box, CopyPlus, LineChart, ExternalLink, Activity, Info, AlertTriangle, Map as MapIcon, CheckCircle2 } from 'lucide-react';
 
 
@@ -143,8 +144,10 @@ export default function MarketplacePage() {
   });
 
   return (
-    <div className="flex-1 w-full relative">
-      <div className="p-8 pb-32 max-w-7xl mx-auto space-y-8 animate-fade-in">
+    <div className="flex min-h-screen bg-background text-foreground antialiased">
+      <AureliaSidebar activeView={"marketplace" as any} companyName="AURELIA" onNavigate={(v) => navigate('/app')} onNewProduct={() => {}} />
+      <main className="flex-1 ml-[240px] relative">
+        <div className="p-8 pb-32 max-w-7xl mx-auto space-y-8 animate-fade-in">
           
           {/* HEADER */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-border/50">
@@ -160,20 +163,6 @@ export default function MarketplacePage() {
             </button>
           </div>
 
-          {items.length === 0 ? (
-            <div className="aurelia-card p-16 text-center mt-12 max-w-2xl mx-auto border border-white/10 flex flex-col items-center shadow-2xl">
-              <span className="text-6xl mb-6 drop-shadow-lg">🗺️</span>
-              <h2 className="text-2xl font-bold text-white mb-3">No products listed yet</h2>
-              <p className="text-gray-400 mb-8 max-w-sm">Add your first product to start tracking your marketplace coverage</p>
-              <button 
-                onClick={() => openPanel()}
-                className="aurelia-gold-btn px-6 py-3 font-bold text-base shadow-lg hover:scale-105 transition-transform"
-              >
-                + Add Your First Product
-              </button>
-            </div>
-          ) : (
-            <>
           {/* STATS */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="aurelia-card p-5 border-l-[3px] border-l-[#f5a623]">
@@ -233,7 +222,16 @@ export default function MarketplacePage() {
                 </tr>
               </thead>
               <tbody>
-                  {items.map(item => (
+                {items.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="text-center py-16 text-gray-400">
+                      <Box size={48} className="mx-auto text-white/10 mb-4" />
+                      <p className="text-lg font-bold text-white mb-2">No marketplace listings configured</p>
+                      <p className="text-gray-500 text-sm">Create specific product matrices here explicitly verifying platform coverage maps.</p>
+                    </td>
+                  </tr>
+                ) : (
+                  items.map(item => (
                     <tr key={item.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
                       <td className="px-5 py-4 sticky left-0 z-10" style={{ backgroundColor: 'hsl(var(--theme-card))' }}>
                         <div className="flex flex-col">
@@ -274,12 +272,11 @@ export default function MarketplacePage() {
                         );
                       })}
                     </tr>
-                  ))}
+                  ))
+                )}
               </tbody>
             </table>
           </div>
-          </>
-        )}
         </div>
 
         {/* --- ADD/EDIT PANEL --- */}
@@ -328,7 +325,7 @@ export default function MarketplacePage() {
                 <div className="space-y-4">
                   <h3 className="font-bold text-[#f5a623] border-b border-white/10 pb-2 flex items-center justify-between uppercase tracking-widest text-xs">
                     <span className="flex items-center gap-2"><MapIcon size={14} /> OTA Configurations</span>
-                    <button onClick={handleCreatePlatform} className="text-white bg-white/5 hover:bg-white/10 px-3 py-1 rounded transition-colors flex items-center gap-1"><Plus size={12}/> Add Platform</button>
+                    <button onClick={handleCreatePlatform} className="text-white bg-white/5 hover:bg-white/10 px-3 py-1 rounded transition-colors flex items-center gap-1"><Plus size={12}/> Add</button>
                   </h3>
                   
                   {fListings.length === 0 ? (
@@ -379,6 +376,7 @@ export default function MarketplacePage() {
             </div>
           </>
         )}
+      </main>
     </div>
   );
 }
