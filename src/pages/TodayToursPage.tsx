@@ -12,6 +12,7 @@ export default function TodayToursPage() {
   const [bookings, setBookings] = useState<any[]>([]);
   const [guides, setGuides] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
+  const [gsheetAssignments, setGsheetAssignments] = useState<any[]>([]);
   const [optionRates, setOptionRates] = useState<any[]>([]);
   const [checkins, setCheckins] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,10 +30,11 @@ export default function TodayToursPage() {
     const today = new Date().toISOString().split('T')[0];
     setTodayStrDate(today);
 
-    const [bRes, gRes, aRes, cRes, rRes] = await Promise.all([
+    const [bRes, gRes, aRes, gsRes, cRes, rRes] = await Promise.all([
       supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', today).not('status', 'in', '("CANCELLED_EARLY","CANCELLED_LATE")').order('travel_time', { ascending: true }),
       supabase.from('guides').select('*').eq('user_id', user.id).eq('status', 'active'),
       supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today),
+      supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today).eq('sync_source', 'gsheet_assignments').order('travel_time', { ascending: true }),
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
       supabase.from('guide_option_rates').select('*').eq('user_id', user.id)
     ]);
@@ -40,6 +42,7 @@ export default function TodayToursPage() {
     if (bRes.data) setBookings(bRes.data);
     if (gRes.data) setGuides(gRes.data);
     if (aRes.data) setAssignments(aRes.data);
+    if (gsRes.data) setGsheetAssignments(gsRes.data);
     if (cRes.data) setCheckins(cRes.data);
     if (rRes.data) setOptionRates(rRes.data);
     
@@ -207,6 +210,58 @@ export default function TodayToursPage() {
               <p className="text-2xl font-extrabold text-red-400 font-mono">€{totalGuideCosts.toFixed(2)}</p>
             </div>
           </div>
+
+          {/* TODAY'S GUIDE ASSIGNMENTS (from gsheet sync) */}
+          {gsheetAssignments.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <h2 className="text-sm font-black uppercase tracking-widest text-purple-400">📋 Today's Guide Assignments</h2>
+                <div className="h-[1px] flex-1 bg-purple-500/20" />
+                <span className="text-[10px] font-bold text-purple-500 uppercase tracking-widest">{gsheetAssignments.length} assignments</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {gsheetAssignments.map(a => {
+                  const guideInfo = guides.find(g => g.id === a.guide_id);
+                  const statusVal = (a.status || 'Assigned').trim();
+                  const isCompleted = statusVal === 'Completed';
+                  const isCancelled = statusVal === 'Cancelled';
+                  const borderColor = isCompleted
+                    ? 'border-green-500/60'
+                    : isCancelled
+                    ? 'border-gray-600/40'
+                    : 'border-[#f5a623]/50';
+                  const opacity = isCancelled ? 'opacity-50' : '';
+                  return (
+                    <div
+                      key={a.id}
+                      className={`aurelia-card p-4 border-l-[3px] ${borderColor} ${opacity} space-y-1.5`}
+                    >
+                      <div className="flex items-center gap-2 text-sm font-bold text-white">
+                        <span className="text-[#f5a623]">🕐</span>
+                        <span>{a.travel_time || '??:??'}</span>
+                        <span className="text-gray-400">·</span>
+                        <span className="truncate">{a.tour_name || a.option_name || 'Tour'}</span>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        Guide: <span className="text-white font-semibold">{guideInfo?.name || a.guide_name || '—'}</span>
+                        {a.language && <> · <span className="text-gray-300">{a.language}</span></>}
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-400">
+                          Pay: <span className="text-green-400 font-bold">€{Number(a.calculated_pay || 0).toFixed(0)}</span>
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
+                          isCompleted ? 'bg-green-500/20 text-green-400' :
+                          isCancelled ? 'bg-gray-500/20 text-gray-500' :
+                          'bg-[#f5a623]/20 text-[#f5a623]'
+                        }`}>{statusVal}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {loading ? (
             <div className="flex justify-center p-12"><div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin" /></div>

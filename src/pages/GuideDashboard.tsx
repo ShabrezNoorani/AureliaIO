@@ -30,7 +30,11 @@ export default function GuideDashboard() {
 
     const [gRes, aRes, rRes] = await Promise.all([
       supabase.from('guides').select('*').eq('user_id', user.id).order('name'),
-      supabase.from('guide_assignments').select('*').eq('user_id', user.id),
+      supabase
+        .from('guide_assignments')
+        .select('*')
+        .eq('user_id', user.id)
+        .or('sync_source.eq.gsheet_assignments,sync_source.eq.manual,sync_source.is.null'),
       supabase.from('guide_product_rates').select('*').eq('user_id', user.id)
     ]);
 
@@ -240,42 +244,36 @@ export default function GuideDashboard() {
                 <table className="w-full text-left text-xs">
                   <thead className="text-[10px] font-bold text-gray-500 uppercase tracking-widest border-b border-white/5">
                     <tr>
-                      <th className="px-4 py-3">Date</th>
-                      <th className="px-4 py-3">Product</th>
-                      <th className="px-4 py-3 text-center">Pax</th>
-                      <th className="px-4 py-3">Rate Used</th>
-                      <th className="px-4 py-3 text-right">Amount</th>
+                      <th className="px-3 py-3">Date</th>
+                      <th className="px-3 py-3">Time</th>
+                      <th className="px-3 py-3">Tour Name</th>
+                      <th className="px-3 py-3">Language</th>
+                      <th className="px-3 py-3">Type</th>
+                      <th className="px-3 py-3 text-right">Pay</th>
+                      <th className="px-3 py-3 text-right">Bonus</th>
+                      <th className="px-3 py-3 text-right">Total</th>
+                      <th className="px-3 py-3 text-center">Paid?</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {filteredAssignments.filter(a => a.guide_id === selectedGuide.id).map(a => {
-                      const exactMatch = optionRates.find(r => 
-                        r.guide_id === a.guide_id && 
-                        r.product_code === (a.product_code || a.product_name) && 
-                        r.option_name?.toLowerCase() === a.option_name?.toLowerCase()
-                      );
-                      const productMatch = exactMatch ? null : optionRates.find(r => 
-                        r.guide_id === a.guide_id && 
-                        r.product_code === (a.product_code || a.product_name) && 
-                        (!r.option_name || r.option_name === '')
-                      );
-
-                      const source = a.rate_override ? '(manual)' : (exactMatch ? '(option)' : (productMatch ? '(product)' : '(base)'));
-                      const sourceColor = a.rate_override ? 'text-gold' : (exactMatch || productMatch ? 'text-blue-400' : 'text-gray-500');
-
-                      return (
-                        <tr key={a.id} className="hover:bg-white/[0.02] transition-colors">
-                          <td className="px-4 py-4 font-mono text-gray-400">{a.travel_date}</td>
-                          <td className="px-4 py-4 font-bold">{a.product_code || a.product_name}</td>
-                          <td className="px-4 py-4 text-center">{a.pax_count}</td>
-                          <td className="px-4 py-4">
-                            <span className="font-bold">€{a.calculated_pay}</span>
-                            <span className={`ml-1.5 text-[8px] uppercase font-black ${sourceColor}`}>{source}</span>
-                          </td>
-                          <td className="px-4 py-4 text-right font-black text-green-400">€{a.calculated_pay}</td>
-                        </tr>
-                      );
-                    })}
+                    {filteredAssignments.filter(a => a.guide_id === selectedGuide.id).map(a => (
+                      <tr key={a.id} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="px-3 py-3 font-mono text-gray-400 whitespace-nowrap">{a.travel_date}</td>
+                        <td className="px-3 py-3 text-gray-400">{a.travel_time || '—'}</td>
+                        <td className="px-3 py-3 font-bold">{a.tour_name || a.product_code || a.product_name || '—'}</td>
+                        <td className="px-3 py-3 text-gray-300">{a.language || '—'}</td>
+                        <td className="px-3 py-3 text-gray-400">{a.tour_type || '—'}</td>
+                        <td className="px-3 py-3 text-right font-mono">€{Number(a.calculated_pay || 0).toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right font-mono text-gold">{a.bonus ? `€${Number(a.bonus).toFixed(2)}` : '—'}</td>
+                        <td className="px-3 py-3 text-right font-black text-green-400">€{Number(a.total_pay || a.calculated_pay || 0).toFixed(2)}</td>
+                        <td className="px-3 py-3 text-center">
+                          {a.is_paid
+                            ? <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-green-500/20 text-green-400">Paid</span>
+                            : <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-orange-500/20 text-orange-400">Pending</span>
+                          }
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>

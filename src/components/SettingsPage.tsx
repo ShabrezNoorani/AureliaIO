@@ -4,7 +4,7 @@ import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { fetchBokunProducts, syncBokunBookings, testBokunConnection } from '@/lib/bokunSync';
-import { syncMasterData } from '@/lib/gsheetSync';
+import { syncMasterData, syncTourAssignments } from '@/lib/gsheetSync';
 
 const DEFAULT_SHEET_ID = '1EAI0SHtkJD5HHVj25rJcnzmoksTug249eIT4_JmiOR8';
 
@@ -24,10 +24,13 @@ export default function SettingsPage() {
   
   // GSheets
   const [sheetId, setSheetId] = useState('');
+  const [guideAssignmentsSheetId, setGuideAssignmentsSheetId] = useState('');
   const [gsheetAutoSync, setGsheetAutoSync] = useState(false);
   const [gsheetInterval, setGsheetInterval] = useState('1800000');
   const [gsheetSyncing, setGsheetSyncing] = useState(false);
   const [gsheetSyncMsg, setGsheetSyncMsg] = useState('');
+  const [assignSyncing, setAssignSyncing] = useState(false);
+  const [assignSyncMsg, setAssignSyncMsg] = useState('');
 
   // Bokun
   const [bokunAccess, setBokunAccess] = useState('');
@@ -72,6 +75,7 @@ export default function SettingsPage() {
       setCompanyName(profile.company_name || '');
       setPrimarySource((profile.primary_data_source as PrimarySource) || 'gsheet');
       setSheetId(profile.gsheet_id || DEFAULT_SHEET_ID);
+      setGuideAssignmentsSheetId(profile.guide_assignments_sheet_id || '');
       setGsheetAutoSync(profile.primary_data_source === 'gsheet' ? (profile.autosync_enabled || false) : false);
       setBokunAutoSync(profile.primary_data_source === 'bokun' ? (profile.autosync_enabled || false) : false);
       setGsheetInterval(profile.autosync_interval || '1800000');
@@ -178,6 +182,23 @@ export default function SettingsPage() {
       setShowImportModal(false);
       alert(`${toImport.length} products processed.`);
     } catch (e) { alert("Import failed."); } finally { setImporting(false); }
+  };
+
+  const handleSyncAssignments = async () => {
+    if (!user) return;
+    const sid = guideAssignmentsSheetId.trim();
+    if (!sid) return alert('Please enter a Guide Assignments Sheet ID first.');
+    setAssignSyncing(true);
+    setAssignSyncMsg('Syncing guide assignments...');
+    try {
+      await supabase.from('profiles').update({ guide_assignments_sheet_id: sid }).eq('id', user.id);
+      const res = await syncTourAssignments(sid, user.id, supabase);
+      setAssignSyncMsg(`✅ Imported ${res.imported} · Updated ${res.updated} assignments`);
+    } catch (e: any) {
+      setAssignSyncMsg(`❌ ${e.message || 'Sync failed'}`);
+    } finally {
+      setAssignSyncing(false);
+    }
   };
 
   const handleGsheetSync = async (force: boolean = false) => {
@@ -371,6 +392,30 @@ export default function SettingsPage() {
                     <AlertTriangle size={14} /> 💪 Force Full Re-sync
                   </button>
                   {gsheetSyncMsg && <div className="text-center text-[10px] font-bold uppercase text-blue-400">{gsheetSyncMsg}</div>}
+                </div>
+
+                {/* Guide Assignments Sheet */}
+                <div className="pt-4 border-t border-white/5 space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Guide Assignments Sheet (optional)</label>
+                    <p className="text-[10px] text-gray-600">Your Tour Assignments Google Sheet ID (separate from master data)</p>
+                    <div className="flex gap-2">
+                      <input
+                        className="aurelia-input flex-1 font-mono text-xs"
+                        value={guideAssignmentsSheetId}
+                        onChange={e => setGuideAssignmentsSheetId(e.target.value)}
+                        placeholder="Sheet ID…"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleSyncAssignments}
+                    disabled={assignSyncing}
+                    className="w-full flex items-center justify-center gap-2 p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl text-xs font-bold text-purple-300 hover:bg-purple-500/20 transition-all"
+                  >
+                    <RefreshCw size={14} className={assignSyncing ? 'animate-spin' : ''} /> 🔄 Sync Guide Assignments
+                  </button>
+                  {assignSyncMsg && <div className="text-center text-[10px] font-bold uppercase text-purple-400">{assignSyncMsg}</div>}
                 </div>
 
                 <div className="pt-4 border-t border-white/5">

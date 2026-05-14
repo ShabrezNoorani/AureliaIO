@@ -324,3 +324,120 @@ export async function syncAdminCosts(
 
   return { imported };
 }
+
+// ──────────── SYNC TOUR ASSIGNMENTS ────────────
+
+function parseCSVLine(line: string): string[] {
+  // Reuse parseCsvText for a single line
+  const rows = parseCsvText(line);
+  return rows[0] || [];
+}
+
+export async function syncTourAssignments(
+  sheetId: string,
+  userId: string,
+  supabase: any
+): Promise<{ imported: number; updated: number }> {
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=Tour%20Assignments`;
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Could not fetch Tour Assignments sheet');
+
+  const text = await response.text();
+  const lines = text.split('\n').filter(l => l.trim());
+  if (lines.length < 2) return { imported: 0, updated: 0 };
+
+  // Skip header row (row 0)
+  // Columns (0-indexed from parsed array):
+  // 0=Date, 1=Time, 2=Checkin, 3=Type,
+  // 4=Name(tour), 5=Language, 6=Guide,
+  // 7=Email, 8=Rate, 9=Bonus, 10=Total,
+  // 11=CalSent, 12=Status, 13=Notes,
+  // 14=CalID, 15=Clients, 16=Paid, 17=PaidDate
+
+  let imported = 0;
+  let updated = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const row = parseCSVLine(lines[i]);
+    if (!row[4]?.trim()) continue; // skip if no tour name
+
+    const guideName = row[6]?.trim() || '';
+    if (!guideName) continue;
+
+    const status = row[12]?.trim() || '';
+    if (!status || status === 'Open' || status === '') continue;
+
+    // Parse date
+    let travelDate: string | null = null;
+    try {
+      const dateStr = row[0]?.trim();
+      if (dateStr) {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) {
+          travelDate = d.toISOString().split('T')[0];
+        }
+      }
+    } catch {
+      travelDate = null;
+    }
+
+    // Find guide_id from guides table
+    const { data: guideData } = await supabase
+      .from('guides')
+      .select('id')
+      .eq('user_id', userId)
+      .ilike('name', guideName)
+      .single();
+
+    const assignmentData = {
+      user_id: userId,
+      guide_id: guideData?.id || null,
+      travel_date: travelDate,
+      travel_time: row[1]?.trim() || null,
+      checkin_time: row[2]?.trim() || null,
+      tour_type: row[3]?.trim() || null,
+      tour_name: row[4]?.trim() || null,
+      language: row[5]?.trim() || null,
+      product_code: null,
+      option_name: row[4]?.trim() || null,
+      pax_count: 0,
+      calculated_pay:
+        parseFloat(row[10]?.replace('€', '').trim() || '0') ||
+        parseFloat(row[8]?.replace('€', '').trim() || '0') ||
+        0,
+      bonus: parseFloat(row[9]?.replace('€', '').trim() || '0') || 0,
+      total_pay: parseFloat(row[10]?.replace('€', '').trim() || '0') || 0,
+      notes: row[13]?.trim() || null,
+      clients: row[15]?.trim() || null,
+      is_paid:
+        row[16] === 'TRUE' || (row[16] as any) === true || row[16] === '1',
+      paid_date: row[17]?.trim() || null,
+      sync_source: 'gsheet_assignments',
+    };
+
+    // Upsert based on guide + date + time + tour
+    const { data: existing } = await supabase
+      .from('guide_assignments')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('travel_date', travelDate)
+      .eq('travel_time', row[1]?.trim() || '')
+      .ilike('tour_name', row[4]?.trim() || '')
+      .eq('guide_id', guideData?.id || '')
+      .maybeSingle();
+
+    if (existing) {
+      await supabase
+        .from('guide_assignments')
+        .update(assignmentData)
+        .eq('id', existing.id);
+      updated++;
+    } else {
+      await supabase.from('guide_assignments').insert(assignmentData);
+      imported++;
+    }
+  }
+
+  return { imported, updated };
+}
