@@ -93,6 +93,7 @@ function EditBucketsModal({
 
 export default function Dashboard({ data, onEditOption, updateBucketCount, updateAgeBuckets }: DashboardProps) {
   const [showEditBuckets, setShowEditBuckets] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState<string>('all');
 
   const totalPax = data.ageBuckets.reduce((s, b) => s + b.count, 0);
 
@@ -151,8 +152,23 @@ export default function Dashboard({ data, onEditOption, updateBucketCount, updat
         </div>
       </div>
 
+      {/* Product Filter */}
+      <div className="mb-6 flex items-center gap-3">
+        <span className="text-sm font-bold text-muted-foreground">Showing:</span>
+        <select 
+          value={selectedProductId} 
+          onChange={(e) => setSelectedProductId(e.target.value)}
+          className="bg-background border border-border rounded-lg px-3 py-1.5 text-sm font-bold text-foreground outline-none focus:ring-1 focus:ring-gold/50 transition-all cursor-pointer"
+        >
+          <option value="all">All Products</option>
+          {data.products.map(p => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+      </div>
+
       {/* Global Simulate Bar */}
-      <div className="aurelia-card p-6 mb-8 border-l-[3px] border-l-gold">
+      <div className="aurelia-card p-6 mb-8 border-l-[3px] border-l-gold sticky top-0 z-50 bg-[#0a0a0f]/95 backdrop-blur-sm shadow-[0_2px_8px_rgba(0,0,0,0.3)] pt-4 pb-4">
         <div className="flex items-center justify-between mb-5">
           <p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-gold">
             Simulate Group Composition
@@ -198,7 +214,9 @@ export default function Dashboard({ data, onEditOption, updateBucketCount, updat
 
       {/* Products and Options */}
       <div className="space-y-6">
-        {data.products.map((product) => (
+        {data.products
+          .filter(p => selectedProductId === 'all' || p.id === selectedProductId)
+          .map((product) => (
           <div key={product.id}>
             {/* Product header */}
             <div className="flex items-center justify-between mb-3">

@@ -8,7 +8,9 @@ import {
 } from 'recharts';
 import { Filter, Calendar, TrendingUp, AlertTriangle, ArrowLeft, Package } from 'lucide-react';
 
-const COLORS = ['#3b82f6', '#10b981', '#f5a623', '#8b5cf6', '#64748b', '#f43f5e', '#06b6d4'];
+import { useChartColors } from '@/lib/theme';
+
+// const COLORS = ['#3b82f6', '#10b981', '#f5a623', '#8b5cf6', '#64748b', '#f43f5e', '#06b6d4'];
 
 class AnalyticsErrorBoundary extends Component<{children: ReactNode, resetError: () => void, navigate: any}, {hasError: boolean, error: any}> {
   constructor(props: any) {
@@ -58,6 +60,7 @@ export default function AnalyticsPageWrapper() {
 function AnalyticsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const colors = useChartColors();
   const [loading, setLoading] = useState(true);
   const [bookings, setBookings] = useState<any[]>([]);
 
@@ -533,11 +536,12 @@ function AnalyticsPage() {
           {trendData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={trendData} margin={{ top: 10, right: 30, left: 10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
-                <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} tickMargin={12} />
-                <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={v => `€${v/1000}k`} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={colors.grid} />
+                <XAxis dataKey="month" stroke={colors.text} fontSize={11} tickMargin={12} />
+                <YAxis yAxisId="left" stroke={colors.text} fontSize={11} tickFormatter={v => `€${v/1000}k`} />
                 <Tooltip 
-                  contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px', fontSize: '12px' }}
+                  contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', fontSize: '12px', color: colors.tooltip.text }}
+                  itemStyle={{ color: colors.tooltip.text }}
                   formatter={(v: number) => fmtE(v)}
                   itemSorter={(item) => -(item.value as number)}
                 />
@@ -545,12 +549,12 @@ function AnalyticsPage() {
                 
                 {trendMode === 'Monthly' ? (
                   <>
-                    <Line yAxisId="left" type="monotone" dataKey="Gross" stroke="hsl(var(--theme-accent))" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                    <Line yAxisId="left" type="monotone" dataKey="Net" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
+                    <Line yAxisId="left" type="monotone" dataKey="Gross" stroke={colors.primary} strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                    <Line yAxisId="left" type="monotone" dataKey="Net" stroke={colors.secondary} strokeWidth={3} dot={{ r: 4 }} />
                   </>
                 ) : (
                   trendKeys.map((k, i) => (
-                    <Line key={k} yAxisId="left" type="monotone" dataKey={k} name={k} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} />
+                    <Line key={k} yAxisId="left" type="monotone" dataKey={k} name={k} stroke={colors.donut[i % colors.donut.length]} strokeWidth={2} dot={false} />
                   ))
                 )}
               </LineChart>
@@ -571,9 +575,9 @@ function AnalyticsPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={donutData} cx="50%" cy="50%" innerRadius={70} outerRadius={90} paddingAngle={2} dataKey="value" stroke="transparent">
-                      {donutData.map((e, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
+                      {donutData.map((e, index) => <Cell key={index} fill={colors.donut[index % colors.donut.length]} />)}
                     </Pie>
-                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }} />
+                    <Tooltip contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', color: colors.tooltip.text }} itemStyle={{ color: colors.tooltip.text }} />
                     <Legend layout="horizontal" verticalAlign="bottom" wrapperStyle={{ fontSize: '11px' }} />
                   </PieChart>
                 </ResponsiveContainer>
@@ -592,13 +596,13 @@ function AnalyticsPage() {
             {channelBarData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={channelBarData} layout="vertical" margin={{ left: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
-                  <YAxis type="category" dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={11} width={80} />
-                  <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={v => `€${v/1000}k`} />
-                  <Tooltip cursor={{ fill: 'hsl(var(--hover))' }} contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }} formatter={(v: number) => fmtE(v)} />
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={colors.grid} />
+                  <YAxis type="category" dataKey="name" stroke={colors.text} fontSize={11} width={80} />
+                  <XAxis type="number" stroke={colors.text} fontSize={11} tickFormatter={v => `€${v/1000}k`} />
+                  <Tooltip cursor={{ fill: 'hsl(var(--hover))' }} contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', color: colors.tooltip.text }} itemStyle={{ color: colors.tooltip.text }} formatter={(v: number) => fmtE(v)} />
                   <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                  <Bar dataKey="Gross" fill="hsl(var(--theme-accent))" radius={[0,4,4,0]} />
-                  <Bar dataKey="Net" fill="#10b981" radius={[0,4,4,0]} />
+                  <Bar dataKey="Gross" fill={colors.primary} radius={[0,4,4,0]} />
+                  <Bar dataKey="Net" fill={colors.secondary} radius={[0,4,4,0]} />
                 </BarChart>
               </ResponsiveContainer>
              ) : <div className="w-full h-full flex items-center justify-center text-muted-foreground">No data</div>}
@@ -706,11 +710,11 @@ function AnalyticsPage() {
                 <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-4">Revenue History</h3>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={activeProductData.monthBars} margin={{ left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
-                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={v => `€${v/1000}k`} />
-                    <Tooltip cursor={{ fill: 'hsl(var(--hover))' }} contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }} formatter={(v: number) => fmtE(v)} />
-                    <Bar dataKey="rev" fill="hsl(var(--theme-accent))" radius={[4,4,0,0]} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={colors.grid} />
+                    <XAxis dataKey="month" stroke={colors.text} fontSize={11} />
+                    <YAxis stroke={colors.text} fontSize={11} tickFormatter={v => `€${v/1000}k`} />
+                    <Tooltip cursor={{ fill: 'hsl(var(--hover))' }} contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', color: colors.tooltip.text }} itemStyle={{ color: colors.tooltip.text }} formatter={(v: number) => fmtE(v)} />
+                    <Bar dataKey="rev" fill={colors.primary} radius={[4,4,0,0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -757,15 +761,16 @@ function AnalyticsPage() {
              {scatterData.length > 0 ? (
                <ResponsiveContainer width="100%" height="100%">
                  <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--tw-border-opacity) / 0.1)" />
-                    <XAxis type="number" dataKey="x" domain={['auto', 'auto']} name="Booking Date" stroke="hsl(var(--muted-foreground))" fontSize={11} 
+                    <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
+                    <XAxis type="number" dataKey="x" domain={['auto', 'auto']} name="Booking Date" stroke={colors.text} fontSize={11} 
                       tickFormatter={(unix) => new Date(unix).toLocaleDateString(undefined, {month:'short', year:'2-digit'})} />
-                    <YAxis type="number" dataKey="y" domain={['auto', 'auto']} name="Travel Date" stroke="hsl(var(--muted-foreground))" fontSize={11}
+                    <YAxis type="number" dataKey="y" domain={['auto', 'auto']} name="Travel Date" stroke={colors.text} fontSize={11}
                       tickFormatter={(unix) => new Date(unix).toLocaleDateString(undefined, {month:'short'})} />
                     <ZAxis type="number" dataKey="z" range={[20, 400]} name="Revenue" />
                     <Tooltip 
                       cursor={{ strokeDasharray: '3 3' }}
-                      contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px', fontSize: '12px' }}
+                      contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', fontSize: '12px', color: colors.tooltip.text }}
+                      itemStyle={{ color: colors.tooltip.text }}
                       formatter={(v: any, name: string) => {
                         if (name === 'Booking Date' || name === 'Travel Date') return new Date(v).toLocaleDateString();
                         if (name === 'Revenue') return fmtE(v as number);
@@ -773,7 +778,7 @@ function AnalyticsPage() {
                       }}
                     />
                     {uniqueChannels.map((c, i) => (
-                      <Scatter key={c} name={c} data={scatterData.filter(d => d.channel === c)} fill={COLORS[i % COLORS.length]} fillOpacity={0.6} />
+                      <Scatter key={c} name={c} data={scatterData.filter(d => d.channel === c)} fill={colors.donut[i % colors.donut.length]} fillOpacity={0.6} />
                     ))}
                  </ScatterChart>
                </ResponsiveContainer>
@@ -832,13 +837,17 @@ function AnalyticsPage() {
               {cancelData.chart.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={cancelData.chart} margin={{ left: -10, bottom: 0, top: 10 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--tw-border-opacity) / 0.1)" />
-                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                    <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={colors.grid} />
+                    <XAxis dataKey="month" stroke={colors.text} fontSize={11} />
+                    <YAxis yAxisId="left" stroke={colors.text} fontSize={11} />
                     <YAxis yAxisId="right" orientation="right" stroke="#ef4444" fontSize={11} tickFormatter={v => `${v}%`} />
-                    <Tooltip cursor={{ fill: 'hsl(var(--hover))' }} contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px', zIndex: 100 }} />
+                    <Tooltip 
+                      cursor={{ fill: 'hsl(var(--hover))' }} 
+                      contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', zIndex: 100, color: colors.tooltip.text }} 
+                      itemStyle={{ color: colors.tooltip.text }}
+                    />
                     <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                    <Bar yAxisId="left" dataKey="cancels" name="Cancel Count" fill="hsl(var(--muted-foreground)/0.5)" radius={[4,4,0,0]} />
+                    <Bar yAxisId="left" dataKey="cancels" name="Cancel Count" fill={`${colors.text}80`} radius={[4,4,0,0]} />
                     <Line yAxisId="right" type="monotone" dataKey="rate" name="Cancel Rate %" stroke="#ef4444" strokeWidth={2} dot={{ r: 3 }} />
                   </BarChart>
                 </ResponsiveContainer>

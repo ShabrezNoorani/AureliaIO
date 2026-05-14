@@ -30,7 +30,7 @@ export default function TodayToursPage() {
     setTodayStrDate(today);
 
     const [bRes, gRes, aRes, cRes, rRes] = await Promise.all([
-      supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', today).order('travel_time', { ascending: true }),
+      supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', today).not('status', 'in', '("CANCELLED_EARLY","CANCELLED_LATE")').order('travel_time', { ascending: true }),
       supabase.from('guides').select('*').eq('user_id', user.id).eq('status', 'active'),
       supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today),
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),

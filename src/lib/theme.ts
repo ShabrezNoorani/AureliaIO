@@ -1,15 +1,11 @@
-export type ThemeName = 'dark' | 'ocean' | 'light';
+import { useState, useEffect } from 'react';
+
+export type ThemeName = 'dark' | 'light';
 
 export const THEMES = {
   dark: { 
     name: 'Dark', 
     colors: { bg: '#0a0a0f', sidebar: '#0f1117', card: '#13131a', border: '#1e1e2e', accent: '#f5a623', btnBg: '#f5a623', btnText: '#0a0a0f', text: '#f8fafc', textSecondary: '#94a3b8', textMuted: '#4b5563' },
-    shadows: { card: '0 0 0 1px rgba(255,255,255,0.03), 0 2px 8px rgba(0,0,0,0.3)', cardHover: '0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.4)' },
-    isLight: false
-  },
-  ocean: { 
-    name: 'Ocean', 
-    colors: { bg: '#080c14', sidebar: '#0c1220', card: '#101828', border: '#1e2d45', accent: '#3b82f6', btnBg: '#3b82f6', btnText: '#ffffff', text: '#f0f4ff', textSecondary: '#94a3b8', textMuted: '#4b5563' },
     shadows: { card: '0 0 0 1px rgba(255,255,255,0.03), 0 2px 8px rgba(0,0,0,0.3)', cardHover: '0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.4)' },
     isLight: false
   },
@@ -42,7 +38,7 @@ function hexToHslParams(hex: string) {
 
 export function getTheme(): ThemeName {
   const current = localStorage.getItem('aurelia_theme') as ThemeName;
-  if (['dark', 'ocean', 'light'].includes(current)) return current;
+  if (['dark', 'light'].includes(current)) return current;
   return 'dark';
 }
 
@@ -85,4 +81,46 @@ export function applyTheme(themeName: ThemeName) {
 
   // Trigger an event so canvas components can react
   window.dispatchEvent(new Event('themechange'));
+}
+
+export function useChartColors() {
+  const [theme, setTheme] = useState<ThemeName>(getTheme());
+
+  useEffect(() => {
+    const handleThemeChange = () => {
+      setTheme(getTheme());
+    };
+    window.addEventListener('themechange', handleThemeChange);
+    return () => window.removeEventListener('themechange', handleThemeChange);
+  }, []);
+
+  if (theme === 'light') {
+    return {
+      primary: '#1e293b',    // Navy
+      secondary: '#16a34a',  // Green
+      line: '#1e293b',       // Navy
+      grid: 'rgba(0,0,0,0.08)',
+      text: '#64748b',
+      tooltip: {
+        bg: '#ffffff',
+        border: '#e2e8f0',
+        text: '#0f172a'
+      },
+      donut: ['#1e293b', '#16a34a', '#2563eb', '#9333ea', '#dc2626']
+    };
+  }
+
+  return {
+    primary: '#f5a623',    // Gold
+    secondary: '#22c55e',  // Green
+    line: '#f5a623',       // Gold
+    grid: 'rgba(255,255,255,0.1)',
+    text: '#94a3b8',
+    tooltip: {
+      bg: '#13131a',
+      border: '#2a2a3e',
+      text: '#f8fafc'
+    },
+    donut: ['#f5a623', '#22c55e', '#60a5fa', '#c084fc', '#f87171']
+  };
 }

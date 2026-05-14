@@ -279,6 +279,12 @@ export async function syncAdminCosts(
   const rows = parseCsvText(csvText);
   if (rows.length < 2) return { imported: 0 };
 
+  // Step 1: Delete all existing admin costs for this user
+  await supabase
+    .from('admin_costs')
+    .delete()
+    .eq('user_id', userId);
+
   const dataRows = rows.slice(1);
   let imported = 0;
 

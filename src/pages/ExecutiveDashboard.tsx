@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useEffect } from 'react';
 import { TrendingUp, TrendingDown, Calendar, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useChartColors } from '@/lib/theme';
 
 const CHANNELS = ['All', 'Viator', 'GYG', 'Airbnb', 'Website', 'Other'];
 const QUICK_RANGES = ['YTD', '6M', '3M', '1M', 'Custom'];
@@ -24,6 +25,7 @@ function fmtPct(v: number) {
 
 export default function ExecutiveDashboard() {
   const { user } = useAuth();
+  const colors = useChartColors();
   
   const [bookings, setBookings] = useState<any[]>([]);
   const [adminCosts, setAdminCosts] = useState<any[]>([]);
@@ -175,7 +177,7 @@ export default function ExecutiveDashboard() {
     return Object.entries(map).map(([name, value]) => ({ name, value })).filter(d => d.value > 0);
   }, [currentData]);
   
-  const COLORS = ['#3b82f6', '#10b981', '#f5a623', '#8b5cf6', '#64748b'];
+  // No longer needed: const COLORS = ['#3b82f6', '#10b981', '#f5a623', '#8b5cf6', '#64748b'];
 
   // Cost Stacked Chart Data
   const costStackData = useMemo(() => {
@@ -351,18 +353,19 @@ export default function ExecutiveDashboard() {
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={monthlyData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--tw-border-opacity) / 0.1)" vertical={false} />
-                <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} tickMargin={10} />
-                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={(val) => `€${val/1000}k`} />
+                <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} vertical={false} />
+                <XAxis dataKey="month" stroke={colors.text} fontSize={11} tickMargin={10} />
+                <YAxis stroke={colors.text} fontSize={11} tickFormatter={(val) => `€${val/1000}k`} />
                 <RechartsTooltip 
                   cursor={{ fill: 'hsl(var(--hover))' }}
-                  contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
+                  contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', color: colors.tooltip.text }}
+                  itemStyle={{ color: colors.tooltip.text }}
                   formatter={(value: number) => fmtEuro(value)}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
-                <Bar dataKey="gross" name="Gross Rev" fill="hsl(var(--muted-foreground) / 0.3)" radius={[4,4,0,0]} />
-                <Bar dataKey="opProfit" name="Op. Profit" fill="hsl(var(--gold))" radius={[4,4,0,0]} />
-                <Bar dataKey="netProfit" name="Net Profit" fill="hsl(142 71% 45%)" radius={[4,4,0,0]} />
+                <Bar dataKey="gross" name="Gross Rev" fill={`${colors.text}4D`} radius={[4,4,0,0]} />
+                <Bar dataKey="opProfit" name="Op. Profit" fill={colors.primary} radius={[4,4,0,0]} />
+                <Bar dataKey="netProfit" name="Net Profit" fill={colors.secondary} radius={[4,4,0,0]} />
                 <Line type="monotone" dataKey="admin" name="Admin Costs" stroke="#f43f5e" strokeWidth={2} strokeDasharray="5 5" dot={false} />
               </BarChart>
             </ResponsiveContainer>
@@ -376,11 +379,12 @@ export default function ExecutiveDashboard() {
               <PieChart>
                 <Pie data={donutData} cx="50%" cy="50%" innerRadius={70} outerRadius={90} paddingAngle={2} dataKey="value" stroke="transparent">
                   {donutData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    <Cell key={`cell-${index}`} fill={colors.donut[index % colors.donut.length]} />
                   ))}
                 </Pie>
                 <RechartsTooltip 
-                  contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
+                  contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', color: colors.tooltip.text }}
+                  itemStyle={{ color: colors.tooltip.text }}
                   formatter={(value: number) => fmtEuro(value)}
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '11px', paddingTop: '20px' }} />
@@ -470,19 +474,20 @@ export default function ExecutiveDashboard() {
           <div className="h-[250px] mb-4">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={costStackData} layout="vertical" margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--tw-border-opacity) / 0.1)" horizontal={false} />
-                <YAxis type="category" dataKey="name" fontSize={11} stroke="hsl(var(--muted-foreground))" tick={false} axisLine={false} />
-                <XAxis type="number" fontSize={11} stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `€${v/1000}k`} />
+                <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} horizontal={false} />
+                <YAxis type="category" dataKey="name" fontSize={11} stroke={colors.text} tick={false} axisLine={false} />
+                <XAxis type="number" fontSize={11} stroke={colors.text} tickFormatter={(v) => `€${v/1000}k`} />
                 <RechartsTooltip 
-                  contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
+                  contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', color: colors.tooltip.text }}
+                  itemStyle={{ color: colors.tooltip.text }}
                   formatter={(value: number) => fmtEuro(value)}
                   cursor={{ fill: 'transparent' }}
                 />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                <Bar dataKey="Tickets" stackId="a" fill="#3b82f6" />
-                <Bar dataKey="Guides" stackId="a" fill="#10b981" />
-                <Bar dataKey="Extras" stackId="a" fill="#f5a623" />
-                <Bar dataKey="Commissions" stackId="a" fill="#8b5cf6" />
+                <Bar dataKey="Tickets" stackId="a" fill={colors.donut[2]} />
+                <Bar dataKey="Guides" stackId="a" fill={colors.secondary} />
+                <Bar dataKey="Extras" stackId="a" fill={colors.primary} />
+                <Bar dataKey="Commissions" stackId="a" fill={colors.donut[3]} />
                 <Bar dataKey="Admin" stackId="a" fill="#f43f5e" />
               </BarChart>
             </ResponsiveContainer>

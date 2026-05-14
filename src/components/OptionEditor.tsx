@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Trash2, ArrowLeft, Plus } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import type { AppData, Option, AgeBucket, Guide } from '@/lib/types';
 import { calculateMetrics, formatEuroDetailed, getAutoMappedPax } from '@/lib/calculations';
 
@@ -215,6 +216,7 @@ export default function OptionEditor({
   deleteChannel,
 }: OptionEditorProps) {
   const option = data.products.flatMap((p) => p.options).find((o) => o.id === optionId);
+  const navigate = useNavigate();
   const [activeChannelIdx, setActiveChannelIdx] = useState(initialChannelIdx);
   const [showAddChannel, setShowAddChannel] = useState(false);
 
@@ -237,7 +239,7 @@ export default function OptionEditor({
       {/* LEFT PANEL */}
       <div className="flex-1 overflow-y-auto p-8" style={{ maxWidth: '540px' }}>
         <button
-          onClick={onBack}
+          onClick={() => navigate('/app')}
           className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-8 flex items-center hover:text-gold transition-colors"
         >
           <ArrowLeft size={14} className="mr-2" />
