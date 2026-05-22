@@ -22,6 +22,7 @@ import TodayToursPage from "./pages/TodayToursPage";
 import ChangeLogPage from "./pages/ChangeLogPage";
 import CheckinApp from "./pages/CheckinApp";
 import NotFound from "./pages/NotFound";
+import TourAssignmentsPage from "./pages/TourAssignmentsPage";
 import { setupGuideTables } from "./lib/setupTables";
 import { useEffect } from "react";
 
@@ -59,6 +60,7 @@ const AppContent = () => {
             <Route path="marketplace" element={<MarketplacePage />} />
             <Route path="guides" element={<GuidesPage />} />
             <Route path="guide-dashboard" element={<GuideDashboard />} />
+            <Route path="assignments" element={<TourAssignmentsPage />} />
             <Route path="today" element={<TodayToursPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="changelog" element={<ChangeLogPage />} />

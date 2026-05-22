@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'assignments' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -84,7 +84,7 @@ function TrialStatusPill({ profile }: { profile: Profile | null }) {
   }
 
   return (
-    <div className="px-4 py-2.5 rounded-lg text-xs font-semibold bg-[#f5a623]/8 border border-[#f5a623]/15 text-[#f5a623] mb-2">
+    <div className="px-4 py-2.5 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white mb-2">
       ✦ Trial: {daysLeft} day{daysLeft !== 1 ? 's' : ''} left
     </div>
   );
@@ -176,6 +176,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
               <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => onNavigate('ledger')} indent />
               <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => onNavigate('admin-costs')} indent />
               <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => onNavigate('today')} indent />
+              <SidebarItem icon={List} label="Tour Assignments" active={activeView === 'assignments'} onClick={() => { onNavigate('assignments'); navigate('/app/assignments'); }} indent />
               <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => { onNavigate('guides'); navigate('/app/guides'); }} indent />
                <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => { onNavigate('guide-dashboard'); navigate('/app/guide-dashboard'); }} indent />
               <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => { onNavigate('marketplace'); navigate('/app/marketplace'); }} indent />
