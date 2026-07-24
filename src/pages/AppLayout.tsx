@@ -25,6 +25,7 @@ const AppLayout = () => {
   const { user, profile } = useAuth();
   const {
     data,
+    loading: appDataLoading,
     addProduct,
     deleteProduct,
     updateProduct,
@@ -163,6 +164,14 @@ const AppLayout = () => {
       setView('products');
     }
   };
+
+  if (appDataLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="w-8 h-8 border-2 border-gold border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen bg-background text-foreground antialiased">

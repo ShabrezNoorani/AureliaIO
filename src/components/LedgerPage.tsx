@@ -100,7 +100,7 @@ interface LedgerPageProps {
 }
 
 export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoaded }: LedgerPageProps) {
-  const { data: appData } = useAppData();
+  const { data: appData, loading: appDataLoading } = useAppData();
   const { user, profile } = useAuth();
   const productNames = useMemo(() => appData.products.map((p) => p.name), [appData.products]);
 
@@ -271,6 +271,14 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       setSyncing(false);
     }
   };
+
+  if (appDataLoading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <div className="w-8 h-8 border-2 border-gold border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-[1600px] mx-auto animate-fade-in pb-32">

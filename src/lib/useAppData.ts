@@ -1,93 +1,203 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { AppData, Option, AgeBucket, Product } from './types';
 import { INITIAL_DATA, DEFAULT_AGE_BUCKETS } from './initialData';
+import { supabase } from './supabase';
+import { useAuth } from '@/context/AuthContext';
 
 const STORAGE_KEY = 'aurelia_data';
+const SAVE_DEBOUNCE_MS = 1500;
 
 const generateId = () => crypto.randomUUID();
 
-export function useAppData() {
-  const [data, setData] = useState<AppData>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as AppData;
+function isNonEmptyAppData(value: unknown): value is AppData {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<AppData>;
+  return Array.isArray(candidate.products) || Array.isArray(candidate.ageBuckets);
+}
 
-        // Migration: ensure ageBuckets exist
-        if (!parsed.ageBuckets || parsed.ageBuckets.length === 0) {
-          parsed.ageBuckets = DEFAULT_AGE_BUCKETS.map((b) => ({ ...b }));
-        }
+// Runs every legacy migration against whichever source (Supabase or localStorage) the data came from.
+function migrateAppData(parsed: AppData): AppData {
+  // Migration: ensure ageBuckets exist
+  if (!parsed.ageBuckets || parsed.ageBuckets.length === 0) {
+    parsed.ageBuckets = DEFAULT_AGE_BUCKETS.map((b) => ({ ...b }));
+  }
 
-        // Migration: strip legacy mapsTo/pax from tickets
-        for (const p of parsed.products) {
-          for (const o of p.options) {
-            for (const c of o.channels) {
-              if (!c.tickets) c.tickets = [];
-              for (const t of c.tickets) {
-                // Remove legacy fields if they exist
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const legacy = t as any;
-                delete legacy.mapsTo;
-                delete legacy.pax;
-                // Ensure minAge/maxAge exist
-                if (t.minAge === undefined) t.minAge = 0;
-                if (t.maxAge === undefined) t.maxAge = 99;
-              }
-            }
-          }
-        }
-
-        // Migration: move bokunId from options to product
-        for (const p of parsed.products) {
+  // Migration: strip legacy mapsTo/pax from tickets
+  for (const p of parsed.products) {
+    for (const o of p.options) {
+      for (const c of o.channels) {
+        if (!c.tickets) c.tickets = [];
+        for (const t of c.tickets) {
+          // Remove legacy fields if they exist
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          if ((p as any).bokunId === undefined) {
-            // Find first option with a bokunId and move it up
-            let foundBokunId = '';
-            for (const o of p.options) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const optAny = o as any;
-              if (optAny.bokunId) {
-                foundBokunId = optAny.bokunId;
-                break;
-              }
-            }
-            p.bokunId = foundBokunId;
-          }
-          // Remove bokunId from all options
-          for (const o of p.options) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            delete (o as any).bokunId;
-          }
+          const legacy = t as any;
+          delete legacy.mapsTo;
+          delete legacy.pax;
+          // Ensure minAge/maxAge exist
+          if (t.minAge === undefined) t.minAge = 0;
+          if (t.maxAge === undefined) t.maxAge = 99;
         }
-
-        // Migration: update guide types from legacy Per Pax + ensure new fields
-        for (const p of parsed.products) {
-          for (const o of p.options) {
-            for (const g of o.guides) {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const gAny = g as any;
-              if (gAny.type === 'Per Pax') {
-                gAny.type = 'Fixed';
-                gAny.amount = 0;
-              }
-              if (!g.tiers) g.tiers = [];
-              if (!g.maxPerGuide) g.maxPerGuide = 10;
-              if (!g.splitPriceMode) g.splitPriceMode = 'Fixed';
-            }
-          }
-        }
-
-        return parsed;
       }
-      return INITIAL_DATA;
-    } catch {
-      return INITIAL_DATA;
     }
-  });
+  }
 
+  // Migration: move bokunId from options to product
+  for (const p of parsed.products) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((p as any).bokunId === undefined) {
+      // Find first option with a bokunId and move it up
+      let foundBokunId = '';
+      for (const o of p.options) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const optAny = o as any;
+        if (optAny.bokunId) {
+          foundBokunId = optAny.bokunId;
+          break;
+        }
+      }
+      p.bokunId = foundBokunId;
+    }
+    // Remove bokunId from all options
+    for (const o of p.options) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (o as any).bokunId;
+    }
+  }
+
+  // Migration: update guide types from legacy Per Pax + ensure new fields
+  for (const p of parsed.products) {
+    for (const o of p.options) {
+      for (const g of o.guides) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const gAny = g as any;
+        if (gAny.type === 'Per Pax') {
+          gAny.type = 'Fixed';
+          gAny.amount = 0;
+        }
+        if (!g.tiers) g.tiers = [];
+        if (!g.maxPerGuide) g.maxPerGuide = 10;
+        if (!g.splitPriceMode) g.splitPriceMode = 'Fixed';
+      }
+    }
+  }
+
+  return parsed;
+}
+
+function readLocalCache(): AppData | null {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return null;
+    const parsed = JSON.parse(saved) as AppData;
+    return isNonEmptyAppData(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function useAppData() {
+  const { user } = useAuth();
+  const [data, setData] = useState<AppData>(INITIAL_DATA);
+  const [loading, setLoading] = useState(true);
+
+  const initialLoadDoneRef = useRef(false);
+  const skipNextSaveRef = useRef(false);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load: Supabase profiles.app_data is authoritative; localStorage is the offline fallback / migration source.
   useEffect(() => {
+    if (!user) return;
+
+    let cancelled = false;
+    initialLoadDoneRef.current = false;
+    setLoading(true);
+
+    (async () => {
+      let finalData: AppData;
+      let migrateUpToSupabase = false;
+
+      try {
+        const { data: row, error } = await supabase
+          .from('profiles')
+          .select('app_data')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (isNonEmptyAppData(row?.app_data)) {
+          finalData = migrateAppData(row!.app_data as AppData);
+        } else {
+          const cached = readLocalCache();
+          if (cached) {
+            finalData = migrateAppData(cached);
+            migrateUpToSupabase = true;
+          } else {
+            finalData = INITIAL_DATA;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load app_data from Supabase, falling back to localStorage:', e);
+        const cached = readLocalCache();
+        finalData = cached ? migrateAppData(cached) : INITIAL_DATA;
+      }
+
+      if (cancelled) return;
+
+      skipNextSaveRef.current = true;
+      setData(finalData);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(finalData));
+
+      if (migrateUpToSupabase) {
+        try {
+          const { error } = await supabase
+            .from('profiles')
+            .update({ app_data: finalData })
+            .eq('id', user.id);
+          if (error) throw error;
+        } catch (e) {
+          console.error('Failed to migrate app_data to Supabase, will retry on next edit:', e);
+        }
+      }
+
+      initialLoadDoneRef.current = true;
+      if (!cancelled) setLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  // Save: mirror every change to localStorage immediately, and debounce writes up to Supabase.
+  useEffect(() => {
+    if (!initialLoadDoneRef.current) return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [data]);
+
+    if (!user) return;
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ app_data: data })
+          .eq('id', user.id);
+        if (error) throw error;
+      } catch (e) {
+        console.error('Failed to save app_data to Supabase, changes remain cached locally:', e);
+      }
+    }, SAVE_DEBOUNCE_MS);
+
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, [data, user]);
 
   const updateData = useCallback((updater: (d: AppData) => void) => {
     setData((prev) => {
@@ -284,7 +394,7 @@ export function useAppData() {
   }, [updateOption]);
 
   return {
-    data, updateData, addProduct, deleteProduct, updateProduct,
+    data, loading, updateData, addProduct, deleteProduct, updateProduct,
     addOption, deleteOption, updateOption,
     addChannel, deleteChannel,
     addTicket, deleteTicket,
