@@ -1,9 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, CheckCircle2, UserPlus, Users, X, Share2, Copy, Check } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, CheckCircle2, UserPlus, Users, X, Share2, Copy, Check, Pencil } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { logChange } from '@/lib/changeLog';
+
+const paxTotal = (b: any) =>
+  (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
 
 export default function TodayToursPage() {
   const { user, profile } = useAuth();
@@ -17,13 +20,18 @@ export default function TodayToursPage() {
   const [checkins, setCheckins] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
-  
+
   const [todayStrDate, setTodayStrDate] = useState(new Date().toISOString().split('T')[0]);
 
   // Modal states
   const [assignModal, setAssignModal] = useState<any | null>(null);
   const [checkinModal, setCheckinModal] = useState<any | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Inline name-override editing
+  const [editingNameId, setEditingNameId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState('');
+  const [savingNameId, setSavingNameId] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!user) return;
@@ -45,7 +53,7 @@ export default function TodayToursPage() {
     if (gsRes.data) setGsheetAssignments(gsRes.data);
     if (cRes.data) setCheckins(cRes.data);
     if (rRes.data) setOptionRates(rRes.data);
-    
+
     setLoading(false);
   };
 
@@ -74,9 +82,11 @@ export default function TodayToursPage() {
     bookings.forEach(b => s.add(`${b.travel_time}_${b.product_code}_${b.option_selected}`));
     return s.size;
   }, [bookings]);
-  
-  const totalPaxExp = bookings.reduce((sum, b) => sum + (Number(b.adult) || 0) + (Number(b.youth) || 0) + (Number(b.children) || 0), 0);
-  const totalPaxChecked = checkins.reduce((sum, c) => sum + (Number(c.pax_checked_in) || 0), 0);
+
+  const totalPaxExp = bookings.reduce((sum, b) => sum + paxTotal(b), 0);
+  const totalPaxChecked = checkins
+    .filter(c => c.status === 'checked_in')
+    .reduce((sum, c) => sum + (Number(c.pax_checked_in) || 0), 0);
   const totalGuides = new Set(assignments.map(a => a.guide_id)).size;
   const totalGuideCosts = assignments.reduce((sum, a) => sum + Number(a.calculated_pay || 0), 0);
 
@@ -98,6 +108,25 @@ export default function TodayToursPage() {
     return a.localeCompare(b);
   });
 
+  // Find (or lack of) an existing checkins row for a booking, scoped to this user + travel date.
+  const findCheckinRow = async (bookingRef: string) => {
+    if (!user) return null;
+    const { data } = await supabase
+      .from('checkins')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('booking_ref', bookingRef)
+      .eq('travel_date', todayStrDate)
+      .maybeSingle();
+    return data;
+  };
+
+  const getDisplayName = (b: any) => {
+    const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
+    const override = cRecord?.display_name_override;
+    return override && String(override).trim() ? override : b.customer_name;
+  };
+
   // Action handlers
   const handleRemoveAssignment = async (id: string) => {
     if (!confirm('Remove this assigned guide?')) return;
@@ -105,29 +134,42 @@ export default function TodayToursPage() {
     await supabase.from('guide_assignments').delete().eq('id', id);
   };
 
-  const handleConfirmCheckin = async (pax: number, checkedInBy: string) => {
+  const handleConfirmCheckin = async (checkedInBy: string) => {
     if (!user || !checkinModal) return;
     const b = checkinModal;
-    
-    // Optimistic bookings UI update
-    setBookings(prev => prev.map(x => x.id === b.id ? { ...x, status: 'DONE' } : x));
-    
-    // Create checkin
-    const cPayload = {
-      user_id: user.id,
-      booking_ref: b.booking_ref,
-      travel_date: todayStrDate,
+
+    setCheckinModal(null);
+
+    // Idempotency guard: a checked-in row for this booking must never be duplicated or re-triggered.
+    const existing = await findCheckinRow(b.booking_ref);
+    if (existing?.status === 'checked_in') {
+      loadData();
+      return;
+    }
+
+    const checkinFields = {
       checked_in_at: new Date().toISOString(),
       checked_in_by: checkedInBy,
-      pax_checked_in: pax,
+      pax_checked_in: paxTotal(b),
       status: 'checked_in',
-      notes: ''
     };
-    
-    setCheckinModal(null);
-    await supabase.from('checkins').insert(cPayload);
+
+    if (existing) {
+      await supabase.from('checkins').update(checkinFields).eq('id', existing.id);
+    } else {
+      await supabase.from('checkins').insert({
+        user_id: user.id,
+        booking_ref: b.booking_ref,
+        travel_date: todayStrDate,
+        ...checkinFields,
+      });
+    }
+
+    // Optimistic bookings UI update
+    setBookings(prev => prev.map(x => x.id === b.id ? { ...x, status: 'DONE' } : x));
+
     await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
-    
+
     // Log Booking Status Change
     await logChange(supabase, user.id, {
       tableName: 'bookings',
@@ -138,6 +180,31 @@ export default function TodayToursPage() {
       description: `${b.booking_ref} status changed to DONE (Checked In)`
     });
 
+    loadData();
+  };
+
+  // Saves a display-only name correction to checkins.display_name_override.
+  // Never touches bookings — the master sheet sync is untouched by this.
+  const handleSaveNameOverride = async (b: any, newName: string) => {
+    if (!user) return;
+    setSavingNameId(b.id);
+    const trimmed = newName.trim();
+
+    const existing = await findCheckinRow(b.booking_ref);
+
+    if (existing) {
+      await supabase.from('checkins').update({ display_name_override: trimmed || null }).eq('id', existing.id);
+    } else {
+      await supabase.from('checkins').insert({
+        user_id: user.id,
+        booking_ref: b.booking_ref,
+        travel_date: todayStrDate,
+        display_name_override: trimmed || null,
+      });
+    }
+
+    setEditingNameId(null);
+    setSavingNameId(null);
     loadData();
   };
 
@@ -162,7 +229,7 @@ export default function TodayToursPage() {
   return (
     <div className="relative">
       <div className="p-4 md:p-8 pb-32 max-w-5xl mx-auto space-y-8 animate-fade-in">
-          
+
           {/* HEADER */}
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-border/50">
             <div>
@@ -177,7 +244,7 @@ export default function TodayToursPage() {
                 <Clock size={20} />
                 <span>{timeStr}</span>
               </div>
-              <button 
+              <button
                 onClick={copyCheckinLink}
                 className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold"
               >
@@ -287,8 +354,8 @@ export default function TodayToursPage() {
                     <div key={prod} className="pl-6 md:pl-10 space-y-6">
                       {Object.keys(grouped[time][prod]).map(opt => {
                         const rowBookings = grouped[time][prod][opt];
-                        const groupExpectedPax = rowBookings.reduce((sum, b) => sum + (Number(b.adult)||0) + (Number(b.youth)||0) + (Number(b.children)||0), 0);
-                        
+                        const groupExpectedPax = rowBookings.reduce((sum, b) => sum + paxTotal(b), 0);
+
                         // Filter assignments for THIS tour group
                         const grpAssigns = assignments.filter(a => a.travel_time === time && (a.product_code === prod || a.product_name === prod) && a.option_name === opt);
 
@@ -302,10 +369,10 @@ export default function TodayToursPage() {
                                 </h3>
                                 <p className="text-xs text-gray-400 mt-1 font-medium">{rowBookings.length} bookings &middot; {groupExpectedPax} expected pax</p>
                               </div>
-                              
+
                               {/* Guide Assignment Section header */}
                               <div className="flex flex-col items-end gap-2">
-                                <button 
+                                <button
                                   onClick={() => setAssignModal({ time, prod, opt, totalPax: groupExpectedPax })}
                                   className="aurelia-gold-btn px-4 py-1.5 text-xs font-bold flex items-center gap-2"
                                 >
@@ -319,15 +386,15 @@ export default function TodayToursPage() {
                               <div className="bg-[#13131a] border-b border-white/5 px-6 py-3 divide-y divide-white/5">
                                 {grpAssigns.map(a => {
                                     const guideInfo = guides.find(g => g.id === a.guide_id);
-                                    
-                                    const exactMatch = optionRates.find(r => 
-                                      r.guide_id === a.guide_id && 
-                                      r.product_code === (a.product_code || a.product_name) && 
+
+                                    const exactMatch = optionRates.find(r =>
+                                      r.guide_id === a.guide_id &&
+                                      r.product_code === (a.product_code || a.product_name) &&
                                       r.option_name?.toLowerCase() === a.option_name?.toLowerCase()
                                     );
-                                    const productMatch = exactMatch ? null : optionRates.find(r => 
-                                      r.guide_id === a.guide_id && 
-                                      r.product_code === (a.product_code || a.product_name) && 
+                                    const productMatch = exactMatch ? null : optionRates.find(r =>
+                                      r.guide_id === a.guide_id &&
+                                      r.product_code === (a.product_code || a.product_name) &&
                                       (!r.option_name || r.option_name === '')
                                     );
 
@@ -359,52 +426,101 @@ export default function TodayToursPage() {
                             )}
 
                             {/* Bookings & Checkin List */}
-                            <div className="divide-y divide-white/5 pb-2">
+                            <div className="p-3 space-y-3">
                               {rowBookings.map(b => {
-                                const isDone = b.status?.toUpperCase() === 'DONE';
                                 const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
-                                const isCheckedIn = !!cRecord || isDone;
+                                const isCheckedIn = cRecord?.status === 'checked_in' || b.status?.toUpperCase() === 'DONE';
+                                const displayName = getDisplayName(b);
+                                const bTotalPax = paxTotal(b);
+                                const isEditingName = editingNameId === b.id;
+                                const isSavingName = savingNameId === b.id;
 
                                 return (
-                                  <div key={b.id} className={`px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4 transition-colors ${isCheckedIn ? 'bg-green-500/[0.03]' : 'hover:bg-white/[0.02]'}`}>
-                                    <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-4 items-center">
-                                      <div className="flex items-center gap-3">
+                                  <div
+                                    key={b.id}
+                                    className={`rounded-2xl border p-4 transition-colors ${isCheckedIn ? 'bg-green-500/[0.04] border-green-500/20' : 'bg-white/[0.02] border-white/5 hover:border-white/10'}`}
+                                  >
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                      <div className="flex items-center gap-3 min-w-0">
                                         {isCheckedIn ? (
-                                          <CheckCircle2 size={18} className="text-green-500 shrink-0" />
+                                          <div className="bg-green-500/20 p-1.5 rounded-full shrink-0">
+                                            <CheckCircle2 className="text-green-500" size={16} />
+                                          </div>
                                         ) : (
-                                          <div className="w-4 h-4 rounded-sm border-2 border-gray-600 shrink-0" />
+                                          <div className="w-7 h-7 rounded-full border-2 border-gray-600 shrink-0" />
                                         )}
-                                        <div>
-                                          <p className="font-bold text-sm text-white truncate">{b.customer_name}</p>
-                                          <p className="font-mono text-[10px] text-gray-500">{b.booking_ref}</p>
+                                        <div className="min-w-0">
+                                          {isEditingName ? (
+                                            <div className="flex items-center gap-1.5">
+                                              <input
+                                                autoFocus
+                                                value={nameDraft}
+                                                onChange={(e) => setNameDraft(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                  if (e.key === 'Enter') handleSaveNameOverride(b, nameDraft);
+                                                  if (e.key === 'Escape') setEditingNameId(null);
+                                                }}
+                                                disabled={isSavingName}
+                                                className="aurelia-input py-1 h-8 w-40 text-sm font-bold"
+                                              />
+                                              <button
+                                                onClick={() => handleSaveNameOverride(b, nameDraft)}
+                                                disabled={isSavingName}
+                                                className="text-green-400 hover:text-green-300 p-1 disabled:opacity-50"
+                                                title="Save name"
+                                              >
+                                                <Check size={14} />
+                                              </button>
+                                              <button
+                                                onClick={() => setEditingNameId(null)}
+                                                disabled={isSavingName}
+                                                className="text-gray-500 hover:text-white p-1 disabled:opacity-50"
+                                                title="Cancel"
+                                              >
+                                                <X size={14} />
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <div className="flex items-center gap-1.5 group/name">
+                                              <p className="font-bold text-sm text-white truncate">{displayName}</p>
+                                              <button
+                                                onClick={() => { setEditingNameId(b.id); setNameDraft(displayName); }}
+                                                className="opacity-100 md:opacity-0 md:group-hover/name:opacity-100 text-gray-500 hover:text-gold transition-opacity p-0.5 shrink-0"
+                                                title="Edit displayed name"
+                                              >
+                                                <Pencil size={11} />
+                                              </button>
+                                            </div>
+                                          )}
+                                          <div className="flex items-center gap-2 mt-0.5">
+                                            <span className="text-[10px] font-black bg-white/10 px-1.5 py-0.5 rounded text-gold uppercase">{b.channel || 'OTA'}</span>
+                                            <span className="font-mono text-[10px] text-gray-500">{b.booking_ref}</span>
+                                          </div>
                                         </div>
                                       </div>
-                                      
-                                      <div className="text-xs text-muted-foreground w-fit px-2 py-1 bg-black/20 rounded border border-white/5">
-                                        <span className="font-bold text-white">A:{b.adult || 0}</span>
-                                        {(b.youth > 0 || b.children > 0) && ' · '}
-                                        {b.youth > 0 && `Y:${b.youth} `}
-                                        {b.children > 0 && `C:${b.children}`}
-                                      </div>
-                                      
-                                      <div>
-                                        {isCheckedIn && cRecord && (
-                                          <span className="text-[10px] text-green-400/80 font-medium bg-green-500/10 px-2 py-1 rounded">
-                                            Checked in at {new Date(cRecord.checked_in_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                          </span>
+
+                                      <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap sm:shrink-0">
+                                        <div className="text-xs text-gray-300 font-bold w-fit px-2.5 py-1.5 bg-black/20 rounded-lg border border-white/5 flex items-center gap-1.5">
+                                          <Users size={12} className="text-gray-500 shrink-0" />
+                                          <span className="whitespace-nowrap">A:{b.pax_adult || 0} Y:{b.pax_youth || 0} C:{b.pax_child || 0} I:{b.pax_infant || 0}</span>
+                                          <span className="text-gold whitespace-nowrap">&middot; {bTotalPax} pax</span>
+                                        </div>
+
+                                        {isCheckedIn ? (
+                                          <div className="text-center px-3 py-1.5 bg-white/[0.02] rounded-xl border border-white/5 shrink-0">
+                                            <span className="text-[9px] font-black uppercase tracking-widest text-gray-500 whitespace-nowrap">
+                                              Checked in{cRecord?.checked_in_at ? ` ${new Date(cRecord.checked_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            onClick={() => setCheckinModal({ ...b, displayName })}
+                                            className="bg-gold text-black px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-widest shadow-lg shadow-gold/20 active:scale-95 transition-all shrink-0"
+                                          >
+                                            Check In
+                                          </button>
                                         )}
                                       </div>
-                                    </div>
-
-                                    <div className="flex justify-end min-w-[120px]">
-                                      {!isCheckedIn && (
-                                        <button 
-                                          onClick={() => setCheckinModal({ ...b, totalPax: (Number(b.adult)||0)+(Number(b.youth)||0)+(Number(b.children)||0) })}
-                                          className="aurelia-ghost-btn border border-[#f5a623]/30 text-[#f5a623] hover:bg-[#f5a623]/10 px-4 py-1.5 text-xs font-bold rounded"
-                                        >
-                                          Check In
-                                        </button>
-                                      )}
                                     </div>
                                   </div>
                                 );
@@ -424,7 +540,7 @@ export default function TodayToursPage() {
         {/* --- ASSIGNMENT MODAL --- */}
         {assignModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <AssignGuideModal 
+            <AssignGuideModal
               modalData={assignModal}
               guides={guides}
               optionRates={optionRates}
@@ -437,11 +553,11 @@ export default function TodayToursPage() {
         {/* --- CHECKIN MODAL --- */}
         {checkinModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <CheckinModal 
+            <CheckinModal
               modalData={checkinModal}
               guides={guides}
               onClose={() => setCheckinModal(null)}
-              onSave={(pax, by) => handleConfirmCheckin(pax, by)}
+              onSave={(by: string) => handleConfirmCheckin(by)}
             />
           </div>
         )}
@@ -455,10 +571,10 @@ function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: a
   const [guideId, setGuideId] = useState('');
   const [pax, setPax] = useState(modalData.totalPax || 0);
   const [overridePay, setOverridePay] = useState<string>('');
-  
+
   const calculateResult = useMemo(() => {
     if (!guideId) return { amount: 0, source: 'none' };
-    
+
     if (overridePay && !isNaN(parseFloat(overridePay))) {
       return { amount: parseFloat(overridePay), source: 'manual' };
     }
@@ -467,7 +583,7 @@ function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: a
     if (!guide) return { amount: 0, source: 'none' };
 
     // Level 2: exact product + option match
-    const exactMatch = optionRates.find((r: any) => 
+    const exactMatch = optionRates.find((r: any) =>
       r.guide_id === guideId &&
       r.product_code === modalData.prod &&
       r.option_name?.toLowerCase() === modalData.opt?.toLowerCase()
@@ -488,7 +604,7 @@ function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: a
 
   const handleSave = () => {
     if (!guideId) return alert('Select a guide');
-    
+
     onSave({
       guide_id: guideId,
       travel_date: new Date().toISOString().split('T')[0],
@@ -507,7 +623,7 @@ function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: a
         <h2 className="font-bold text-lg text-white">Assign Guide</h2>
         <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={20} /></button>
       </div>
-      
+
       <div className="p-6 space-y-6">
         <div className="bg-white/5 p-3 rounded-lg border border-white/5 text-sm">
           <p className="text-gray-400">Tour Group</p>
@@ -530,12 +646,12 @@ function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: a
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Override €</label>
-            <input 
-              type="number" 
+            <input
+              type="number"
               placeholder="Manual €"
-              value={overridePay} 
-              onChange={e => setOverridePay(e.target.value)} 
-              className="aurelia-input text-gold font-bold" 
+              value={overridePay}
+              onChange={e => setOverridePay(e.target.value)}
+              className="aurelia-input text-gold font-bold"
             />
           </div>
         </div>
@@ -547,9 +663,9 @@ function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: a
               <div className="flex items-center gap-2 mt-1">
                 <p className="text-2xl font-black text-white">€{calculateResult.amount}</p>
                 <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
-                  calculateResult.source === 'manual' ? 'bg-gold/20 text-gold' : 
-                  calculateResult.source === 'option' ? 'bg-purple-500/20 text-purple-400' : 
-                  calculateResult.source === 'product' ? 'bg-blue-500/20 text-blue-400' : 
+                  calculateResult.source === 'manual' ? 'bg-gold/20 text-gold' :
+                  calculateResult.source === 'option' ? 'bg-purple-500/20 text-purple-400' :
+                  calculateResult.source === 'product' ? 'bg-blue-500/20 text-blue-400' :
                   'bg-gray-500/20 text-gray-400'
                 }`}>
                   {calculateResult.source} rate
@@ -569,26 +685,27 @@ function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: a
 }
 
 function CheckinModal({ modalData, guides, onClose, onSave }: any) {
-  const [pax, setPax] = useState(modalData.totalPax || 0);
   const [by, setBy] = useState('');
+  const totalPax = paxTotal(modalData);
 
   return (
-    <div className="bg-[#0f0f17] border border-white/10 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden flex flex-col pointer-events-auto">
+    <div className="bg-[#0f0f12] border border-white/10 rounded-[2.5rem] w-full max-w-sm shadow-2xl overflow-hidden flex flex-col pointer-events-auto">
       <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-[#0a0a0f]">
-        <h2 className="font-bold text-lg text-white">Check In Booking</h2>
+        <h2 className="font-black text-lg text-white">Confirm Check-in</h2>
         <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={20} /></button>
       </div>
-      
-      <div className="p-6 space-y-6">
-        <div className="text-center">
-          <h3 className="text-xl font-bold text-white mb-1">{modalData.customer_name}</h3>
-          <p className="font-mono text-xs text-[#f5a623]">{modalData.booking_ref}</p>
-        </div>
 
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Pax Checking In</label>
-          <input type="number" min="0" value={pax} onChange={e => setPax(Number(e.target.value))} className="aurelia-input text-lg font-bold text-center" />
-          <p className="text-xs text-gray-500 mt-1 text-center">Expected: {modalData.totalPax}</p>
+      <div className="p-6 space-y-6">
+        <div className="text-center space-y-2">
+          <h3 className="text-xl font-black text-white">{modalData.displayName || modalData.customer_name}</h3>
+          <p className="font-mono text-xs text-gold">{modalData.booking_ref}</p>
+          <div className="flex flex-col items-center gap-1 pt-2">
+            <div className="flex items-center gap-2 text-white font-bold text-sm">
+              <Users size={16} className="text-gray-500" />
+              <span>A:{modalData.pax_adult || 0} Y:{modalData.pax_youth || 0} C:{modalData.pax_child || 0} I:{modalData.pax_infant || 0}</span>
+            </div>
+            <p className="text-[10px] font-black uppercase text-gold">{totalPax} total pax</p>
+          </div>
         </div>
 
         <div>
@@ -603,7 +720,10 @@ function CheckinModal({ modalData, guides, onClose, onSave }: any) {
 
       <div className="p-6 border-t border-white/5 bg-[#0a0a0f] flex justify-end gap-3">
         <button onClick={onClose} className="aurelia-ghost-btn px-6 py-2 border border-white/20 text-gray-300">Cancel</button>
-        <button onClick={() => onSave(pax, by || 'Unknown')} className="aurelia-gold-btn px-6 py-2 font-bold flex items-center gap-2">
+        <button
+          onClick={() => onSave(by || 'Unknown')}
+          className="bg-gold text-black px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-gold/20 flex items-center gap-2 active:scale-95 transition-all"
+        >
           <CheckCircle2 size={16} /> Confirm
         </button>
       </div>
