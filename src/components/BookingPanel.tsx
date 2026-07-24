@@ -63,8 +63,8 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
       {/* Backdrop */}
       <div className="fixed inset-0 bg-black/40 z-[200]" onClick={onClose} />
       {/* Panel */}
-      <div className="fixed right-0 top-0 h-full w-[560px] bg-card border-l border-border z-[201] overflow-y-auto animate-fade-in">
-        <div className="p-8">
+      <div className="fixed right-0 top-0 h-full w-full md:w-[560px] bg-card border-l border-border z-[201] overflow-y-auto animate-fade-in">
+        <div className="p-4 md:p-8">
           {/* Header */}
           <div className="flex justify-between items-center mb-8">
             <h2 className="text-lg font-bold text-foreground">

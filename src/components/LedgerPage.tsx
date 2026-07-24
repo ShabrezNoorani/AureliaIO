@@ -281,14 +281,14 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   }
 
   return (
-    <div className="p-8 max-w-[1600px] mx-auto animate-fade-in pb-32">
+    <div className="p-4 md:p-8 max-w-[1600px] mx-auto animate-fade-in pb-32">
       {/* Top bar */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Financial Ledger</h1>
           <p className="text-sm text-muted-foreground mt-1">{bookings.length} total bookings</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button onClick={() => { setEditBooking(null); setPanelOpen(true); }} className="aurelia-gold-btn flex items-center gap-2">
             <Plus size={14} /> Add Booking
           </button>
@@ -373,7 +373,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="aurelia-card p-4">
           <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1">Total Revenue</div>
           <div className="text-xl font-bold text-foreground tabular-nums">{fmtEuro(summary.rev)}</div>

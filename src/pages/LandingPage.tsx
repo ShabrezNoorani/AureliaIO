@@ -11,16 +11,16 @@ export default function LandingPage() {
           <Link to="/">
             <Logo size="md" />
           </Link>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <Link
               to="/login"
-              className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white transition-colors rounded-lg hover:bg-white/5"
+              className="aurelia-ghost-btn text-sm px-4 py-2 sm:px-5 sm:py-2.5 border border-white/10 hover:border-white/20"
             >
-              Login
+              Log in
             </Link>
             <Link
               to="/signup"
-              className="aurelia-gold-btn text-sm px-5 py-2.5 inline-flex items-center gap-2"
+              className="aurelia-gold-btn text-sm px-4 py-2 sm:px-5 sm:py-2.5 inline-flex items-center gap-2"
             >
               Start Free Trial
             </Link>
@@ -65,6 +65,10 @@ export default function LandingPage() {
               See a live demo <ChevronDown size={18} />
             </a>
           </div>
+
+          <p className="text-sm text-gray-500 mt-8">
+            Guide? <Link to="/login" className="text-[#f5a623] hover:underline font-medium">Use the link your coordinator sent you.</Link>
+          </p>
         </div>
       </section>
 
@@ -128,23 +132,31 @@ export default function LandingPage() {
             </p>
           </div>
 
-          {/* CARD 5 - COMING SOON */}
+          {/* CARD 5 - LIVE */}
+          <div className="relative rounded-2xl bg-[#0d0d14] border border-[#f5a623] p-8 transition-transform hover:-translate-y-1 shadow-[0_0_20px_rgba(245,166,35,0.05)]">
+            <div className="text-4xl mb-6">👥</div>
+            <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Guide Management</h3>
+            <p className="text-[15px] text-gray-400 leading-relaxed font-medium">
+              Import your whole team from a spreadsheet, set per-tour pay rates, and send each guide a one-time link to activate their own secure account.
+            </p>
+          </div>
+
+          {/* CARD 6 - LIVE */}
+          <div className="relative rounded-2xl bg-[#0d0d14] border border-[#f5a623] p-8 transition-transform hover:-translate-y-1 shadow-[0_0_20px_rgba(245,166,35,0.05)]">
+            <div className="text-4xl mb-6">✅</div>
+            <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Same-Day Check-in</h3>
+            <p className="text-[15px] text-gray-400 leading-relaxed font-medium">
+              Guides check in guests from their phone on the day of the tour — mark arrivals, count pax, note no-shows, synced straight to the ledger.
+            </p>
+          </div>
+
+          {/* CARD 7 - COMING SOON */}
           <div className="relative rounded-2xl bg-[#0a0a0f] border border-white/10 p-8 opacity-70 hover:opacity-100 transition-all duration-300">
             <div className="absolute top-6 right-6 bg-white/5 text-gray-400 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border border-white/10">Coming Soon</div>
             <div className="text-4xl mb-6 grayscale">🗺️</div>
             <h3 className="text-xl font-bold text-gray-300 mb-3 tracking-tight">Marketplace Coverage</h3>
             <p className="text-[15px] text-gray-500 leading-relaxed font-medium">
               See which products are live on which OTAs. Find gaps. Never miss a revenue opportunity.
-            </p>
-          </div>
-
-          {/* CARD 6 - COMING SOON */}
-          <div className="relative rounded-2xl bg-[#0a0a0f] border border-white/10 p-8 opacity-70 hover:opacity-100 transition-all duration-300">
-            <div className="absolute top-6 right-6 bg-white/5 text-gray-400 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border border-white/10">Coming Soon</div>
-            <div className="text-4xl mb-6 grayscale">✅</div>
-            <h3 className="text-xl font-bold text-gray-300 mb-3 tracking-tight">Check-in App</h3>
-            <p className="text-[15px] text-gray-500 leading-relaxed font-medium">
-              Mobile check-in for guides. Mark arrivals, count pax, note no-shows. Synced to ledger.
             </p>
           </div>
 
@@ -205,8 +217,8 @@ export default function LandingPage() {
               { time: 'Q1 2025', title: 'Pricing Simulator', desc: 'Multi-OTA pricing with age-based group simulation', status: 'done' },
               { time: 'Q2 2025', title: 'Financial Ledger + Google Sheets Sync', desc: 'Complete booking tracking with automatic import', status: 'done' },
               { time: 'Q3 2025', title: 'Executive Dashboard + Analytics', desc: 'Board-ready dashboards with travel date and booking date analysis', status: 'done' },
-              { time: 'Q4 2025', title: 'Marketplace Coverage Matrix', desc: 'Cross-OTA product visibility tracker', status: 'progress' },
-              { time: 'Q1 2026', title: 'Check-in Mobile App', desc: 'Guide-facing mobile check-in tool', status: 'upcoming' },
+              { time: 'Q4 2025', title: 'Guide Management + Same-Day Check-in', desc: 'CSV guide import, self-serve account activation, and mobile check-in synced to the ledger', status: 'done' },
+              { time: 'Q1 2026', title: 'Marketplace Coverage Matrix', desc: 'Cross-OTA product visibility tracker', status: 'progress' },
               { time: 'Q2 2026', title: 'AI Pricing Intelligence', desc: 'Automated pricing recommendations based on your historical data', status: 'upcoming' },
             ].map((item, i) => (
               <div key={i} className={`relative mb-12 ${i % 2 === 0 ? 'md:text-right md:pr-12' : 'md:text-left md:col-start-3 md:pl-12'} md:mb-16`}>
@@ -319,7 +331,7 @@ export default function LandingPage() {
             </p>
           </div>
           
-          <div className="flex items-center gap-6 text-sm font-bold text-gray-400">
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-bold text-gray-400">
             <a href="#features" className="hover:text-white transition-colors">Features</a>
             <Link to="/app" className="hover:text-white transition-colors">Dashboard</Link>
             <Link to="/blog" className="hover:text-white transition-colors">Blog</Link>

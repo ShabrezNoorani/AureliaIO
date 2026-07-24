@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Menu } from 'lucide-react';
 import AureliaSidebar from '@/components/AureliaSidebar';
 import Dashboard from '@/components/Dashboard';
 import ProductsPage from '@/components/ProductsPage';
@@ -46,7 +47,8 @@ const AppLayout = () => {
     updateAgeBuckets,
   } = useAppData();
 
-  const [view, setView] = useState<View>('executive'); 
+  const [view, setView] = useState<View>('executive');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const path = window.location.pathname;
@@ -173,15 +175,26 @@ const AppLayout = () => {
   }
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground antialiased">
+    <div className="flex min-h-screen bg-background text-foreground antialiased overflow-x-hidden">
+      <button
+        onClick={() => setMobileMenuOpen(true)}
+        className="md:hidden fixed top-4 left-4 z-30 p-2.5 rounded-lg border shadow-lg"
+        style={{ backgroundColor: 'hsl(var(--theme-sidebar))', borderColor: 'hsl(var(--theme-border))', color: 'hsl(var(--theme-text))' }}
+        aria-label="Open menu"
+      >
+        <Menu size={20} />
+      </button>
+
       <AureliaSidebar
         activeView={view}
         companyName={data.companyName}
         onNavigate={setView}
         onNewProduct={handleNewProduct}
+        mobileOpen={mobileMenuOpen}
+        onCloseMobile={() => setMobileMenuOpen(false)}
       />
 
-      <main className="flex-1 ml-[240px]">
+      <main className="flex-1 min-w-0 ml-0 md:ml-[240px]">
         {view === 'simulator' && (
           <Dashboard
             data={data}

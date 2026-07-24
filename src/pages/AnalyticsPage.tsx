@@ -26,8 +26,8 @@ class AnalyticsErrorBoundary extends Component<{children: ReactNode, resetError:
   render() {
     if (this.state.hasError) {
       return (
-        <div className="p-8 pb-32 max-w-[1600px] mx-auto text-white animate-fade-in">
-          <div className="flex items-center gap-3 mb-8">
+        <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto text-white animate-fade-in">
+          <div className="flex flex-wrap items-center gap-3 mb-8">
             <button onClick={() => this.props.navigate('/app')} className="aurelia-ghost-btn p-2 mr-2">
               <ArrowLeft size={20} />
             </button>
@@ -411,8 +411,8 @@ function AnalyticsPage() {
   const fmtP = (v: number) => `${((v||0)*100).toFixed(1)}%`;
 
   if (loading) return (
-    <div className="p-8 pb-32 max-w-[1600px] mx-auto text-white">
-      <div className="flex items-center justify-between mb-8">
+    <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto text-white">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
         <h1 className="text-2xl font-bold flex items-center gap-2 text-muted-foreground"><Filter size={24} /> Analytics Explorer</h1>
         <button onClick={() => navigate('/app')} className="aurelia-ghost-btn px-4 py-2 flex items-center gap-2"><ArrowLeft size={16} /> Back to Dashboard</button>
       </div>
@@ -426,8 +426,8 @@ function AnalyticsPage() {
   // EMPTY STATE //
   if (!bookings || bookings.length === 0) {
     return (
-      <div className="p-8 pb-32 max-w-[1600px] mx-auto text-white animate-fade-in">
-        <div className="flex items-center justify-between mb-8">
+      <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto text-white animate-fade-in">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
           <h1 className="text-2xl font-bold flex items-center gap-2"><Filter className="text-gold" size={24} /> Analytics Explorer</h1>
           <button onClick={() => navigate('/app')} className="aurelia-ghost-btn px-4 py-2 flex items-center gap-2"><ArrowLeft size={16} /> Back to Dashboard</button>
         </div>
@@ -449,8 +449,8 @@ function AnalyticsPage() {
 
   // CONTENT STATE //
   return (
-    <div className="p-8 pb-32 max-w-[1600px] mx-auto animate-fade-in text-white">
-      <div className="flex items-center justify-between mb-8">
+    <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto animate-fade-in text-white">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/app')} className="aurelia-ghost-btn p-2 mr-2">
              <ArrowLeft size={20} />
@@ -496,7 +496,7 @@ function AnalyticsPage() {
       </div>
 
       {/* ROW 1: KPI STRIP */}
-      <div className="grid grid-cols-5 gap-3 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-6">
         <div className="aurelia-card p-4">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-1">Total Bookings</div>
           <div className="text-2xl font-black tabular-nums">{kpi.totBk}</div>

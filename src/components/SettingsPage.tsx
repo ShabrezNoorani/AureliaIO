@@ -296,14 +296,14 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-8 pb-48 max-w-6xl mx-auto animate-fade-in text-white space-y-12">
-      <div className="flex justify-between items-end border-b border-white/5 pb-8">
+    <div className="p-4 md:p-8 pb-48 max-w-6xl mx-auto animate-fade-in text-white space-y-12">
+      <div className="flex flex-wrap justify-between items-end gap-6 border-b border-white/5 pb-8">
         <div>
-          <h1 className="text-5xl font-black tracking-tighter">Settings</h1>
+          <h1 className="text-3xl sm:text-5xl font-black tracking-tighter">Settings</h1>
           <p className="text-gray-400 mt-2 text-lg">Platform architecture and operational controls.</p>
         </div>
         <div className="flex gap-4">
-          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
+          <div className="flex flex-wrap bg-white/5 p-1 rounded-xl border border-white/10">
             {Object.keys(THEMES).filter(t => t !== 'ocean').map((t) => (
               <button 
                 key={t}
@@ -547,8 +547,8 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
           
           {/* GUIDE CHECK-IN */}
-          <div className="aurelia-card p-8 border-t-[4px] border-t-green-500 space-y-6">
-            <div className="flex items-center justify-between">
+          <div className="aurelia-card p-4 sm:p-8 border-t-[4px] border-t-green-500 space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center text-green-400">
                   <Share2 size={20} />

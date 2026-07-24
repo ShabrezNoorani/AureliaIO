@@ -1,9 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { AuthProvider } from "@/context/AuthContext";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import FinancialCanvas from "@/components/ParticleCanvas";
 import LandingPage from "./pages/LandingPage";
@@ -29,6 +29,20 @@ import { useEffect } from "react";
 
 const queryClient = new QueryClient();
 
+// Logged-out visitors see the marketing landing page at "/"; logged-in users are redirected to the app.
+const RootRoute = () => {
+  const { session, loading } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (session && !loading) {
+      navigate('/app', { replace: true });
+    }
+  }, [session, loading, navigate]);
+
+  return <LandingPage />;
+};
+
 const AppContent = () => {
   useEffect(() => {
     setupGuideTables();
@@ -40,7 +54,7 @@ const AppContent = () => {
       <AuthProvider>
         <Routes>
           {/* Public routes */}
-          <Route path="/" element={<LandingPage />} />
+          <Route path="/" element={<RootRoute />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/pricing" element={<PricingPage />} />

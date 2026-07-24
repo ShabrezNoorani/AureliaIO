@@ -452,15 +452,15 @@ export default function GuidesPage() {
   };
 
   return (
-    <div style={{ padding: '32px' }} className="animate-fade-in">
-        <div className="p-8 max-w-6xl mx-auto space-y-8 animate-fade-in">
-          
-          <div className="flex items-center justify-between border-b border-white/5 pb-6">
+    <div className="animate-fade-in md:p-8">
+        <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-8 animate-fade-in">
+
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/5 pb-6">
             <div>
               <h1 className="text-3xl font-extrabold tracking-tight">Guides</h1>
               <p className="text-gray-400 text-sm mt-1">Manage your team and payment rates</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <input 
                 type="file" 
                 id="csv-file-input" 
@@ -510,8 +510,8 @@ export default function GuidesPage() {
               </div>
             </div>
           ) : (
-            <div className="aurelia-card border border-white/5 overflow-hidden">
-              <table className="w-full text-left text-sm">
+            <div className="aurelia-card border border-white/5 overflow-x-auto">
+              <table className="w-full text-left text-sm min-w-[900px]">
                 <thead className="bg-white/5 text-xs text-gray-400 uppercase tracking-widest font-bold">
                   <tr>
                     <th className="px-6 py-4">Guide #</th>
@@ -590,7 +590,7 @@ export default function GuidesPage() {
                         )}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center justify-end gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                           <button onClick={() => openPanel(g)} className="p-2 hover:bg-white/5 rounded text-gray-400 hover:text-white transition-colors">
                             <PenSquare size={16} />
                           </button>
@@ -611,7 +611,7 @@ export default function GuidesPage() {
         {panelOpen && (
           <>
             <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]" onClick={() => setPanelOpen(false)} />
-            <div className="fixed inset-y-0 right-0 w-[500px] bg-[#0f0f12] border-l border-white/10 z-[101] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+            <div className="fixed inset-y-0 right-0 w-full md:w-[500px] bg-[#0f0f12] border-l border-white/10 z-[101] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
               <div className="p-6 border-b border-white/5 flex items-center justify-between bg-[#0a0a0d]">
                 <div>
                   <h2 className="text-xl font-extrabold text-white">{editingGuide ? 'Edit Guide' : 'Add Guide'}</h2>

@@ -39,8 +39,8 @@ export default function ProductsPage({
   };
 
   return (
-    <div className="p-8 max-w-5xl mx-auto animate-fade-in">
-      <div className="flex justify-between items-center mb-10">
+    <div className="p-4 md:p-8 max-w-5xl mx-auto animate-fade-in">
+      <div className="flex flex-wrap justify-between items-center gap-4 mb-10">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Products</h1>
           <p className="text-sm text-muted-foreground mt-1">
@@ -79,7 +79,7 @@ export default function ProductsPage({
                 e.stopPropagation();
                 if (confirm(`Delete "${product.name}"?`)) onDeleteProduct(product.id);
               }}
-              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-profit-negative transition-all"
+              className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-muted-foreground hover:text-profit-negative transition-all"
             >
               <Trash2 size={14} />
             </button>
@@ -101,10 +101,10 @@ export default function ProductsPage({
             <div className="ml-7 space-y-3">
               {product.options.map((opt) => (
                 <div key={opt.id}>
-                  <div className="aurelia-card p-4 flex justify-between items-center group hover:border-border/80 transition-all">
+                  <div className="aurelia-card p-4 flex flex-wrap justify-between items-center gap-3 group hover:border-border/80 transition-all">
                     <div>
                       <span className="font-semibold text-sm text-foreground">{opt.name}</span>
-                      <div className="flex items-center space-x-1.5 mt-1.5">
+                      <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
                         {opt.channels.map((ch) => (
                           <span
                             key={ch.id}
@@ -145,7 +145,7 @@ export default function ProductsPage({
                       </div>
                       <button
                         onClick={() => onEditOption(opt.id)}
-                        className="opacity-0 group-hover:opacity-100 bg-secondary text-muted-foreground px-3 py-1.5 rounded-lg text-xs font-bold transition-all hover:text-foreground"
+                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 bg-secondary text-muted-foreground px-3 py-1.5 rounded-lg text-xs font-bold transition-all hover:text-foreground"
                       >
                         Manage
                       </button>
@@ -153,7 +153,7 @@ export default function ProductsPage({
                         onClick={() => {
                           if (confirm(`Delete "${opt.name}"?`)) onDeleteOption(opt.id);
                         }}
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-profit-negative transition-all"
+                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-muted-foreground hover:text-profit-negative transition-all"
                       >
                         <Trash2 size={14} />
                       </button>

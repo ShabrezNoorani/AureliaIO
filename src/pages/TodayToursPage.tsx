@@ -161,7 +161,7 @@ export default function TodayToursPage() {
 
   return (
     <div className="relative">
-      <div className="p-8 pb-32 max-w-5xl mx-auto space-y-8 animate-fade-in">
+      <div className="p-4 md:p-8 pb-32 max-w-5xl mx-auto space-y-8 animate-fade-in">
           
           {/* HEADER */}
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-border/50">

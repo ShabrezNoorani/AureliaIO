@@ -13,6 +13,8 @@ interface AureliaSidebarProps {
   companyName: string;
   onNavigate: (view: View) => void;
   onNewProduct: () => void;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 interface SidebarItemProps {
@@ -90,12 +92,18 @@ function TrialStatusPill({ profile }: { profile: Profile | null }) {
   );
 }
 
-export default function AureliaSidebar({ activeView, companyName, onNavigate, onNewProduct }: AureliaSidebarProps) {
+export default function AureliaSidebar({ activeView, companyName, onNavigate, onNewProduct, mobileOpen = false, onCloseMobile = () => {} }: AureliaSidebarProps) {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
 
   const [overviewExpanded, setOverviewExpanded] = useState(true);
   const [operationsExpanded, setOperationsExpanded] = useState(true);
+
+  const handleNavigate = (view: View, path?: string) => {
+    onNavigate(view);
+    if (path) navigate(path);
+    onCloseMobile();
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -113,7 +121,28 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
   const currentThemeObj = THEMES[getTheme()];
 
   return (
-    <aside className="w-[240px] flex flex-col fixed h-full z-50 border-r" style={{ backgroundColor: 'hsl(var(--theme-sidebar))', borderColor: 'hsl(var(--theme-border))' }}>
+    <>
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-40 md:hidden"
+          onClick={onCloseMobile}
+        />
+      )}
+
+      <aside
+        className={`w-[240px] flex flex-col fixed h-full z-50 border-r transition-transform duration-300 ease-in-out ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}
+        style={{ backgroundColor: 'hsl(var(--theme-sidebar))', borderColor: 'hsl(var(--theme-border))' }}
+      >
+      {/* Mobile close button */}
+      <button
+        onClick={onCloseMobile}
+        className="md:hidden absolute top-4 right-4 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+        aria-label="Close menu"
+      >
+        <X size={18} />
+      </button>
+
       {/* Logo */}
       <div className="px-6 pt-8 pb-6">
         <Logo size="md" />
@@ -138,9 +167,9 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
           
           {overviewExpanded && (
             <div className="mt-1 flex flex-col space-y-0.5">
-              <SidebarItem icon={Home} label="Home" active={activeView === 'executive'} onClick={() => onNavigate('executive')} indent />
-              <SidebarItem icon={TrendingUp} label="Simulator" active={activeView === 'simulator'} onClick={() => onNavigate('simulator')} indent />
-              <SidebarItem icon={BarChart3} label="Analytics" active={activeView === 'analytics'} onClick={() => onNavigate('analytics')} indent />
+              <SidebarItem icon={Home} label="Home" active={activeView === 'executive'} onClick={() => handleNavigate('executive')} indent />
+              <SidebarItem icon={TrendingUp} label="Simulator" active={activeView === 'simulator'} onClick={() => handleNavigate('simulator')} indent />
+              <SidebarItem icon={BarChart3} label="Analytics" active={activeView === 'analytics'} onClick={() => handleNavigate('analytics')} indent />
             </div>
           )}
         </div>
@@ -152,7 +181,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
           icon={Package}
           label="Products & Pricing"
           active={activeView === 'products' || activeView === 'editor'}
-          onClick={() => onNavigate('products')}
+          onClick={() => handleNavigate('products')}
         />
 
         <div className="my-2 mx-4 border-t opacity-30" style={{ borderColor: 'hsl(var(--theme-border))' }} />
@@ -173,14 +202,14 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
 
           {operationsExpanded && (
             <div className="mt-1 flex flex-col space-y-0.5">
-              <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => onNavigate('ledger')} indent />
-              <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => onNavigate('admin-costs')} indent />
-              <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => onNavigate('today')} indent />
-              <SidebarItem icon={List} label="Tour Assignments" active={activeView === 'assignments'} onClick={() => { onNavigate('assignments'); navigate('/app/assignments'); }} indent />
-              <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => { onNavigate('guides'); navigate('/app/guides'); }} indent />
-               <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => { onNavigate('guide-dashboard'); navigate('/app/guide-dashboard'); }} indent />
-              <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => { onNavigate('marketplace'); navigate('/app/marketplace'); }} indent />
-              <SidebarItem icon={List} label="Change Log" active={activeView === 'changelog'} onClick={() => { onNavigate('changelog'); navigate('/app/changelog'); }} indent />
+              <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => handleNavigate('ledger')} indent />
+              <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => handleNavigate('admin-costs')} indent />
+              <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => handleNavigate('today')} indent />
+              <SidebarItem icon={List} label="Tour Assignments" active={activeView === 'assignments'} onClick={() => handleNavigate('assignments', '/app/assignments')} indent />
+              <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => handleNavigate('guides', '/app/guides')} indent />
+               <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => handleNavigate('guide-dashboard', '/app/guide-dashboard')} indent />
+              <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => handleNavigate('marketplace', '/app/marketplace')} indent />
+              <SidebarItem icon={List} label="Change Log" active={activeView === 'changelog'} onClick={() => handleNavigate('changelog', '/app/changelog')} indent />
             </div>
           )}
         </div>
@@ -188,7 +217,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
         <div className="my-2 mx-4 border-t opacity-30" style={{ borderColor: 'hsl(var(--theme-border))' }} />
 
         {/* SINGLE: NEW PRODUCT */}
-        <SidebarItem icon={Plus} label="New Product" active={false} onClick={onNewProduct} />
+        <SidebarItem icon={Plus} label="New Product" active={false} onClick={() => { onNewProduct(); onCloseMobile(); }} />
       </div>
 
       {/* Settings above bottom info */}
@@ -197,7 +226,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
           icon={Settings}
           label="Settings"
           active={activeView === 'settings'}
-          onClick={() => onNavigate('settings')}
+          onClick={() => handleNavigate('settings')}
         />
       </div>
 
@@ -237,6 +266,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
           <span>Logout</span>
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

@@ -150,7 +150,7 @@ export default function CsvUploadModal({ onImport, onClose }: CsvUploadModalProp
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[300] flex items-center justify-center">
-      <div className="aurelia-card p-8 w-[700px] max-h-[90vh] overflow-y-auto animate-fade-in">
+      <div className="aurelia-card p-4 md:p-8 w-full max-w-[700px] mx-4 max-h-[90vh] overflow-y-auto animate-fade-in">
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-lg font-bold text-foreground">Upload CSV</h3>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">

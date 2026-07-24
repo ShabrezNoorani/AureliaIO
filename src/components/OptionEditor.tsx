@@ -235,9 +235,9 @@ export default function OptionEditor({
   const totalPax = metrics?.totalPax ?? 0;
 
   return (
-    <div className="flex h-screen overflow-hidden animate-fade-in">
+    <div className="flex flex-col md:flex-row min-h-screen md:h-screen overflow-y-auto md:overflow-hidden animate-fade-in">
       {/* LEFT PANEL */}
-      <div className="flex-1 overflow-y-auto p-8" style={{ maxWidth: '540px' }}>
+      <div className="flex-1 overflow-y-auto p-4 md:p-8 md:max-w-[540px]">
         <button
           onClick={() => navigate('/app')}
           className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-8 flex items-center hover:text-gold transition-colors"
@@ -411,7 +411,7 @@ export default function OptionEditor({
       </div>
 
       {/* RIGHT PANEL */}
-      <div className="w-[420px] bg-card overflow-y-auto p-8 border-l border-border flex-shrink-0">
+      <div className="w-full md:w-[420px] bg-card overflow-y-auto p-4 md:p-8 border-t md:border-t-0 md:border-l border-border flex-shrink-0">
         {/* Channel tabs */}
         <div className="flex space-x-1 bg-background p-1 rounded-xl mb-8 flex-wrap gap-y-1">
           {option.channels.map((c, idx) => (
