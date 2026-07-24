@@ -19,7 +19,7 @@ import { useAuth } from '@/context/AuthContext';
 import { syncMasterData } from '@/lib/gsheetSync';
 import { syncFromBokun } from '@/lib/bokunSync';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'assignments' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 const AppLayout = () => {
   const { user, profile } = useAuth();
@@ -42,7 +42,6 @@ const AppLayout = () => {
     deleteExtraCost,
     addTier,
     deleteTier,
-    addBucketCount,
     updateBucketCount,
     updateAgeBuckets,
   } = useAppData();
