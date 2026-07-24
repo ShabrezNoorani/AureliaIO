@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { logChange } from '@/lib/changeLog';
-import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight, Search, Upload } from 'lucide-react';
+import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight, Search, Upload, Copy, RefreshCw, Link as LinkIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface GuideOptionRate {
@@ -32,6 +32,10 @@ interface Guide {
   bank_address?: string | null;
   contracted?: boolean;
   contract_date?: string | null;
+  website_consent?: boolean;
+  auth_user_id?: string | null;
+  claim_token?: string | null;
+  claimed_at?: string | null;
   option_rates?: GuideOptionRate[];
 }
 
@@ -144,6 +148,22 @@ export default function GuidesPage() {
     return result;
   };
 
+  // CSV column helpers: every value is trimmed; blank cells become null (never empty strings).
+  const csvCell = (row: string[], idx: number): string => (row[idx] ?? '').trim();
+  const csvNullable = (row: string[], idx: number): string | null => {
+    const v = csvCell(row, idx);
+    return v === '' ? null : v;
+  };
+  const csvBool = (row: string[], idx: number, trueValues: string[]): boolean =>
+    trueValues.includes(csvCell(row, idx).toLowerCase());
+
+  // Fields where a blank CSV cell must not clobber an existing non-null database value.
+  const PRESERVE_IF_BLANK = [
+    'name', 'email', 'whatsapp', 'status', 'contract_date',
+    'languages', 'tours_qualified', 'account_holder', 'iban',
+    'swift_code', 'bank_name', 'bank_address',
+  ] as const;
+
   const handleCSVImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!user || !e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
@@ -151,63 +171,95 @@ export default function GuidesPage() {
     reader.onload = async (event) => {
       const text = event.target?.result as string;
       if (!text) return;
-      
+
       try {
         const rows = parseCsv(text);
         if (rows.length < 2) {
           toast.error("CSV has no data rows");
           return;
         }
-        
-        let importedCount = 0;
+
+        const { data: existingGuides, error: fetchError } = await supabase
+          .from('guides')
+          .select('*')
+          .eq('user_id', user.id);
+
+        if (fetchError) {
+          console.error(fetchError);
+          toast.error('Failed to load existing guides before import');
+          return;
+        }
+
+        const existingByNumber = new Map<string, any>(
+          (existingGuides || []).map((g: any) => [g.guide_number, g])
+        );
+
+        const payloads: any[] = [];
+        let createdCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+
+        // Row 0 is the header. A row only counts as real data if column 0 (Id Number) is non-empty.
         for (let i = 1; i < rows.length; i++) {
           const row = rows[i];
-          if (row.length < 2) continue;
-          
-          const guideNumber = row[0]?.trim();
-          const name = row[1]?.trim();
-          if (!guideNumber || !name) continue;
-          
-          const payload = {
+          const guideNumber = csvCell(row, 0);
+          if (!guideNumber) {
+            skippedCount++;
+            continue;
+          }
+
+          const existing = existingByNumber.get(guideNumber);
+
+          const payload: any = {
             user_id: user.id,
             guide_number: guideNumber,
-            name: name,
-            email: row[2]?.trim() || null,
-            whatsapp: row[3]?.trim() || null,
-            licensed: row[4]?.toLowerCase() === 'yes' || row[4]?.toLowerCase() === 'true',
-            status: row[5]?.toLowerCase() === 'active' || row[5]?.toLowerCase() === 'active' || row[5] === '' ? 'active' : 'inactive',
-            contracted: row[6]?.toLowerCase() === 'true' || row[6]?.toLowerCase() === 'yes',
-            contract_date: row[7]?.trim() || null,
-            languages: row[8]?.trim() || null,
-            tours_qualified: row[11]?.trim() || null,
-            account_holder: row[12]?.trim() || null,
-            iban: row[13]?.trim() || null,
-            swift_code: row[14]?.trim() || null,
-            bank_name: row[15]?.trim() || null,
-            bank_address: row[16]?.trim() || null,
+            name: csvNullable(row, 1),
+            email: csvNullable(row, 2),
+            whatsapp: csvNullable(row, 3),
+            licensed: csvBool(row, 4, ['yes']),
+            status: csvNullable(row, 5),
+            contracted: csvBool(row, 6, ['true']),
+            contract_date: csvNullable(row, 7),
+            languages: csvNullable(row, 8),
+            website_consent: csvBool(row, 9, ['yes', 'true']),
+            // column 10 (ID-QR) is ignored entirely
+            tours_qualified: csvNullable(row, 11),
+            account_holder: csvNullable(row, 12),
+            iban: csvNullable(row, 13),
+            swift_code: csvNullable(row, 14),
+            bank_name: csvNullable(row, 15),
+            bank_address: csvNullable(row, 16),
           };
 
-          const { data: existing } = await supabase
-            .from('guides')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('guide_number', guideNumber)
-            .maybeSingle();
-
           if (existing) {
-            await supabase
-              .from('guides')
-              .update(payload)
-              .eq('id', existing.id);
+            for (const field of PRESERVE_IF_BLANK) {
+              if (payload[field] === null && existing[field] !== null && existing[field] !== undefined) {
+                payload[field] = existing[field];
+              }
+            }
+            updatedCount++;
           } else {
-            await supabase
-              .from('guides')
-              .insert(payload);
+            createdCount++;
           }
-          importedCount++;
+
+          payloads.push(payload);
         }
-        
-        toast.success(`✅ Imported ${importedCount} guides`);
+
+        if (payloads.length > 0) {
+          const { error: upsertError } = await supabase
+            .from('guides')
+            .upsert(payloads, { onConflict: 'user_id,guide_number' });
+
+          if (upsertError) {
+            console.error(upsertError);
+            toast.error('Import failed while saving guides');
+            return;
+          }
+        }
+
+        toast.success(
+          `Import complete: ${createdCount} created, ${updatedCount} updated, ${skippedCount} skipped`
+        );
         fetchGuides();
       } catch (err) {
         console.error(err);
@@ -216,6 +268,46 @@ export default function GuidesPage() {
     };
     reader.readAsText(file);
     e.target.value = ''; // Reset file input
+  };
+
+  const generateClaimToken = (): string => {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    const randomValues = new Uint32Array(12);
+    crypto.getRandomValues(randomValues);
+    let token = '';
+    for (let i = 0; i < 12; i++) {
+      token += chars[randomValues[i] % chars.length];
+    }
+    return token;
+  };
+
+  const buildClaimUrl = (token: string) => `${window.location.origin}/guide/claim/${token}`;
+
+  const handleCopyClaimLink = async (token: string) => {
+    const url = buildClaimUrl(token);
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success('Login link copied to clipboard');
+    } catch {
+      toast.error(`Could not copy automatically — link: ${url}`);
+    }
+  };
+
+  const handleGenerateClaimLink = async (guide: Guide) => {
+    const token = generateClaimToken();
+    const { error } = await supabase
+      .from('guides')
+      .update({ claim_token: token })
+      .eq('id', guide.id);
+
+    if (error) {
+      console.error(error);
+      toast.error('Failed to generate login link');
+      return;
+    }
+
+    await fetchGuides();
+    await handleCopyClaimLink(token);
   };
 
   const openPanel = (guide: Guide | null = null) => {
@@ -427,6 +519,7 @@ export default function GuidesPage() {
                     <th className="px-6 py-4">WhatsApp / Phone</th>
                     <th className="px-6 py-4">Base Rate</th>
                     <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4">Login Access</th>
                     <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -464,6 +557,37 @@ export default function GuidesPage() {
                         }`}>
                           {g.status}
                         </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        {g.claimed_at ? (
+                          <div>
+                            <span className="text-[10px] font-bold uppercase text-green-500">Account active</span>
+                            <div className="text-[10px] text-gray-500 mt-0.5">{new Date(g.claimed_at).toLocaleDateString()}</div>
+                          </div>
+                        ) : g.claim_token ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold uppercase text-yellow-500">Link pending</span>
+                            <button
+                              onClick={() => handleCopyClaimLink(g.claim_token!)}
+                              className="text-[10px] font-bold px-2 py-1 rounded border border-white/10 text-gray-300 hover:bg-white/5 flex items-center gap-1"
+                            >
+                              <Copy size={11} /> Copy
+                            </button>
+                            <button
+                              onClick={() => handleGenerateClaimLink(g)}
+                              className="text-[10px] font-bold px-2 py-1 rounded border border-white/10 text-gray-300 hover:bg-white/5 flex items-center gap-1"
+                            >
+                              <RefreshCw size={11} /> Regenerate
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleGenerateClaimLink(g)}
+                            className="text-[10px] font-bold px-2 py-1 rounded border border-gold/20 text-gold hover:bg-gold/10 flex items-center gap-1"
+                          >
+                            <LinkIcon size={11} /> Generate login link
+                          </button>
+                        )}
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">

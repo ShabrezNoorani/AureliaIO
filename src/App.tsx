@@ -21,6 +21,7 @@ import AnalyticsPage from "./pages/AnalyticsPage";
 import TodayToursPage from "./pages/TodayToursPage";
 import ChangeLogPage from "./pages/ChangeLogPage";
 import CheckinApp from "./pages/CheckinApp";
+import GuideClaimPage from "./pages/GuideClaimPage";
 import NotFound from "./pages/NotFound";
 import TourAssignmentsPage from "./pages/TourAssignmentsPage";
 import { setupGuideTables } from "./lib/setupTables";
@@ -46,6 +47,7 @@ const AppContent = () => {
           <Route path="/blog" element={<BlogPage />} />
           <Route path="/blog/:slug" element={<BlogPostPage />} />
           <Route path="/checkin/:token" element={<CheckinApp />} />
+          <Route path="/guide/claim/:token" element={<GuideClaimPage />} />
 
           {/* Protected app */}
           <Route
