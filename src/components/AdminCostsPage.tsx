@@ -27,7 +27,7 @@ interface AdminCostsPageProps {
 }
 
 export default function AdminCostsPage({ costs, setCosts, onSync, costsLoaded }: AdminCostsPageProps) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const now = new Date();
   const [viewMonth, setViewMonth] = useState(now.getMonth() + 1);
   const [viewYear, setViewYear] = useState(now.getFullYear());
@@ -92,7 +92,7 @@ export default function AdminCostsPage({ costs, setCosts, onSync, costsLoaded }:
   };
 
   const handleGsheetSync = async () => {
-    const sheetId = localStorage.getItem('gsheet_id');
+    const sheetId = profile?.gsheet_id;
     if (!sheetId) {
       setSyncMsg('⚠ No Spreadsheet ID configured. Go to Settings first.');
       return;

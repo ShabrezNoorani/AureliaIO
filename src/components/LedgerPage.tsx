@@ -228,7 +228,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   };
 
   const handleGsheetSync = async () => {
-    const sheetId = localStorage.getItem('gsheet_id');
+    const sheetId = profile?.gsheet_id;
     if (!sheetId) return setSyncMsg('⚠ No Spreadsheet ID configured. Go to Settings first.');
     if (!user) return;
     setSyncing(true);
@@ -248,7 +248,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   };
 
   const handleForceSync = async () => {
-    const sheetId = localStorage.getItem('gsheet_id');
+    const sheetId = profile?.gsheet_id;
     if (!sheetId) return setSyncMsg('⚠ No Spreadsheet ID configured. Go to Settings first.');
     if (!user) return;
     

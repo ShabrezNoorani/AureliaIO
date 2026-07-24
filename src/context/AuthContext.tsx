@@ -131,7 +131,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       'aurelia_autosync_sources',
       'aurelia_bokun_access',
       'aurelia_bokun_secret',
-      'gsheet_id',
       'checkin_guide_id',
       'checkin_guide_name',
       'checkin_user_id',
