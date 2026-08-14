@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2 } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle } from 'lucide-react';
+import { buildGoogleCalendarUrl, buildWhatsAppUrl } from '@/lib/tourInvites';
 
 interface Booking {
   id: string;
@@ -50,6 +51,7 @@ interface Guide {
   name: string;
   guide_number: string;
   status: string;
+  whatsapp: string | null;
 }
 
 interface NaturalGroup {
@@ -72,7 +74,7 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
 };
 
 export default function DispatchPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
 
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -102,7 +104,7 @@ export default function DispatchPage() {
       supabase.from('tour_sessions').select('*')
         .eq('user_id', user.id).eq('tour_date', selectedDate)
         .order('start_time', { ascending: true }),
-      supabase.from('guides').select('id, name, guide_number, status')
+      supabase.from('guides').select('id, name, guide_number, status, whatsapp')
         .eq('user_id', user.id).eq('status', 'active').order('name'),
     ]);
 
@@ -315,6 +317,29 @@ export default function DispatchPage() {
       .update({ status: 'offered', offered_at: new Date().toISOString(), responded_at: null })
       .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
     await loadData();
+  };
+
+  // Builds the calendar invite + a matching WhatsApp confirmation for a confirmed ('accepted') guide.
+  // Pure client-side link generation — nothing is sent automatically, no customer names or money involved.
+  const buildInviteLinks = (session: TourSession, guide: Guide | undefined, pax: number) => {
+    const sessionLabel = session.label || 'your tour';
+    const timeLabel = session.start_time || 'time TBD';
+    const paxLabel = `${pax} guest${pax !== 1 ? 's' : ''}`;
+
+    const calendarUrl = buildGoogleCalendarUrl({
+      title: sessionLabel,
+      details: `${sessionLabel} — ${timeLabel} — ${paxLabel}`,
+      location: sessionLabel,
+      tourDate: session.tour_date,
+      startTime: session.start_time,
+    });
+
+    const formattedDate = new Date(`${session.tour_date}T00:00:00`).toLocaleDateString(undefined, {
+      weekday: 'short', day: 'numeric', month: 'short',
+    });
+    const message = `Hi ${guide?.name || 'there'}, you're confirmed for ${sessionLabel} on ${formattedDate} at ${timeLabel} (${paxLabel}) with ${profile?.company_name || 'us'}. Calendar invite: ${calendarUrl}`;
+
+    return { calendarUrl, whatsappUrl: buildWhatsAppUrl(guide?.whatsapp, message) };
   };
 
   return (
@@ -549,6 +574,9 @@ export default function DispatchPage() {
                             const guide = guideById.get(sg.guide_id);
                             const fromGuide = sg.reassigned_from ? guideById.get(sg.reassigned_from) : null;
                             const badge = STATUS_BADGE[sg.status] || STATUS_BADGE.offered;
+                            const { calendarUrl, whatsappUrl } = sg.status === 'accepted'
+                              ? buildInviteLinks(session, guide, sPax)
+                              : { calendarUrl: '', whatsappUrl: null as string | null };
                             return (
                               <div key={sg.guide_id} className="flex flex-wrap items-center justify-between gap-2 bg-white/[0.02] rounded-lg px-3 py-2">
                                 <div className="flex items-center gap-2 min-w-0 flex-wrap">
@@ -574,6 +602,39 @@ export default function DispatchPage() {
                                     <X size={13} />
                                   </button>
                                 </div>
+                                {sg.status === 'accepted' && (
+                                  <div className="w-full flex flex-wrap items-center gap-2 pt-1.5 mt-0.5 border-t border-white/5">
+                                    <a
+                                      href={calendarUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-white/10 text-muted-foreground hover:text-gold hover:border-gold/30 transition-colors inline-flex items-center gap-1"
+                                    >
+                                      <CalendarPlus size={11} /> Add to Calendar
+                                    </a>
+                                    {whatsappUrl ? (
+                                      <a
+                                        href={whatsappUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-green-500/20 text-green-400 hover:bg-green-500/10 transition-colors inline-flex items-center gap-1"
+                                      >
+                                        <MessageCircle size={11} /> Send WhatsApp
+                                      </a>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <button
+                                          disabled
+                                          title="This guide has no WhatsApp number on file"
+                                          className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-white/10 text-muted-foreground/40 cursor-not-allowed inline-flex items-center gap-1"
+                                        >
+                                          <MessageCircle size={11} /> Send WhatsApp
+                                        </button>
+                                        <span className="text-[9px] text-muted-foreground italic">no WhatsApp number</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
