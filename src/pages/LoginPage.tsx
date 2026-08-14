@@ -5,18 +5,19 @@ import Logo from '@/components/Logo';
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { session, loading: authLoading, signIn } = useAuth();
+  const { session, loading: authLoading, role, signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Redirect to /app once session exists — reactive, works for all cases
+  // Redirect once session + role exist — reactive, works for all cases. Owners land on
+  // /app, guides land on /guide; waiting for role avoids a flash of the wrong shell.
   useEffect(() => {
-    if (session && !authLoading) {
-      navigate('/app', { replace: true });
+    if (session && !authLoading && role) {
+      navigate(role === 'guide' ? '/guide' : '/app', { replace: true });
     }
-  }, [session, authLoading, navigate]);
+  }, [session, authLoading, role, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

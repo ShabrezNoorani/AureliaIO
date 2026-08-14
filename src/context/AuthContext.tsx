@@ -16,10 +16,18 @@ export interface Profile {
   checkin_token?: string;
 }
 
+export type UserRole = 'owner' | 'guide' | null;
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   profile: Profile | null;
+  role: UserRole;
+  guideId: string | null;
+  guideName: string | null;
+  // The owner's user_id that this guide belongs to — required to scope every
+  // guide-facing query (bookings/guide_assignments/checkins are keyed by owner user_id).
+  guideUserId: string | null;
   loading: boolean;
   setLoading: (l: boolean) => void;
   refreshProfile: () => Promise<void>;
@@ -31,6 +39,10 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   session: null,
   profile: null,
+  role: null,
+  guideId: null,
+  guideName: null,
+  guideUserId: null,
   loading: true,
   setLoading: () => {},
   refreshProfile: async () => {},
@@ -42,6 +54,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [role, setRole] = useState<UserRole>(null);
+  const [guideId, setGuideId] = useState<string | null>(null);
+  const [guideName, setGuideName] = useState<string | null>(null);
+  const [guideUserId, setGuideUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = useCallback(async (userId: string) => {
@@ -54,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const timeoutPromise = new Promise<{data: null, error: null}>(
         (resolve) => setTimeout(
-          () => resolve({ data: null, error: null }), 
+          () => resolve({ data: null, error: null }),
           3000
         )
       );
@@ -78,14 +94,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.error('Profile fetch failed:', e);
       setProfile({
         id: userId,
-        company_name: 'My Company', 
+        company_name: 'My Company',
         subscription_status: 'active',
         trial_start: new Date().toISOString()
       });
-    } finally {
-      setLoading(false);
     }
   }, []);
+
+  // A guide row with auth_user_id = this user means the account belongs to a guide, not an owner.
+  const fetchRole = useCallback(async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('guides')
+        .select('id, name, user_id')
+        .eq('auth_user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data) {
+        setRole('guide');
+        setGuideId(data.id);
+        setGuideName(data.name);
+        setGuideUserId(data.user_id);
+      } else {
+        setRole('owner');
+        setGuideId(null);
+        setGuideName(null);
+        setGuideUserId(null);
+      }
+    } catch (e) {
+      console.error('Role lookup failed, defaulting to owner:', e);
+      setRole('owner');
+      setGuideId(null);
+      setGuideName(null);
+      setGuideUserId(null);
+    }
+  }, []);
+
+  // Resolves profile + role together so routing never has to guess (and flash the wrong shell)
+  // before both are known — loading only clears once this settles.
+  const hydrateUser = useCallback(async (userId: string) => {
+    await Promise.all([fetchProfile(userId), fetchRole(userId)]);
+    setLoading(false);
+  }, [fetchProfile, fetchRole]);
 
   const refreshProfile = useCallback(async () => {
     if (user) {
@@ -107,8 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.session) {
         setSession(data.session);
         setUser(data.session.user);
-        setLoading(false);
-        await fetchProfile(data.session.user.id);
+        await hydrateUser(data.session.user.id);
       }
 
       return {};
@@ -116,11 +167,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const message = err instanceof Error ? err.message : 'Login failed';
       return { error: message };
     }
-  }, [fetchProfile]);
+  }, [hydrateUser]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
-    
+
     // Clear ALL app-related localStorage
     const keysToRemove = [
       'aurelia_v3',
@@ -138,12 +189,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       'aurelia_default_tax',
       'aurelia_default_currency'
     ];
-    
+
     keysToRemove.forEach(key => localStorage.removeItem(key));
-    
+
     setProfile(null);
     setUser(null);
     setSession(null);
+    setRole(null);
+    setGuideId(null);
+    setGuideName(null);
+    setGuideUserId(null);
   }, []);
 
   useEffect(() => {
@@ -154,9 +209,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(initialSession);
       setUser(initialSession?.user ?? null);
       if (initialSession?.user) {
-        await fetchProfile(initialSession.user.id);
+        await hydrateUser(initialSession.user.id);
+      } else if (mounted) {
+        setLoading(false);
       }
-      if (mounted) setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -166,11 +222,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(newSession?.user ?? null);
 
         if (newSession?.user) {
-          await fetchProfile(newSession.user.id);
+          await hydrateUser(newSession.user.id);
         } else {
           setProfile(null);
+          setRole(null);
+          setGuideId(null);
+          setGuideName(null);
+          setGuideUserId(null);
+          if (mounted) setLoading(false);
         }
-        if (mounted) setLoading(false);
       }
     );
 
@@ -178,10 +238,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [fetchProfile]);
+  }, [hydrateUser]);
 
   return (
-    <AuthContext.Provider value={{ user, session, profile, loading, setLoading, refreshProfile, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, profile, role, guideId, guideName, guideUserId, loading, setLoading, refreshProfile, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

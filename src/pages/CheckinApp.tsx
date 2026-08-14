@@ -1,11 +1,10 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
-import { 
-  LogOut, ChevronLeft, ChevronRight, CheckCircle2, 
-  XCircle, Users, Clock, Camera, Check, X, 
-  Phone, Calendar, Tag, UserPlus, Info
-} from 'lucide-react';
+import { LogOut, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useSearchParams, useParams } from 'react-router-dom';
+import GuestCard from '@/components/checkin/GuestCard';
+import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
+import TourGroup from '@/components/checkin/TourGroup';
 
 interface Guide {
   id: string;
@@ -58,11 +57,11 @@ export default function CheckinApp() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [isValidToken, setIsValidToken] = useState<boolean | null>(null);
-  
+
   // Local storage state for Guide Selection
   const [selectedGuideId, setSelectedGuideId] = useState<string | null>(localStorage.getItem('checkin_guide_id'));
   const [guideName, setGuideName] = useState<string | null>(localStorage.getItem('checkin_guide_name'));
-  
+
   // Company state from token
   const [companyUserId, setCompanyUserId] = useState<string | null>(null);
   const [companyName, setCompanyName] = useState<string | null>(null);
@@ -71,8 +70,6 @@ export default function CheckinApp() {
 
   // Capture Modal State
   const [showConfirm, setShowConfirm] = useState<Booking | null>(null);
-  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     validateToken();
@@ -122,7 +119,7 @@ export default function CheckinApp() {
   const fetchData = async () => {
     if (!companyUserId) return;
     setLoading(true);
-    
+
     const [bRes, cRes, aRes] = await Promise.all([
       supabase.from('bookings').select('*')
         .eq('user_id', companyUserId)
@@ -152,21 +149,9 @@ export default function CheckinApp() {
 
   const handleCheckInAttempt = (booking: Booking) => {
     setShowConfirm(booking);
-    setPhotoBase64(null);
   };
 
-  const handleCapturePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setPhotoBase64(reader.result as string);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const confirmCheckIn = async (status: 'checked_in' | 'no_show') => {
+  const confirmCheckIn = async (status: 'checked_in' | 'no_show', photoBase64: string | null = null) => {
     if (!showConfirm || !companyUserId) return;
     const b = showConfirm;
     const totalPax = (b.pax_adult || 0) + (b.pax_youth || 0) + (b.pax_child || 0) + (b.pax_infant || 0);
@@ -188,16 +173,15 @@ export default function CheckinApp() {
     });
 
     setShowConfirm(null);
-    setPhotoBase64(null);
     fetchData();
   };
 
   const handleAssignGuide = async (booking: Booking, targetGuideId: string) => {
     if (!companyUserId) return;
-    
+
     // Check if assignment exists
-    const existing = assignments.find(a => 
-      a.booking_ref === booking.booking_ref || 
+    const existing = assignments.find(a =>
+      a.booking_ref === booking.booking_ref ||
       (a.travel_time === booking.travel_time && a.product_code === booking.product_code && a.option_name === booking.option_name)
     );
 
@@ -332,112 +316,36 @@ export default function CheckinApp() {
           Object.entries(grouped).map(([key, groupBookings]) => {
             const [time, code] = key.split(' | ');
             const totalPax = groupBookings.reduce((sum, b) => sum + (b.pax_adult+b.pax_youth+b.pax_child+b.pax_infant), 0);
-            
+
             // Shared guide check
             const assignedGuides = assignments.filter(a => a.travel_time === time && a.product_code === code);
             const uniqueGuides = Array.from(new Set(assignedGuides.map(a => a.guide_id)));
             const sharedGuideName = uniqueGuides.length === 1 ? guides.find(g => g.id === uniqueGuides[0])?.name : null;
 
             return (
-              <div key={key} className="space-y-4">
-                <div className="sticky top-16 z-40 bg-[#060608]/80 backdrop-blur-md py-2 px-3 rounded-2xl border border-white/5 flex items-center justify-between text-[11px] font-black uppercase tracking-widest text-gray-400">
-                  <div className="flex items-center gap-2">
-                    <Clock size={14} className="text-gold" />
-                    <span className="text-white">{time}</span>
-                    <span className="text-gray-600">·</span>
-                    <span>{code}</span>
-                  </div>
-                  <div>
-                    {groupBookings.length} Bookings · {totalPax} Pax
-                    {sharedGuideName && (
-                      <span className="ml-2 text-gold">· {sharedGuideName}</span>
-                    )}
-                  </div>
-                </div>
+              <TourGroup key={key} time={time} code={code} bookingsCount={groupBookings.length} totalPax={totalPax} sharedGuideName={sharedGuideName}>
+                {groupBookings.map(b => {
+                  const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
+                  const isDone = cRecord?.status === 'checked_in';
+                  const isNoShow = cRecord?.status === 'no_show';
+                  const assignment = assignments.find(a => a.booking_ref === b.booking_ref);
 
-                <div className="space-y-4">
-                  {groupBookings.map(b => {
-                    const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
-                    const isDone = cRecord?.status === 'checked_in';
-                    const isNoShow = cRecord?.status === 'no_show';
-                    const assignment = assignments.find(a => a.booking_ref === b.booking_ref);
-                    const assignedGuide = guides.find(g => g.id === assignment?.guide_id);
-
-                    return (
-                      <div key={b.id} className="bg-white/5 border border-white/10 rounded-[2.5rem] p-6 space-y-5 shadow-xl">
-                        <div className="flex justify-between items-start">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-black bg-white/10 px-2 py-0.5 rounded text-gold uppercase">{b.channel || 'OTA'}</span>
-                              <span className="text-[10px] font-mono text-gray-500 font-bold">{b.booking_ref}</span>
-                            </div>
-                            <h3 className="text-xl font-black leading-tight">{b.customer_name}</h3>
-                          </div>
-                          {isDone && <div className="bg-green-500/20 p-2 rounded-full"><CheckCircle2 className="text-green-500" size={24} /></div>}
-                          {isNoShow && <div className="bg-red-500/20 p-2 rounded-full"><XCircle className="text-red-500" size={24} /></div>}
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-y-4 text-[13px] font-bold">
-                          <div className="flex items-center gap-3 text-gray-400">
-                            <Phone size={16} />
-                            <a href={`tel:${b.customer_phone}`} className="text-white">{b.customer_phone || 'No phone'}</a>
-                          </div>
-                          <div className="flex items-center gap-3 text-gray-400 justify-end">
-                            <Calendar size={16} />
-                            <span className="text-white">
-                              {new Date(b.travel_date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-3 text-gray-400">
-                            <Tag size={16} />
-                            <span className="text-white truncate max-w-[120px]">{b.product_name || b.product_code}</span>
-                          </div>
-                          <div className="flex items-center gap-3 text-gray-400 justify-end">
-                            <Users size={16} />
-                            <span className="text-white">A:{b.pax_adult || 0} Y:{b.pax_youth || 0} C:{b.pax_child || 0} I:{b.pax_infant || 0}</span>
-                          </div>
-                        </div>
-
-                        <div className="pt-2">
-                          <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2 px-1">Lead Guide</label>
-                          <select 
-                            value={assignment?.guide_id || ''} 
-                            onChange={(e) => handleAssignGuide(b, e.target.value)}
-                            className="w-full bg-white/5 border border-white/10 p-3 rounded-2xl text-sm font-bold focus:border-gold/50 outline-none appearance-none"
-                            disabled={isDone || isNoShow}
-                          >
-                            <option value="">-- No guide assigned --</option>
-                            {guides.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                          </select>
-                        </div>
-
-                        {!(isDone || isNoShow) ? (
-                          <div className="grid grid-cols-2 gap-4 pt-2">
-                            <button 
-                              onClick={() => handleCheckInAttempt(b)}
-                              className="bg-gold text-black py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-gold/20 active:scale-95"
-                            >
-                              Check In
-                            </button>
-                            <button 
-                              onClick={() => confirmCheckIn('no_show')} // direct for no-show or add modal? user said Confirm screen for check-in
-                              className="bg-red-500/10 border border-red-500/20 text-red-500 py-4 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95"
-                            >
-                              No Show
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="text-center py-3 bg-white/[0.02] rounded-2xl border border-white/5">
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">
-                              {isDone ? 'Checked In' : 'No Show Entry'} · {new Date(cRecord.checked_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+                  return (
+                    <GuestCard
+                      key={b.id}
+                      booking={b}
+                      isCheckedIn={isDone}
+                      isNoShow={isNoShow}
+                      checkedInAt={cRecord?.checked_in_at}
+                      onCheckIn={() => handleCheckInAttempt(b)}
+                      onNoShow={() => confirmCheckIn('no_show')}
+                      guides={guides}
+                      selectedGuideId={assignment?.guide_id || ''}
+                      onSelectGuide={(guideId) => handleAssignGuide(b, guideId)}
+                    />
+                  );
+                })}
+              </TourGroup>
             );
           })
         )}
@@ -445,58 +353,12 @@ export default function CheckinApp() {
 
       {/* CONFIRMATION / PHOTO MODAL */}
       {showConfirm && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl animate-fade-in">
-          <div className="bg-[#0f0f12] border border-white/10 rounded-[3rem] w-full max-w-sm shadow-2xl p-8 space-y-8 animate-slide-up">
-            <div className="text-center space-y-2">
-              <h2 className="text-2xl font-black">Confirm Check-in</h2>
-              <p className="text-xs text-gray-500 uppercase tracking-widest">Customer: {showConfirm.customer_name}</p>
-              <div className="flex flex-col items-center gap-1 pt-2">
-                <div className="flex items-center gap-2 text-white font-bold">
-                  <span className="text-lg">👥</span>
-                  <span>A:{showConfirm.pax_adult || 0} Y:{showConfirm.pax_youth || 0} C:{showConfirm.pax_child || 0} I:{showConfirm.pax_infant || 0}</span>
-                </div>
-                <p className="text-[10px] font-black uppercase text-gold">({(showConfirm.pax_adult || 0) + (showConfirm.pax_youth || 0) + (showConfirm.pax_child || 0) + (showConfirm.pax_infant || 0)} total)</p>
-              </div>
-            </div>
-
-            <div 
-              onClick={() => fileInputRef.current?.click()}
-              className="aspect-square bg-white/5 border-2 border-dashed border-white/10 rounded-[2.5rem] flex flex-col items-center justify-center gap-3 cursor-pointer overflow-hidden relative group"
-            >
-              {photoBase64 ? (
-                <img src={photoBase64} className="w-full h-full object-cover" />
-              ) : (
-                <>
-                  <Camera size={32} className="text-gray-600 group-hover:text-gold transition-colors" />
-                  <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Ticket Photo (Optional)</span>
-                </>
-              )}
-              <input 
-                type="file" 
-                accept="image/*" 
-                capture="environment" 
-                ref={fileInputRef}
-                className="hidden"
-                onChange={handleCapturePhoto}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 gap-3">
-              <button 
-                onClick={() => confirmCheckIn('checked_in')}
-                className="w-full py-5 bg-gold text-black rounded-2xl font-black text-sm uppercase tracking-[0.1em] shadow-xl shadow-gold/20 active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                <Check size={20} /> Confirm Check-in
-              </button>
-              <button 
-                onClick={() => setShowConfirm(null)}
-                className="w-full py-5 bg-white/5 border border-white/10 rounded-2xl font-bold text-xs uppercase tracking-widest"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <CheckinConfirmModal
+          customerName={showConfirm.customer_name}
+          pax={{ adult: showConfirm.pax_adult, youth: showConfirm.pax_youth, child: showConfirm.pax_child, infant: showConfirm.pax_infant }}
+          onConfirm={(photoBase64) => confirmCheckIn('checked_in', photoBase64)}
+          onCancel={() => setShowConfirm(null)}
+        />
       )}
 
       {/* STICKY FOOTER */}
@@ -511,7 +373,7 @@ export default function CheckinApp() {
               <div className="text-xs font-black truncate max-w-[80px]">{guideName}</div>
             </div>
           </div>
-          
+
           <div className="flex flex-1 justify-end gap-3">
             <div className="text-center px-3 py-1 bg-green-500/10 rounded-xl border border-green-500/10">
               <div className="text-[8px] font-black text-green-500 uppercase tracking-widest">In</div>

@@ -4,10 +4,13 @@ import { useAuth } from '@/context/AuthContext';
 
 interface ProtectedRouteProps {
   children: ReactNode;
+  // When set, only a session whose resolved role matches is let through — a mismatched
+  // role is redirected to their own home instead of the requested route.
+  requiredRole?: 'owner' | 'guide';
 }
 
-export default function ProtectedRoute({ children }: ProtectedRouteProps) {
-  const { session, profile, loading, setLoading } = useAuth();
+export default function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
+  const { session, profile, role, loading, setLoading } = useAuth();
 
   useEffect(() => {
     if (loading) {
@@ -33,7 +36,11 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     return <Navigate to="/login" replace />;
   }
 
-  if (profile && profile.subscription_status === 'trial') {
+  if (requiredRole && role && role !== requiredRole) {
+    return <Navigate to={role === 'guide' ? '/guide' : '/app'} replace />;
+  }
+
+  if (role === 'owner' && profile && profile.subscription_status === 'trial') {
     const trialStart = new Date(profile.trial_start);
     const now = new Date();
     const daysSinceStart = Math.floor(

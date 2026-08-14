@@ -17,11 +17,13 @@ import BlogAdminPage from "./pages/BlogAdminPage";
 import MarketplacePage from "./pages/MarketplacePage";
 import GuidesPage from "./pages/GuidesPage";
 import GuideDashboard from "./pages/GuideDashboard";
+import GuideLayout from "./pages/GuideLayout";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import TodayToursPage from "./pages/TodayToursPage";
 import ChangeLogPage from "./pages/ChangeLogPage";
 import CheckinApp from "./pages/CheckinApp";
 import GuideClaimPage from "./pages/GuideClaimPage";
+import GuideCheckin from "./pages/GuideCheckin";
 import NotFound from "./pages/NotFound";
 import TourAssignmentsPage from "./pages/TourAssignmentsPage";
 import { setupGuideTables } from "./lib/setupTables";
@@ -29,16 +31,17 @@ import { useEffect } from "react";
 
 const queryClient = new QueryClient();
 
-// Logged-out visitors see the marketing landing page at "/"; logged-in users are redirected to the app.
+// Logged-out visitors see the marketing landing page at "/"; logged-in users are redirected
+// to their role's home — owners to /app, guides to /guide.
 const RootRoute = () => {
-  const { session, loading } = useAuth();
+  const { session, loading, role } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (session && !loading) {
-      navigate('/app', { replace: true });
+    if (session && !loading && role) {
+      navigate(role === 'guide' ? '/guide' : '/app', { replace: true });
     }
-  }, [session, loading, navigate]);
+  }, [session, loading, role, navigate]);
 
   return <LandingPage />;
 };
@@ -63,11 +66,11 @@ const AppContent = () => {
           <Route path="/checkin/:token" element={<CheckinApp />} />
           <Route path="/guide/claim/:token" element={<GuideClaimPage />} />
 
-          {/* Protected app */}
+          {/* Protected owner app */}
           <Route
             path="/app"
             element={
-              <ProtectedRoute>
+              <ProtectedRoute requiredRole="owner">
                 <AppLayout />
               </ProtectedRoute>
             }
@@ -80,6 +83,18 @@ const AppContent = () => {
             <Route path="today" element={<TodayToursPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="changelog" element={<ChangeLogPage />} />
+          </Route>
+
+          {/* Protected guide app */}
+          <Route
+            path="/guide"
+            element={
+              <ProtectedRoute requiredRole="guide">
+                <GuideLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="checkin" element={<GuideCheckin />} />
           </Route>
 
           <Route path="*" element={<NotFound />} />
