@@ -10,7 +10,7 @@ export interface Profile {
   promo_code_used?: string;
   gsheet_id?: string;
   autosync_enabled?: boolean;
-  autosync_interval?: string;
+  autosync_interval?: number;
   bokun_access_key?: string;
   bokun_secret_key?: string;
   checkin_token?: string;

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { AppData, Option, AgeBucket, Product } from './types';
 import { INITIAL_DATA, DEFAULT_AGE_BUCKETS } from './initialData';
 import { supabase } from './supabase';
+import type { Json } from './database.types';
 import { useAuth } from '@/context/AuthContext';
 
 const STORAGE_KEY = 'aurelia_data';
@@ -152,7 +153,7 @@ export function useAppData() {
         try {
           const { error } = await supabase
             .from('profiles')
-            .update({ app_data: finalData })
+            .update({ app_data: finalData as unknown as Json })
             .eq('id', user.id);
           if (error) throw error;
         } catch (e) {
@@ -186,7 +187,7 @@ export function useAppData() {
       try {
         const { error } = await supabase
           .from('profiles')
-          .update({ app_data: data })
+          .update({ app_data: data as unknown as Json })
           .eq('id', user.id);
         if (error) throw error;
       } catch (e) {

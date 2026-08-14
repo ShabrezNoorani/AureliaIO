@@ -20,7 +20,7 @@ export default function ChangeLogPage() {
       .from('change_logs')
       .select('*')
       .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+      .order('changed_at', { ascending: false });
 
     if (tableFilter !== 'All') {
       query = query.eq('table_name', tableFilter);
@@ -44,7 +44,7 @@ export default function ChangeLogPage() {
       const days = parseInt(timeFilter);
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - days);
-      filtered = filtered.filter(l => new Date(l.created_at) > cutoff);
+      filtered = filtered.filter(l => new Date(l.changed_at) > cutoff);
     }
 
     setLogs(filtered);
@@ -187,10 +187,10 @@ export default function ChangeLogPage() {
                   <tr key={log.id} className="hover:bg-white/[0.01] transition-colors group">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-white font-medium">
-                        {new Date(log.created_at).toLocaleDateString()}
+                        {new Date(log.changed_at).toLocaleDateString()}
                       </div>
                       <div className="text-[10px] text-gray-500 font-mono">
-                        {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(log.changed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </div>
                     </td>
                     <td className="px-6 py-4">

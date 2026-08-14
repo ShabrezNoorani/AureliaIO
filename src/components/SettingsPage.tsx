@@ -159,6 +159,7 @@ export default function SettingsPage() {
     setImporting(true);
     try {
       const toImport = bokunProducts.filter(p => selectedProductIds.includes(p.bokun_product_id));
+      let optionErrors = 0;
       for (const p of toImport) {
         const { data: existing } = await supabase.from('products').select('id').eq('user_id', user.id).eq('name', p.name).single();
         if (!existing) {
@@ -167,20 +168,28 @@ export default function SettingsPage() {
             name: p.name,
             code: p.code
           }).select().single();
-          
+
           if (!pError && newProd) {
             for (const opt of p.options) {
-              await supabase.from('product_options').insert({
+              const { error: optError } = await supabase.from('options').insert({
                 product_id: newProd.id,
                 name: opt.name,
                 user_id: user.id
               });
+              if (optError) {
+                console.error('Failed to import option', opt.name, optError);
+                optionErrors++;
+              }
             }
           }
         }
       }
       setShowImportModal(false);
-      alert(`${toImport.length} products processed.`);
+      if (optionErrors > 0) {
+        alert(`${toImport.length} products processed, but ${optionErrors} option${optionErrors !== 1 ? 's' : ''} failed to import. Check the console for details.`);
+      } else {
+        alert(`${toImport.length} products processed.`);
+      }
     } catch (e) { alert("Import failed."); } finally { setImporting(false); }
   };
 
@@ -228,7 +237,7 @@ export default function SettingsPage() {
       await supabase.from('profiles').update({
         gsheet_id: sheetId,
         autosync_enabled: isAuto,
-        autosync_interval: interval
+        autosync_interval: Number(interval)
       }).eq('id', user.id);
       
       alert('Sync settings saved');

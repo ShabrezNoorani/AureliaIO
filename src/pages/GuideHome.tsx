@@ -40,7 +40,7 @@ export default function GuideHome() {
     bookings.forEach(b => {
       const time = b.travel_time || 'No Time';
       const prod = b.product_name || b.product_code || 'Unknown Product';
-      const opt = b.option_selected || b.option_name || 'Standard';
+      const opt = b.option_name || 'Standard';
       if (!grouped[time]) grouped[time] = {};
       if (!grouped[time][prod]) grouped[time][prod] = {};
       if (!grouped[time][prod][opt]) grouped[time][prod][opt] = [];

@@ -110,7 +110,7 @@ const AppLayout = () => {
       const enabled = profile?.autosync_enabled ?? false;
       if (!enabled) return;
       
-      const intervalMs = parseInt(profile?.autosync_interval || '1800000', 10);
+      const intervalMs = profile?.autosync_interval || 1800000;
       intervalId = setInterval(async () => {
         if (!user || !profile) return;
         

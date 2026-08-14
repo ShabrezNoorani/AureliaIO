@@ -97,7 +97,7 @@ export default function TodayToursPage() {
   // Calculate stats
   const totalTours = useMemo(() => {
     const s = new Set();
-    bookings.forEach(b => s.add(`${b.travel_time}_${b.product_code}_${b.option_selected}`));
+    bookings.forEach(b => s.add(`${b.travel_time}_${b.product_code}_${b.option_name}`));
     return s.size;
   }, [bookings]);
 
@@ -113,7 +113,7 @@ export default function TodayToursPage() {
   bookings.forEach(b => {
     const time = b.travel_time || 'No Time';
     const prod = b.product_name || b.product_code || 'Unknown Product';
-    const opt = b.option_selected || b.option_name || 'Standard';
+    const opt = b.option_name || 'Standard';
 
     if (!grouped[time]) grouped[time] = {};
     if (!grouped[time][prod]) grouped[time][prod] = {};
@@ -327,19 +327,10 @@ export default function TodayToursPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {gsheetAssignments.map(a => {
                   const guideInfo = guides.find(g => g.id === a.guide_id);
-                  const statusVal = (a.status || 'Assigned').trim();
-                  const isCompleted = statusVal === 'Completed';
-                  const isCancelled = statusVal === 'Cancelled';
-                  const borderColor = isCompleted
-                    ? 'border-green-500/60'
-                    : isCancelled
-                    ? 'border-gray-600/40'
-                    : 'border-[#f5a623]/50';
-                  const opacity = isCancelled ? 'opacity-50' : '';
                   return (
                     <div
                       key={a.id}
-                      className={`aurelia-card p-4 border-l-[3px] ${borderColor} ${opacity} space-y-1.5`}
+                      className="aurelia-card p-4 border-l-[3px] border-[#f5a623]/50 space-y-1.5"
                     >
                       <div className="flex items-center gap-2 text-sm font-bold text-white">
                         <span className="text-[#f5a623]">🕐</span>
@@ -351,15 +342,10 @@ export default function TodayToursPage() {
                         Guide: <span className="text-white font-semibold">{guideInfo?.name || a.guide_name || '—'}</span>
                         {a.language && <> · <span className="text-gray-300">{a.language}</span></>}
                       </div>
-                      <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center text-xs">
                         <span className="text-gray-400">
                           Pay: <span className="text-green-400 font-bold">€{Number(a.calculated_pay || 0).toFixed(0)}</span>
                         </span>
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${
-                          isCompleted ? 'bg-green-500/20 text-green-400' :
-                          isCancelled ? 'bg-gray-500/20 text-gray-500' :
-                          'bg-[#f5a623]/20 text-[#f5a623]'
-                        }`}>{statusVal}</span>
                       </div>
                     </div>
                   );

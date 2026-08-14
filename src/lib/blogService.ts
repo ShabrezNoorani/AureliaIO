@@ -8,7 +8,7 @@ export interface BlogInput {
   category: string;
   read_time: number;
   published: boolean;
-  published_at?: Date | string | null;
+  published_at?: string | null;
 }
 
 export interface Blog extends BlogInput {
