@@ -101,13 +101,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // A guide row with auth_user_id = this user means the account belongs to a guide, not an owner.
+  // A guide row belongs to a real guide only when auth_user_id = this user AND user_id
+  // (the owning company) is someone else. A guide row's user_id is always the owner's id,
+  // so if an owner ever claims their own guide row, auth_user_id = user_id = themselves —
+  // excluding that case here is what keeps an owner from being misclassified as a guide.
   const fetchRole = useCallback(async (userId: string) => {
     try {
       const { data, error } = await supabase
         .from('guides')
         .select('id, name, user_id')
         .eq('auth_user_id', userId)
+        .neq('user_id', userId)
         .maybeSingle();
 
       if (error) throw error;
