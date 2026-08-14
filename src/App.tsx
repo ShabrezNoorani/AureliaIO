@@ -20,6 +20,7 @@ import GuideDashboard from "./pages/GuideDashboard";
 import GuideLayout from "./pages/GuideLayout";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import TodayToursPage from "./pages/TodayToursPage";
+import DispatchPage from "./pages/DispatchPage";
 import ChangeLogPage from "./pages/ChangeLogPage";
 import CheckinApp from "./pages/CheckinApp";
 import GuideClaimPage from "./pages/GuideClaimPage";
@@ -81,6 +82,7 @@ const AppContent = () => {
             <Route path="guide-dashboard" element={<GuideDashboard />} />
             <Route path="assignments" element={<TourAssignmentsPage />} />
             <Route path="today" element={<TodayToursPage />} />
+            <Route path="dispatch" element={<DispatchPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="changelog" element={<ChangeLogPage />} />
           </Route>

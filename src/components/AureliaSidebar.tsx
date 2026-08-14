@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart } from 'lucide-react';
+import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart, Send } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, Profile } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'assignments' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'assignments' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -205,6 +205,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
               <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => handleNavigate('ledger')} indent />
               <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => handleNavigate('admin-costs')} indent />
               <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => handleNavigate('today')} indent />
+              <SidebarItem icon={Send} label="Dispatch" active={activeView === 'dispatch'} onClick={() => handleNavigate('dispatch', '/app/dispatch')} indent />
               <SidebarItem icon={List} label="Tour Assignments" active={activeView === 'assignments'} onClick={() => handleNavigate('assignments', '/app/assignments')} indent />
               <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => handleNavigate('guides', '/app/guides')} indent />
                <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => handleNavigate('guide-dashboard', '/app/guide-dashboard')} indent />

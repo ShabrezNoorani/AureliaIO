@@ -31,17 +31,28 @@ interface Checkin {
   display_name_override?: string | null;
 }
 
-interface Assignment {
-  travel_time: string;
-  product_code: string;
-  option_name: string;
-  guide_id: string;
+interface TourSession {
+  id: string;
+  label: string | null;
+  start_time: string | null;
+  tour_date: string;
 }
 
-export default function GuideCheckin() {
-  const { guideId, guideName, guideUserId } = useAuth();
+interface SessionBookingRow {
+  session_id: string;
+  booking_ref: string;
+}
 
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+const paxTotal = (b: Booking) =>
+  (Number(b.pax_adult) || 0) + (Number(b.pax_youth) || 0) + (Number(b.pax_child) || 0) + (Number(b.pax_infant) || 0);
+
+export default function GuideCheckin() {
+  const { guideName, guideUserId } = useAuth();
+
+  // RLS (via my_session_booking_refs()) already limits tour_sessions/session_bookings/bookings/
+  // checkins reads to this guide's own sessions — no client-side guide_id filtering needed here.
+  const [sessions, setSessions] = useState<TourSession[]>([]);
+  const [sessionBookings, setSessionBookings] = useState<SessionBookingRow[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [checkins, setCheckins] = useState<Checkin[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,23 +64,53 @@ export default function GuideCheckin() {
   });
 
   const loadData = async () => {
-    if (!guideId || !guideUserId) return;
+    if (!guideUserId) return;
     setLoading(true);
 
-    const [aRes, bRes, cRes] = await Promise.all([
-      supabase.from('guide_assignments').select('travel_time, product_code, option_name, guide_id')
-        .eq('user_id', guideUserId).eq('guide_id', guideId).eq('travel_date', today),
-      supabase.from('bookings').select('*')
-        .eq('user_id', guideUserId).eq('travel_date', today)
-        .not('status', 'in', '("CANCELLED_EARLY","CANCELLED_LATE")')
-        .order('travel_time', { ascending: true }),
+    const { data: sessionsData } = await supabase
+      .from('tour_sessions')
+      .select('id, label, start_time, tour_date')
+      .eq('user_id', guideUserId)
+      .eq('tour_date', today)
+      .order('start_time', { ascending: true });
+
+    const mySessions = sessionsData || [];
+    setSessions(mySessions);
+
+    const sessionIds = mySessions.map(s => s.id);
+    if (sessionIds.length === 0) {
+      setSessionBookings([]);
+      setBookings([]);
+      setCheckins([]);
+      setLoading(false);
+      return;
+    }
+
+    const { data: sbData } = await supabase
+      .from('session_bookings')
+      .select('session_id, booking_ref')
+      .eq('user_id', guideUserId)
+      .in('session_id', sessionIds);
+
+    const mySessionBookings = sbData || [];
+    setSessionBookings(mySessionBookings);
+
+    const refs = Array.from(new Set(mySessionBookings.map(sb => sb.booking_ref)));
+    if (refs.length === 0) {
+      setBookings([]);
+      setCheckins([]);
+      setLoading(false);
+      return;
+    }
+
+    const [bRes, cRes] = await Promise.all([
+      supabase.from('bookings').select('*').eq('user_id', guideUserId).in('booking_ref', refs),
       supabase.from('checkins').select('booking_ref, status, checked_in_at, display_name_override')
-        .eq('user_id', guideUserId).eq('travel_date', today),
+        .eq('user_id', guideUserId).eq('travel_date', today).in('booking_ref', refs),
     ]);
 
-    if (aRes.data) setAssignments(aRes.data);
-    if (bRes.data) setBookings(bRes.data);
-    if (cRes.data) setCheckins(cRes.data);
+    setBookings(bRes.data || []);
+    setCheckins(cRes.data || []);
     setLoading(false);
   };
 
@@ -77,21 +118,22 @@ export default function GuideCheckin() {
     loadData();
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
-  }, [guideId, guideUserId]);
+  }, [guideUserId]);
 
-  // Same grouping shape as the public check-in page (time + product code), but kept to
-  // only the groups this guide is actually assigned to today — never anyone else's tours.
-  const grouped = useMemo(() => {
-    const groups: Record<string, Booking[]> = {};
-    bookings.forEach(b => {
-      const isMine = assignments.some(a => a.travel_time === b.travel_time && a.product_code === b.product_code);
-      if (!isMine) return;
-      const key = `${b.travel_time} | ${b.product_code}`;
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(b);
+  // Bookings grouped strictly by the session they belong to — a guide only ever sees the
+  // sessions RLS returned for them, so two un-merged tours can never leak into each other.
+  const sessionBookingsMap = useMemo(() => {
+    const bookingByRef = new Map(bookings.map(b => [b.booking_ref, b]));
+    const map = new Map<string, Booking[]>();
+    sessionBookings.forEach(sb => {
+      const b = bookingByRef.get(sb.booking_ref);
+      if (!b) return;
+      const arr = map.get(sb.session_id) || [];
+      arr.push(b);
+      map.set(sb.session_id, arr);
     });
-    return groups;
-  }, [assignments, bookings]);
+    return map;
+  }, [sessionBookings, bookings]);
 
   const findCheckinRow = async (bookingRef: string) => {
     if (!guideUserId) return null;
@@ -123,7 +165,7 @@ export default function GuideCheckin() {
       return;
     }
 
-    const totalPax = (b.pax_adult || 0) + (b.pax_youth || 0) + (b.pax_child || 0) + (b.pax_infant || 0);
+    const totalPax = paxTotal(b);
     const checkinFields = {
       checked_in_at: new Date().toISOString(),
       checked_in_by: guideName || 'Guide',
@@ -179,6 +221,8 @@ export default function GuideCheckin() {
     loadData();
   };
 
+  const sessionsWithBookings = sessions.filter(s => (sessionBookingsMap.get(s.id) || []).length > 0);
+
   return (
     <div className="min-h-screen bg-[#060608] text-white">
       <div className="p-4 space-y-8 animate-fade-in max-w-[480px] mx-auto">
@@ -195,19 +239,25 @@ export default function GuideCheckin() {
             <div className="w-8 h-8 border-4 border-gold border-t-transparent animate-spin rounded-full" />
             <div className="text-[10px] font-bold uppercase tracking-[0.2em]">Synchronizing...</div>
           </div>
-        ) : Object.keys(grouped).length === 0 ? (
+        ) : sessionsWithBookings.length === 0 ? (
           <div className="text-center py-20 opacity-30">
             <div className="text-6xl mb-4 text-center">📭</div>
             <p className="text-sm font-bold uppercase tracking-widest">No tours assigned today</p>
           </div>
         ) : (
-          Object.entries(grouped).map(([key, groupBookings]) => {
-            const [time, code] = key.split(' | ');
-            const totalPax = groupBookings.reduce((sum, b) => sum + (b.pax_adult + b.pax_youth + b.pax_child + b.pax_infant), 0);
+          sessionsWithBookings.map(session => {
+            const sessionBookingsList = sessionBookingsMap.get(session.id) || [];
+            const totalPax = sessionBookingsList.reduce((sum, b) => sum + paxTotal(b), 0);
 
             return (
-              <TourGroup key={key} time={time} code={code} bookingsCount={groupBookings.length} totalPax={totalPax}>
-                {groupBookings.map(b => {
+              <TourGroup
+                key={session.id}
+                time={session.start_time || ''}
+                code={session.label || 'Session'}
+                bookingsCount={sessionBookingsList.length}
+                totalPax={totalPax}
+              >
+                {sessionBookingsList.map(b => {
                   const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
                   const isDone = cRecord?.status === 'checked_in';
                   const isNoShow = cRecord?.status === 'no_show';

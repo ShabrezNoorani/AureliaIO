@@ -8,6 +8,7 @@ import LedgerPage from '@/components/LedgerPage';
 import AdminCostsPage from '@/components/AdminCostsPage';
 import SettingsPage from '@/components/SettingsPage';
 import TodayToursPage from '@/pages/TodayToursPage';
+import DispatchPage from '@/pages/DispatchPage';
 import ExecutiveDashboard from '@/pages/ExecutiveDashboard';
 import AnalyticsPage from '@/pages/AnalyticsPage';
 import GuidesPage from '@/pages/GuidesPage';
@@ -20,7 +21,7 @@ import { useAuth } from '@/context/AuthContext';
 import { syncMasterData } from '@/lib/gsheetSync';
 import { syncFromBokun } from '@/lib/bokunSync';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'assignments' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'assignments' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 const AppLayout = () => {
   const { user, profile } = useAuth();
@@ -56,6 +57,7 @@ const AppLayout = () => {
     else if (path.includes('/guide-dashboard')) setView('guide-dashboard');
     else if (path.includes('/marketplace')) setView('marketplace');
     else if (path.includes('/today')) setView('today');
+    else if (path.includes('/dispatch')) setView('dispatch');
     else if (path.includes('/ledger')) setView('ledger');
     else if (path.includes('/admin-costs')) setView('admin-costs');
     else if (path.includes('/analytics')) setView('analytics');
@@ -251,6 +253,7 @@ const AppLayout = () => {
           />
         )}
         {view === 'today' && <TodayToursPage />}
+        {view === 'dispatch' && <DispatchPage />}
         {view === 'executive' && <ExecutiveDashboard />}
         {view === 'analytics' && <AnalyticsPage />}
         {view === 'settings' && <SettingsPage />}

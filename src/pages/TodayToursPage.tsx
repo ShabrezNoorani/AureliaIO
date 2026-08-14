@@ -18,6 +18,8 @@ export default function TodayToursPage() {
   const [gsheetAssignments, setGsheetAssignments] = useState<any[]>([]);
   const [optionRates, setOptionRates] = useState<any[]>([]);
   const [checkins, setCheckins] = useState<any[]>([]);
+  const [sessionBookings, setSessionBookings] = useState<any[]>([]);
+  const [sessionGuides, setSessionGuides] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
 
@@ -38,13 +40,14 @@ export default function TodayToursPage() {
     const today = new Date().toISOString().split('T')[0];
     setTodayStrDate(today);
 
-    const [bRes, gRes, aRes, gsRes, cRes, rRes] = await Promise.all([
+    const [bRes, gRes, aRes, gsRes, cRes, rRes, sessRes] = await Promise.all([
       supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', today).not('status', 'in', '("CANCELLED_EARLY","CANCELLED_LATE")').order('travel_time', { ascending: true }),
       supabase.from('guides').select('*').eq('user_id', user.id).eq('status', 'active'),
       supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today),
       supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today).eq('sync_source', 'gsheet_assignments').order('travel_time', { ascending: true }),
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
-      supabase.from('guide_option_rates').select('*').eq('user_id', user.id)
+      supabase.from('guide_option_rates').select('*').eq('user_id', user.id),
+      supabase.from('tour_sessions').select('id').eq('user_id', user.id).eq('tour_date', today),
     ]);
 
     if (bRes.data) setBookings(bRes.data);
@@ -53,6 +56,21 @@ export default function TodayToursPage() {
     if (gsRes.data) setGsheetAssignments(gsRes.data);
     if (cRes.data) setCheckins(cRes.data);
     if (rRes.data) setOptionRates(rRes.data);
+
+    // Sessions built via Dispatch take priority for showing an assigned guide — fetch their
+    // booking/guide links so the group header below can prefer them over legacy assignments.
+    const sessionIds = (sessRes.data || []).map((s: any) => s.id);
+    if (sessionIds.length > 0) {
+      const [sbRes, sgRes] = await Promise.all([
+        supabase.from('session_bookings').select('session_id, booking_ref').eq('user_id', user.id).in('session_id', sessionIds),
+        supabase.from('session_guides').select('session_id, guide_id').eq('user_id', user.id).in('session_id', sessionIds),
+      ]);
+      setSessionBookings(sbRes.data || []);
+      setSessionGuides(sgRes.data || []);
+    } else {
+      setSessionBookings([]);
+      setSessionGuides([]);
+    }
 
     setLoading(false);
   };
@@ -126,6 +144,26 @@ export default function TodayToursPage() {
     const override = cRecord?.display_name_override;
     return override && String(override).trim() ? override : b.customer_name;
   };
+
+  // Dispatch-built sessions take priority over the legacy guide_assignments list when a
+  // booking belongs to one.
+  const bookingRefToSessionId = useMemo(() => {
+    const m = new Map<string, string>();
+    sessionBookings.forEach((sb: any) => m.set(sb.booking_ref, sb.session_id));
+    return m;
+  }, [sessionBookings]);
+
+  const sessionIdToGuideNames = useMemo(() => {
+    const m = new Map<string, string[]>();
+    sessionGuides.forEach((sg: any) => {
+      const guideName = guides.find(g => g.id === sg.guide_id)?.name;
+      if (!guideName) return;
+      const arr = m.get(sg.session_id) || [];
+      arr.push(guideName);
+      m.set(sg.session_id, arr);
+    });
+    return m;
+  }, [sessionGuides, guides]);
 
   // Action handlers
   const handleRemoveAssignment = async (id: string) => {
@@ -359,6 +397,10 @@ export default function TodayToursPage() {
                         // Filter assignments for THIS tour group
                         const grpAssigns = assignments.filter(a => a.travel_time === time && (a.product_code === prod || a.product_name === prod) && a.option_name === opt);
 
+                        // Prefer the Dispatch session's guide(s) over the legacy assignment list when this group's bookings are in a session.
+                        const groupSessionId = rowBookings.map(b => bookingRefToSessionId.get(b.booking_ref)).find(Boolean);
+                        const sessionGuideNames = groupSessionId ? (sessionIdToGuideNames.get(groupSessionId) || []) : [];
+
                         return (
                           <div key={opt} className="aurelia-card overflow-hidden border border-[#f5a623]/10 shadow-lg" style={{ borderColor: 'hsl(var(--theme-border))' }}>
                             {/* Group Header */}
@@ -381,8 +423,19 @@ export default function TodayToursPage() {
                               </div>
                             </div>
 
-                            {/* Assigned Guides List */}
-                            {grpAssigns.length > 0 && (
+                            {/* Assigned Guides List — Dispatch session guides win over legacy assignments */}
+                            {groupSessionId && sessionGuideNames.length > 0 ? (
+                              <div className="bg-[#13131a] border-b border-white/5 px-6 py-3">
+                                <p className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-2">Session Guide{sessionGuideNames.length > 1 ? 's' : ''}</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {sessionGuideNames.map(name => (
+                                    <span key={name} className="text-xs font-bold bg-purple-500/10 text-purple-300 px-3 py-1.5 rounded-full border border-purple-500/20 flex items-center gap-1.5">
+                                      <Users size={12} /> {name}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : grpAssigns.length > 0 && (
                               <div className="bg-[#13131a] border-b border-white/5 px-6 py-3 divide-y divide-white/5">
                                 {grpAssigns.map(a => {
                                     const guideInfo = guides.find(g => g.id === a.guide_id);
