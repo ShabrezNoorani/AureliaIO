@@ -782,17 +782,29 @@ export type Database = {
       session_guides: {
         Row: {
           guide_id: string
+          offered_at: string | null
+          reassigned_from: string | null
+          responded_at: string | null
           session_id: string
+          status: string
           user_id: string
         }
         Insert: {
           guide_id: string
+          offered_at?: string | null
+          reassigned_from?: string | null
+          responded_at?: string | null
           session_id: string
+          status?: string
           user_id: string
         }
         Update: {
           guide_id?: string
+          offered_at?: string | null
+          reassigned_from?: string | null
+          responded_at?: string | null
           session_id?: string
+          status?: string
           user_id?: string
         }
         Relationships: [
@@ -858,6 +870,14 @@ export type Database = {
       my_assigned_booking_refs: { Args: never; Returns: string[] }
       my_company_owner_id: { Args: never; Returns: string }
       my_session_booking_refs: { Args: never; Returns: string[] }
+      reassign_my_slot: {
+        Args: { p_session_id: string; p_to_guide: string }
+        Returns: undefined
+      }
+      respond_to_offer: {
+        Args: { p_accept: boolean; p_session_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never

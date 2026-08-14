@@ -47,7 +47,7 @@ const paxTotal = (b: Booking) =>
   (Number(b.pax_adult) || 0) + (Number(b.pax_youth) || 0) + (Number(b.pax_child) || 0) + (Number(b.pax_infant) || 0);
 
 export default function GuideCheckin() {
-  const { guideName, guideUserId } = useAuth();
+  const { guideId, guideName, guideUserId } = useAuth();
 
   // RLS (via my_session_booking_refs()) already limits tour_sessions/session_bookings/bookings/
   // checkins reads to this guide's own sessions — no client-side guide_id filtering needed here.
@@ -64,14 +64,34 @@ export default function GuideCheckin() {
   });
 
   const loadData = async () => {
-    if (!guideUserId) return;
+    if (!guideId || !guideUserId) return;
     setLoading(true);
+
+    // Only sessions this guide has actually ACCEPTED show up for check-in — offered-but-unanswered
+    // and declined/reassigned sessions must never appear here.
+    const { data: sgData } = await supabase
+      .from('session_guides')
+      .select('session_id')
+      .eq('user_id', guideUserId)
+      .eq('guide_id', guideId)
+      .eq('status', 'accepted');
+
+    const acceptedSessionIds = (sgData || []).map(sg => sg.session_id);
+    if (acceptedSessionIds.length === 0) {
+      setSessions([]);
+      setSessionBookings([]);
+      setBookings([]);
+      setCheckins([]);
+      setLoading(false);
+      return;
+    }
 
     const { data: sessionsData } = await supabase
       .from('tour_sessions')
       .select('id, label, start_time, tour_date')
       .eq('user_id', guideUserId)
       .eq('tour_date', today)
+      .in('id', acceptedSessionIds)
       .order('start_time', { ascending: true });
 
     const mySessions = sessionsData || [];
@@ -118,7 +138,7 @@ export default function GuideCheckin() {
     loadData();
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
-  }, [guideUserId]);
+  }, [guideId, guideUserId]);
 
   // Bookings grouped strictly by the session they belong to — a guide only ever sees the
   // sessions RLS returned for them, so two un-merged tours can never leak into each other.

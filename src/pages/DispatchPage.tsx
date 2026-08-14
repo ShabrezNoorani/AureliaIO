@@ -39,6 +39,10 @@ interface SessionGuideRow {
   session_id: string;
   guide_id: string;
   user_id: string;
+  status: string;
+  offered_at: string | null;
+  responded_at: string | null;
+  reassigned_from: string | null;
 }
 
 interface Guide {
@@ -59,6 +63,13 @@ interface NaturalGroup {
 
 const paxTotal = (b: Booking) =>
   (Number(b.pax_adult) || 0) + (Number(b.pax_youth) || 0) + (Number(b.pax_child) || 0) + (Number(b.pax_infant) || 0);
+
+const STATUS_BADGE: Record<string, { label: string; className: string }> = {
+  offered: { label: 'Offered', className: 'bg-amber-500/15 text-amber-400' },
+  accepted: { label: 'Accepted', className: 'bg-green-500/15 text-green-400' },
+  declined: { label: 'Declined', className: 'bg-red-500/15 text-red-400' },
+  reassigned: { label: 'Reassigned', className: 'bg-white/10 text-muted-foreground' },
+};
 
 export default function DispatchPage() {
   const { user } = useAuth();
@@ -147,15 +158,17 @@ export default function DispatchPage() {
     return m;
   }, [sessionBookings]);
 
-  const sessionIdToGuideIds = useMemo(() => {
-    const m = new Map<string, string[]>();
+  const sessionIdToGuideRows = useMemo(() => {
+    const m = new Map<string, SessionGuideRow[]>();
     sessionGuides.forEach(sg => {
       const arr = m.get(sg.session_id) || [];
-      arr.push(sg.guide_id);
+      arr.push(sg);
       m.set(sg.session_id, arr);
     });
     return m;
   }, [sessionGuides]);
+
+  const guideById = useMemo(() => new Map(guides.map(g => [g.id, g])), [guides]);
 
   const sessionIdToBookings = useMemo(() => {
     const bookingByRef = new Map(bookings.map(b => [b.booking_ref, b]));
@@ -277,13 +290,30 @@ export default function DispatchPage() {
     await loadData();
   };
 
-  const handleToggleSessionGuide = async (sessionId: string, guideId: string, isAssigned: boolean) => {
+  // A fresh assignment always starts as an offer the guide must accept or decline.
+  const handleOfferGuide = async (sessionId: string, guideId: string) => {
     if (!user) return;
-    if (isAssigned) {
-      await supabase.from('session_guides').delete().eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
-    } else {
-      await supabase.from('session_guides').insert({ session_id: sessionId, guide_id: guideId, user_id: user.id });
-    }
+    await supabase.from('session_guides').insert({
+      session_id: sessionId,
+      guide_id: guideId,
+      user_id: user.id,
+      status: 'offered',
+    });
+    await loadData();
+  };
+
+  const handleRemoveGuide = async (sessionId: string, guideId: string) => {
+    if (!user) return;
+    await supabase.from('session_guides').delete().eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
+    await loadData();
+  };
+
+  // Puts a declined offer back in front of the guide.
+  const handleReofferGuide = async (sessionId: string, guideId: string) => {
+    if (!user) return;
+    await supabase.from('session_guides')
+      .update({ status: 'offered', offered_at: new Date().toISOString(), responded_at: null })
+      .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
     await loadData();
   };
 
@@ -461,7 +491,8 @@ export default function DispatchPage() {
                 {sessions.map(session => {
                   const sBookings = sessionIdToBookings.get(session.id) || [];
                   const sPax = sBookings.reduce((s, b) => s + paxTotal(b), 0);
-                  const assignedGuideIds = sessionIdToGuideIds.get(session.id) || [];
+                  const sGuideRows = sessionIdToGuideRows.get(session.id) || [];
+                  const assignedGuideIds = sGuideRows.map(r => r.guide_id);
                   const isEditingLabel = editingLabelId === session.id;
 
                   return (
@@ -511,22 +542,53 @@ export default function DispatchPage() {
 
                       <div>
                         <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest block mb-1.5">Assigned Guide(s)</label>
-                        <div className="flex flex-wrap gap-2">
-                          {guides.length === 0 ? (
-                            <span className="text-xs text-muted-foreground">No active guides.</span>
-                          ) : guides.map(g => {
-                            const isAssigned = assignedGuideIds.includes(g.id);
+                        <div className="space-y-1.5">
+                          {sGuideRows.length === 0 ? (
+                            <p className="text-xs text-muted-foreground italic">No guides offered yet.</p>
+                          ) : sGuideRows.map(sg => {
+                            const guide = guideById.get(sg.guide_id);
+                            const fromGuide = sg.reassigned_from ? guideById.get(sg.reassigned_from) : null;
+                            const badge = STATUS_BADGE[sg.status] || STATUS_BADGE.offered;
                             return (
-                              <button
-                                key={g.id}
-                                onClick={() => handleToggleSessionGuide(session.id, g.id, isAssigned)}
-                                className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${isAssigned ? 'bg-gold/15 border-gold/40 text-gold' : 'bg-white/5 border-white/10 text-muted-foreground hover:text-white'}`}
-                              >
-                                {g.name}
-                              </button>
+                              <div key={sg.guide_id} className="flex flex-wrap items-center justify-between gap-2 bg-white/[0.02] rounded-lg px-3 py-2">
+                                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                                  <span className="text-sm font-bold text-foreground truncate">{guide?.name || 'Unknown guide'}</span>
+                                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${badge.className}`}>
+                                    {badge.label}{sg.status === 'reassigned' ? ` from ${fromGuide?.name || 'another guide'}` : ''}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {sg.status === 'declined' && (
+                                    <button
+                                      onClick={() => handleReofferGuide(session.id, sg.guide_id)}
+                                      className="text-[10px] font-bold text-gold hover:underline px-1.5 py-1"
+                                    >
+                                      Re-offer
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => handleRemoveGuide(session.id, sg.guide_id)}
+                                    title="Remove guide"
+                                    className="text-muted-foreground hover:text-red-400 p-1"
+                                  >
+                                    <X size={13} />
+                                  </button>
+                                </div>
+                              </div>
                             );
                           })}
                         </div>
+
+                        <select
+                          value=""
+                          onChange={e => { const v = e.target.value; if (v) handleOfferGuide(session.id, v); }}
+                          className="aurelia-input w-auto text-xs py-1.5 mt-2"
+                        >
+                          <option value="">+ Offer a guide…</option>
+                          {guides.filter(g => !assignedGuideIds.includes(g.id)).map(g => (
+                            <option key={g.id} value={g.id}>{g.name}</option>
+                          ))}
+                        </select>
                       </div>
 
                       <div className="space-y-1.5 max-h-56 overflow-y-auto aurelia-scrollbar">
