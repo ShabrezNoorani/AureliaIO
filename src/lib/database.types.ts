@@ -859,6 +859,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      add_my_rating: {
+        Args: {
+          p_note: string
+          p_quantity: number
+          p_source: string
+          p_stars: number
+        }
+        Returns: undefined
+      }
       claim_guide_account: { Args: { p_token: string }; Returns: boolean }
       get_claim_info: {
         Args: { p_token: string }

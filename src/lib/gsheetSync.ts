@@ -116,7 +116,7 @@ export async function syncMasterData(
   sheetId: string,
   userId: string,
   supabase: SupabaseClient
-): Promise<{ imported: number; updated: number; skipped: number; error?: string }> {
+): Promise<{ imported: number; updated: number; unchanged: number; skipped: number; error?: string }> {
   console.log('[GSheet Sync] Starting sync for userId:', userId);
 
   // Fetch CSV
@@ -129,14 +129,14 @@ export async function syncMasterData(
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return {
-      imported: 0, updated: 0, skipped: 0,
+      imported: 0, updated: 0, unchanged: 0, skipped: 0,
       error: `Could not access Google Sheet. Make sure it is set to "Anyone with the link can view" in Google Sheets sharing settings. (${message})`,
     };
   }
 
   const rows = parseCsvText(csvText);
   console.log('[GSheet Sync] Total rows (including header):', rows.length);
-  if (rows.length < 2) return { imported: 0, updated: 0, skipped: 0 };
+  if (rows.length < 2) return { imported: 0, updated: 0, unchanged: 0, skipped: 0 };
 
   // Skip header (row 0)
   const dataRows = rows.slice(1);
@@ -153,29 +153,46 @@ export async function syncMasterData(
     });
   }
 
+  // Reconcile by booking number (bookings.booking_ref — the sheet's "Booking Number" column,
+  // cols[2]) instead of blindly overwriting: pull every existing row for this owner once, then
+  // insert what's missing and update only what actually changed. Rows missing from this sheet
+  // pull are left untouched — a sync only ever inserts/updates, it never deletes.
+  const { data: existingRows, error: existingErr } = await supabase
+    .from('bookings')
+    .select('*')
+    .eq('user_id', userId);
+
+  if (existingErr) {
+    return {
+      imported: 0, updated: 0, unchanged: 0, skipped: 0,
+      error: `Could not load existing bookings before sync: ${existingErr.message}`,
+    };
+  }
+
+  const existingByRef = new Map<string, Record<string, any>>();
+  (existingRows || []).forEach(r => {
+    if (r.booking_ref) existingByRef.set(r.booking_ref, r);
+  });
+
   let imported = 0;
   let updated = 0;
+  let unchanged = 0;
   let skipped = 0;
-  let rowIndex = 0;
 
   for (const cols of dataRows) {
     const bookingRef = (cols[2] || '').trim();
-    const channelRaw = cols[11];
-    
-    console.log('Row:', rowIndex++, 'col3:', cols[3], 'channel:', channelRaw, 'bookingRef:', cols[2]);
-
     if (!bookingRef) { skipped++; continue; } // only skip if no booking ref
 
     const channel = CHANNEL_MAP[cols[11]] || 'Other';
     const grossRevenue = parseEuro(cols[17]);
-    
+
     let commissionRateForm = parseFloat((cols[18] || '').replace(/[^0-9.]/g, '')) || 0;
     if (commissionRateForm > 0 && commissionRateForm <= 1) {
       commissionRateForm = +(commissionRateForm * 100).toFixed(2);
     }
     const commissionRate = commissionRateForm;
     const marketplaceFee = parseEuro(cols[19]);
-    
+
     let commissionAmount = 0;
     if (marketplaceFee > 0) {
       commissionAmount = marketplaceFee;
@@ -189,22 +206,17 @@ export async function syncMasterData(
     const ticketCost = parseEuro(cols[23]);
     const netProfit = parseEuro(cols[24]);
     const statusRaw = (cols[25] || '').toUpperCase().trim();
-    const status = STATUS_MAP[statusRaw] || 'UPCOMING';
+    const sheetStatus = STATUS_MAP[statusRaw] || 'UPCOMING';
     const assignedGuide = cols[26] || '';
 
     const travelDate = parseLongDate(cols[9]);
     const bookingDate = parseLongDate(cols[33]);
 
-    console.log('INSERTING:', {
-      booking_ref: cols[2],
-      ext_ref: cols[3],
-      channel: cols[11]
-    });
-
-    const booking: Record<string, unknown> = {
-      user_id: userId,
-      booking_ref: cols[2]?.toString().trim() || null,
-      ext_ref: cols[3]?.toString().trim() || null,
+    // Sheet-sourced fields only (customer, pax, times, product/option, financials, source).
+    // Deliberately excludes `notes` — that's AURELIA's own operational data, never the sheet's,
+    // so a sync must never blank it out. checkins/tour_sessions/session_bookings/session_guides/
+    // guide_ratings are separate tables entirely and this function never touches them.
+    const sheetFields: Record<string, unknown> = {
       product_name: cols[4] || '',
       option_name: cols[5] || '',
       customer_name: cols[6] || '',
@@ -225,34 +237,60 @@ export async function syncMasterData(
       extra_cost: extraCost,
       ticket_cost: ticketCost,
       net_profit: netProfit,
-      status,
+      status: sheetStatus,
       assigned_guide: assignedGuide,
-      notes: '',
-      sync_source: 'gsheet'
+      ext_ref: cols[3]?.toString().trim() || null,
+      sync_source: 'gsheet',
     };
+    if (travelDate) sheetFields.travel_date = travelDate;
+    if (bookingDate) sheetFields.booking_date = bookingDate;
 
-    // Only include dates if valid
-    if (travelDate) booking.travel_date = travelDate;
-    if (bookingDate) booking.booking_date = bookingDate;
+    const existing = existingByRef.get(bookingRef);
 
-    // Unified UPSERT
-    const { error: upsertErr } = await supabase
+    if (!existing) {
+      const { error: insertErr } = await supabase
+        .from('bookings')
+        .insert({ user_id: userId, booking_ref: bookingRef, ...sheetFields });
+
+      if (insertErr) {
+        console.error('[GSheet Sync] Insert error for ref', bookingRef, ':', insertErr);
+        skipped++;
+      } else {
+        imported++;
+      }
+      continue;
+    }
+
+    // A booking already marked DONE was locally checked in (see TodayToursPage.tsx /
+    // GuideCheckin.tsx, the only two places bookings.status is ever set to 'DONE'). A sheet pull
+    // that hasn't caught up yet must never revert that back to UPCOMING or anything else.
+    const target = existing.status === 'DONE' ? { ...sheetFields, status: 'DONE' } : sheetFields;
+
+    const changedFields: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(target)) {
+      if (existing[key] !== value) changedFields[key] = value;
+    }
+
+    if (Object.keys(changedFields).length === 0) {
+      unchanged++;
+      continue;
+    }
+
+    const { error: updateErr } = await supabase
       .from('bookings')
-      .upsert(booking, { 
-        onConflict: 'booking_ref,user_id',
-        ignoreDuplicates: false 
-      });
+      .update(changedFields)
+      .eq('id', existing.id);
 
-    if (upsertErr) {
-      console.error('[GSheet Sync] Upsert error for ref', bookingRef, ':', upsertErr);
+    if (updateErr) {
+      console.error('[GSheet Sync] Update error for ref', bookingRef, ':', updateErr);
       skipped++;
     } else {
-      imported++; // For simplicity, treating all upserts as imported/updated
+      updated++;
     }
   }
 
-  console.log('[GSheet Sync] Done:', { imported, updated, skipped });
-  return { imported, updated, skipped };
+  console.log('[GSheet Sync] Done:', { imported, updated, unchanged, skipped });
+  return { imported, updated, unchanged, skipped };
 }
 
 // ──────────── SYNC ADMIN COSTS ────────────

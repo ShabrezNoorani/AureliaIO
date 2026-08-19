@@ -69,14 +69,11 @@ export default function GuideReviews() {
     setSubmitting(true);
     setError('');
     try {
-      // add_my_rating is a live RPC that isn't in the generated database.types.ts yet
-      // (regenerate the types file to remove this cast) — it lets a guide log an
-      // unverified rating against their own guide_id, enforced server-side.
-      const { error: rpcError } = await (supabase.rpc as any)('add_my_rating', {
+      const { error: rpcError } = await supabase.rpc('add_my_rating', {
         p_stars: formStars,
         p_quantity: formQuantity,
-        p_source: formSource.trim() || null,
-        p_note: formNote.trim() || null,
+        p_source: formSource.trim(),
+        p_note: formNote.trim(),
       });
       if (rpcError) throw rpcError;
 

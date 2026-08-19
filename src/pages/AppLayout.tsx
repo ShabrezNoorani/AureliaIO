@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Menu } from 'lucide-react';
 import AureliaSidebar from '@/components/AureliaSidebar';
 import Dashboard from '@/components/Dashboard';
@@ -91,6 +91,40 @@ const AppLayout = () => {
       });
     }
   }, [user, bookingsLoaded, adminCostsLoaded]);
+
+  // NEW-BOOKING BADGE
+  // bookings.created_at is the per-row timestamp that already exists on the table — a sync
+  // upsert never touches it on existing rows, so it only advances when a booking is genuinely
+  // new. "Last seen" itself has no natural database home (it's per-owner UI state, not sheet
+  // data), so it's tracked in localStorage instead of adding a column.
+  const [lastSeenBookingsAt, setLastSeenBookingsAt] = useState<number>(0);
+
+  useEffect(() => {
+    if (!user) return;
+    const key = `aurelia_bookings_last_seen_${user.id}`;
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      setLastSeenBookingsAt(parseInt(stored, 10) || 0);
+    } else {
+      // First time this ships for this owner: treat everything that already exists as seen,
+      // rather than surfacing their entire existing booking history as "new".
+      const now = Date.now();
+      localStorage.setItem(key, String(now));
+      setLastSeenBookingsAt(now);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (view !== 'ledger' || !user) return;
+    const now = Date.now();
+    localStorage.setItem(`aurelia_bookings_last_seen_${user.id}`, String(now));
+    setLastSeenBookingsAt(now);
+  }, [view, user]);
+
+  const newBookingsCount = useMemo(() => {
+    if (!lastSeenBookingsAt) return 0;
+    return bookings.filter(b => b.created_at && new Date(b.created_at).getTime() > lastSeenBookingsAt).length;
+  }, [bookings, lastSeenBookingsAt]);
 
   // AUTO SYNC LOGIC
   const [lastSynced, setLastSynced] = useState<number | null>(null);
@@ -194,6 +228,7 @@ const AppLayout = () => {
         onNewProduct={handleNewProduct}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
+        newBookingsCount={newBookingsCount}
       />
 
       <main className="flex-1 min-w-0 ml-0 md:ml-[240px]">

@@ -220,7 +220,7 @@ export default function SettingsPage() {
       if (force) await supabase.from('bookings').delete().eq('user_id', user.id);
       const res = await syncMasterData(sheetId, user.id, supabase);
       if (res.error) setGsheetSyncMsg(`❌ ${res.error}`);
-      else setGsheetSyncMsg(`✅ Imported ${res.imported} · Updated ${res.updated} · Skipped ${res.skipped}`);
+      else setGsheetSyncMsg(`✅ ${res.imported} new · ${res.updated} updated · ${res.unchanged} unchanged${res.skipped ? ` · ${res.skipped} skipped` : ''}`);
     } catch (e) {
       setGsheetSyncMsg('❌ Sync failed');
     } finally {

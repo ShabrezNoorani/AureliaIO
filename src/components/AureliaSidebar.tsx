@@ -15,6 +15,7 @@ interface AureliaSidebarProps {
   onNewProduct: () => void;
   mobileOpen?: boolean;
   onCloseMobile?: () => void;
+  newBookingsCount?: number;
 }
 
 interface SidebarItemProps {
@@ -25,18 +26,19 @@ interface SidebarItemProps {
   disabled?: boolean;
   indent?: boolean;
   title?: string;
+  badge?: number;
 }
 
-const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, title }: SidebarItemProps) => {
+const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, title, badge }: SidebarItemProps) => {
   const [isHovered, setIsHovered] = useState(false);
-  
+
   const baseClasses = `w-full flex items-center space-x-3 py-2.5 rounded-lg transition-all duration-200 font-medium ${indent ? 'pl-[28px] pr-4 text-[12px]' : 'px-4 text-sm'}`;
-  
+
   const activeBg = 'hsl(var(--theme-accent) / 0.15)';
   const activeColor = 'hsl(var(--theme-accent))';
   const inactiveColor = 'hsl(var(--theme-text-sec))';
   const hoverColor = 'hsl(var(--theme-text))';
-  
+
   return (
     <button
       onClick={disabled ? undefined : onClick}
@@ -52,7 +54,15 @@ const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, tit
       }}
     >
       <Icon size={indent ? 16 : 18} strokeWidth={active ? 2.5 : 1.8} />
-      <span>{label}</span>
+      <span className="flex-1 min-w-0 text-left truncate">{label}</span>
+      {!!badge && badge > 0 && (
+        <span
+          className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center"
+          style={{ backgroundColor: 'hsl(var(--theme-accent))', color: 'hsl(var(--theme-sidebar))' }}
+        >
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </button>
   );
 };
@@ -92,7 +102,7 @@ function TrialStatusPill({ profile }: { profile: Profile | null }) {
   );
 }
 
-export default function AureliaSidebar({ activeView, companyName, onNavigate, onNewProduct, mobileOpen = false, onCloseMobile = () => {} }: AureliaSidebarProps) {
+export default function AureliaSidebar({ activeView, companyName, onNavigate, onNewProduct, mobileOpen = false, onCloseMobile = () => {}, newBookingsCount = 0 }: AureliaSidebarProps) {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
 
@@ -202,7 +212,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
 
           {operationsExpanded && (
             <div className="mt-1 flex flex-col space-y-0.5">
-              <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => handleNavigate('ledger')} indent />
+              <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => handleNavigate('ledger')} indent badge={newBookingsCount} />
               <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => handleNavigate('admin-costs')} indent />
               <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => handleNavigate('today')} indent />
               <SidebarItem icon={Send} label="Dispatch" active={activeView === 'dispatch'} onClick={() => handleNavigate('dispatch', '/app/dispatch')} indent />

@@ -237,7 +237,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       const res = await syncMasterData(sheetId, user.id, supabase);
       if (res.error) setSyncMsg(`❌ ${res.error}`);
       else {
-        setSyncMsg(`✅ Imported ${res.imported} new · Updated ${res.updated} · Skipped ${res.skipped}`);
+        setSyncMsg(`✅ ${res.imported} new · ${res.updated} updated · ${res.unchanged} unchanged${res.skipped ? ` · ${res.skipped} skipped` : ''}`);
         onSync(); // Tell AppLayout to refetch
       }
     } catch {
