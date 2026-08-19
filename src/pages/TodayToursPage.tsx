@@ -1,12 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, UserPlus, Users, X, Share2, Copy, Check, Shuffle } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Clock, Calendar as CalendarIcon, Share2, Check, Search, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
-import { reassignSessionBookings } from '@/lib/sessionMoves';
-import { computeBalance } from '@/lib/allocationBalance';
+import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
 import { localDateStr } from '@/lib/utils';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
@@ -16,15 +14,21 @@ import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
 
+interface SessionGuestRow {
+  booking: any;
+  displayName: string;
+  pax: number;
+  isCheckedIn: boolean;
+  isNoShow: boolean;
+  checkedInAt: string | null;
+  allottedGuideId: string | null;
+}
+
 export default function TodayToursPage() {
   const { user, profile } = useAuth();
-  const navigate = useNavigate();
 
   const [bookings, setBookings] = useState<any[]>([]);
   const [guides, setGuides] = useState<any[]>([]);
-  const [assignments, setAssignments] = useState<any[]>([]);
-  const [gsheetAssignments, setGsheetAssignments] = useState<any[]>([]);
-  const [optionRates, setOptionRates] = useState<any[]>([]);
   const [checkins, setCheckins] = useState<any[]>([]);
   const [sessions, setSessions] = useState<any[]>([]);
   const [sessionBookings, setSessionBookings] = useState<any[]>([]);
@@ -34,8 +38,6 @@ export default function TodayToursPage() {
 
   const [todayStrDate, setTodayStrDate] = useState(localDateStr());
 
-  // Modal states
-  const [assignModal, setAssignModal] = useState<any | null>(null);
   const [showConfirm, setShowConfirm] = useState<any | null>(null);
   const [copied, setCopied] = useState(false);
   const [balancingSessionId, setBalancingSessionId] = useState<string | null>(null);
@@ -45,28 +47,21 @@ export default function TodayToursPage() {
     const today = localDateStr();
     setTodayStrDate(today);
 
-    const [bRes, gRes, aRes, gsRes, cRes, rRes, sessRes] = await Promise.all([
+    const [bRes, gRes, cRes, sessRes] = await Promise.all([
       supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', today).not('status', 'in', '("CANCELLED_EARLY","CANCELLED_LATE")').order('travel_time', { ascending: true }),
       supabase.from('guides').select('*').eq('user_id', user.id).eq('status', 'active'),
-      supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today),
-      supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today).eq('sync_source', 'gsheet_assignments').order('travel_time', { ascending: true }),
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
-      supabase.from('guide_option_rates').select('*').eq('user_id', user.id),
-      supabase.from('tour_sessions').select('id, label, start_time, tour_date').eq('user_id', user.id).eq('tour_date', today),
+      supabase.from('tour_sessions').select('id, label, start_time, tour_date').eq('user_id', user.id).eq('tour_date', today).order('start_time', { ascending: true }),
     ]);
 
-    if (bRes.data) setBookings(bRes.data);
-    if (gRes.data) setGuides(gRes.data);
-    if (aRes.data) setAssignments(aRes.data);
-    if (gsRes.data) setGsheetAssignments(gsRes.data);
-    if (cRes.data) setCheckins(cRes.data);
-    if (rRes.data) setOptionRates(rRes.data);
+    setBookings(bRes.data || []);
+    setGuides(gRes.data || []);
+    setCheckins(cRes.data || []);
 
-    // Sessions built via Dispatch take priority for showing an assigned guide — fetch their
-    // booking/guide links so the group header below can prefer them over legacy assignments.
     const sessionsData = sessRes.data || [];
     setSessions(sessionsData);
     const sessionIds = sessionsData.map((s: any) => s.id);
+
     if (sessionIds.length > 0) {
       const [sbRes, sgRes] = await Promise.all([
         supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
@@ -101,38 +96,6 @@ export default function TodayToursPage() {
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   });
 
-  // Calculate stats
-  const totalTours = useMemo(() => {
-    const s = new Set();
-    bookings.forEach(b => s.add(`${b.travel_time}_${b.product_code}_${b.option_name}`));
-    return s.size;
-  }, [bookings]);
-
-  const totalPaxExp = bookings.reduce((sum, b) => sum + paxTotal(b), 0);
-  const totalPaxChecked = checkins
-    .filter(c => c.status === 'checked_in')
-    .reduce((sum, c) => sum + (Number(c.pax_checked_in) || 0), 0);
-  const totalGuides = new Set(assignments.map(a => a.guide_id)).size;
-  const totalGuideCosts = assignments.reduce((sum, a) => sum + Number(a.calculated_pay || 0), 0);
-
-  // Group bookings
-  const grouped: Record<string, Record<string, Record<string, any[]>>> = {};
-  bookings.forEach(b => {
-    const time = b.travel_time || 'No Time';
-    const prod = b.product_name || b.product_code || 'Unknown Product';
-    const opt = b.option_name || 'Standard';
-
-    if (!grouped[time]) grouped[time] = {};
-    if (!grouped[time][prod]) grouped[time][prod] = {};
-    if (!grouped[time][prod][opt]) grouped[time][prod][opt] = [];
-
-    grouped[time][prod][opt].push(b);
-  });
-  const sortedTimes = Object.keys(grouped).sort((a,b) => {
-    if(a === 'No Time') return 1; if(b === 'No Time') return -1;
-    return a.localeCompare(b);
-  });
-
   // Find (or lack of) an existing checkins row for a booking, scoped to this user + travel date.
   const findCheckinRow = async (bookingRef: string) => {
     if (!user) return null;
@@ -152,6 +115,12 @@ export default function TodayToursPage() {
     return override && String(override).trim() ? override : b.customer_name;
   };
 
+  const bookingRefToSessionId = useMemo(() => {
+    const m = new Map<string, string>();
+    sessionBookings.forEach((sb: any) => m.set(sb.booking_ref, sb.session_id));
+    return m;
+  }, [sessionBookings]);
+
   // Accepted guides per session, for the allocation board — only guides actually working the
   // tour get a column.
   const sessionIdToTeam = useMemo(() => {
@@ -167,63 +136,62 @@ export default function TodayToursPage() {
     return m;
   }, [sessionGuides, guides]);
 
-  // Checked-in guests only, grouped by their CURRENT session_bookings.allotted_guide_id — never
-  // the frozen checkins.checked_in_by — so a guest's shown guide always reflects live allotment.
-  const sessionIdToCheckedInGuests = useMemo(() => {
-    const m = new Map<string, AllocationGuest[]>();
+  // Every guest (checked in or not) per session — the single source of truth Tab 1's flat list,
+  // the progress bar, Tab 2's checked-in-only view, and the summary cards all derive from.
+  const sessionIdToGuests = useMemo(() => {
+    const bookingByRef = new Map(bookings.map(b => [b.booking_ref, b]));
+    const m = new Map<string, SessionGuestRow[]>();
     sessionBookings.forEach((sb: any) => {
-      const cRecord = checkins.find(c => c.booking_ref === sb.booking_ref);
-      if (cRecord?.status !== 'checked_in') return;
-      const b = bookings.find(bk => bk.booking_ref === sb.booking_ref);
+      const b = bookingByRef.get(sb.booking_ref);
       if (!b) return;
+      const cRecord = checkins.find(c => c.booking_ref === sb.booking_ref);
       const arr = m.get(sb.session_id) || [];
       arr.push({
-        bookingRef: sb.booking_ref,
+        booking: b,
         displayName: getDisplayName(b),
         pax: paxTotal(b),
+        isCheckedIn: cRecord?.status === 'checked_in',
+        isNoShow: cRecord?.status === 'no_show',
+        checkedInAt: cRecord?.checked_in_at || null,
         allottedGuideId: sb.allotted_guide_id ?? null,
       });
       m.set(sb.session_id, arr);
     });
     return m;
-  }, [sessionBookings, checkins, bookings]);
+  }, [sessionBookings, bookings, checkins]);
 
-  // Dispatch-built sessions take priority over the legacy guide_assignments list when a
-  // booking belongs to one.
-  const bookingRefToSessionId = useMemo(() => {
-    const m = new Map<string, string>();
-    sessionBookings.forEach((sb: any) => m.set(sb.booking_ref, sb.session_id));
-    return m;
-  }, [sessionBookings]);
-
-  const sessionIdToGuideNames = useMemo(() => {
-    const m = new Map<string, string[]>();
-    sessionGuides.forEach((sg: any) => {
-      const guideName = guides.find(g => g.id === sg.guide_id)?.name;
-      if (!guideName) return;
-      const arr = m.get(sg.session_id) || [];
-      arr.push(guideName);
-      m.set(sg.session_id, arr);
+  // Checked-in guests only, grouped by their CURRENT session_bookings.allotted_guide_id — never
+  // a frozen "checked in by" name — so a guest's shown guide always reflects live allotment.
+  const sessionIdToCheckedInGuests = useMemo(() => {
+    const m = new Map<string, AllocationGuest[]>();
+    sessionIdToGuests.forEach((rows, sessionId) => {
+      m.set(sessionId, rows.filter(r => r.isCheckedIn).map(r => ({
+        bookingRef: r.booking.booking_ref,
+        displayName: r.displayName,
+        pax: r.pax,
+        allottedGuideId: r.allottedGuideId,
+      })));
     });
     return m;
-  }, [sessionGuides, guides]);
+  }, [sessionIdToGuests]);
 
-  // Owner-only: every session for today, in the shape GuestCard's "Move to Session" select expects.
-  const sessionOptions = useMemo(
-    () => sessions.map((s: any) => ({ id: s.id, name: s.label || 'Untitled Session' })),
-    [sessions]
+  const allSessionGuests = useMemo(() => Array.from(sessionIdToGuests.values()).flat(), [sessionIdToGuests]);
+  const totalPaxExpected = allSessionGuests.reduce((s, g) => s + g.pax, 0);
+  const totalPaxChecked = allSessionGuests.filter(g => g.isCheckedIn).reduce((s, g) => s + g.pax, 0);
+  const totalGuidesAssigned = useMemo(() => {
+    const ids = new Set<string>();
+    sessionIdToTeam.forEach(team => team.forEach(g => ids.add(g.id)));
+    return ids.size;
+  }, [sessionIdToTeam]);
+
+  const unsessionedBookings = useMemo(
+    () => bookings.filter(b => !bookingRefToSessionId.has(b.booking_ref)),
+    [bookings, bookingRefToSessionId]
   );
 
-  // Action handlers
-  const handleRemoveAssignment = async (id: string) => {
-    if (!confirm('Remove this assigned guide?')) return;
-    setAssignments(prev => prev.filter(x => x.id !== id));
-    await supabase.from('guide_assignments').delete().eq('id', id);
-  };
-
   // Records a check-in or no-show — identical to GuideCheckin's flow (same checkins row shape,
-  // same ticket-photo capture, same idempotency guard). The only owner-only addition is the
-  // existing change-log audit entry when a booking flips to DONE.
+  // same ticket-photo capture, same idempotency guard). Owner-only additions: the change-log
+  // audit entry, and auto-allotting a freshly-checked-in guest.
   const recordCheckin = async (b: any, status: 'checked_in' | 'no_show', photoBase64: string | null = null) => {
     if (!user) return;
 
@@ -264,6 +232,32 @@ export default function TodayToursPage() {
         newValue: 'DONE',
         description: `${b.booking_ref} status changed to DONE (Checked In)`
       });
+
+      // Auto-allot: pick the unlocked guide on this booking's session with the lowest current
+      // pax total (same tie-break rule Balance uses) — keeps allocation roughly even as guests
+      // check in live instead of dumping everyone into the holding area. A session with no
+      // guides, or where every guide is locked, leaves the guest unallotted rather than
+      // override an owner's explicit lock.
+      const sessionId = bookingRefToSessionId.get(b.booking_ref);
+      if (sessionId) {
+        const team = sessionIdToTeam.get(sessionId) || [];
+        const unlockedTeam = team.filter(g => !g.locked);
+        const currentGuests = sessionIdToCheckedInGuests.get(sessionId) || [];
+        const totals: Record<string, number> = {};
+        unlockedTeam.forEach(g => { totals[g.id] = 0; });
+        currentGuests.forEach(g => {
+          if (g.allottedGuideId && totals[g.allottedGuideId] !== undefined) {
+            totals[g.allottedGuideId] += g.pax;
+          }
+        });
+        const targetGuideId = pickLeastLoadedGuide(unlockedTeam, totals);
+        if (targetGuideId) {
+          await supabase.from('session_bookings')
+            .update({ allotted_guide_id: targetGuideId })
+            .eq('user_id', user.id)
+            .eq('booking_ref', b.booking_ref);
+        }
+      }
     }
 
     loadData();
@@ -298,11 +292,35 @@ export default function TodayToursPage() {
     loadData();
   };
 
-  // Owner-only: move a single booking to a different tour session (or unassign it), reusing the
-  // exact delete-then-insert write DispatchPage performs on session_bookings.
-  const handleMoveBookingToSession = async (bookingRef: string, targetSessionId: string | null) => {
+  // Reverts a wrongly checked-in guest: deletes their checkins row for today, puts the booking
+  // back to UPCOMING, and clears their allotment. This is a deliberate manual override — the
+  // gsheetSync DONE-pin protection only ever reads whatever status is in the DB at sync time, so
+  // once this write lands there is nothing left for that protection to "block".
+  const handleResetCheckin = async (b: any) => {
     if (!user) return;
-    await reassignSessionBookings(supabase, user.id, [bookingRef], targetSessionId);
+    if (!confirm(`Reset check-in for ${getDisplayName(b)}? They'll return to not-checked-in.`)) return;
+
+    const existing = await findCheckinRow(b.booking_ref);
+    if (existing) {
+      await supabase.from('checkins').delete().eq('id', existing.id);
+    }
+
+    await supabase.from('bookings').update({ status: 'UPCOMING' }).eq('id', b.id);
+
+    await supabase.from('session_bookings')
+      .update({ allotted_guide_id: null })
+      .eq('user_id', user.id)
+      .eq('booking_ref', b.booking_ref);
+
+    await logChange(supabase, user.id, {
+      tableName: 'bookings',
+      recordId: b.booking_ref,
+      fieldName: 'status',
+      oldValue: 'DONE',
+      newValue: 'UPCOMING',
+      description: `${b.booking_ref} check-in reset by owner`
+    });
+
     loadData();
   };
 
@@ -371,16 +389,6 @@ export default function TodayToursPage() {
     }
   };
 
-  const handleSaveAssignment = async (payload: any) => {
-    if (!user) return;
-    await supabase.from('guide_assignments').insert({
-      user_id: user.id,
-      ...payload
-    });
-    setAssignModal(null);
-    loadData();
-  };
-
   const copyCheckinLink = () => {
     if (!profile?.checkin_token) return alert('No check-in token found. Please visit Settings to generate one.');
     const url = `${window.location.origin}/checkin/${profile.checkin_token}?date=${todayStrDate}`;
@@ -393,409 +401,236 @@ export default function TodayToursPage() {
     <div className="relative">
       <div className="p-4 md:p-8 pb-32 max-w-5xl mx-auto space-y-8 animate-fade-in">
 
-          {/* HEADER */}
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-border/50">
-            <div>
-              <h1 className="text-3xl font-extrabold tracking-tight mb-2">Today's Tours</h1>
-              <div className="flex items-center gap-2 text-muted-foreground font-medium">
-                <CalendarIcon size={16} className="text-[#f5a623]" />
-                <span>{todayStr}</span>
-              </div>
-            </div>
-            <div className="text-right flex flex-col items-end gap-3">
-              <div className="flex items-center justify-end gap-2 text-2xl font-mono font-bold text-[#f5a623] drop-shadow-md mb-2">
-                <Clock size={20} />
-                <span>{timeStr}</span>
-              </div>
-              <button
-                onClick={copyCheckinLink}
-                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold"
-              >
-                {copied ? <Check size={14} className="text-green-500" /> : <Share2 size={14} />}
-                {copied ? 'Link Copied!' : 'Copy Check-in Link'}
-              </button>
+        {/* HEADER */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-border/50">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-tight mb-2">Today's Tours</h1>
+            <div className="flex items-center gap-2 text-muted-foreground font-medium">
+              <CalendarIcon size={16} className="text-[#f5a623]" />
+              <span>{todayStr}</span>
             </div>
           </div>
-
-          {/* SUMMARY BAR */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <div className="aurelia-card p-4 border-l-[3px] border-l-[#f5a623]">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Total Tours</p>
-              <p className="text-2xl font-extrabold">{totalTours}</p>
+          <div className="text-right flex flex-col items-end gap-3">
+            <div className="flex items-center justify-end gap-2 text-2xl font-mono font-bold text-[#f5a623] drop-shadow-md mb-2">
+              <Clock size={20} />
+              <span>{timeStr}</span>
             </div>
-            <div className="aurelia-card p-4 border-l-[3px] border-l-blue-500">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Pax Expected</p>
-              <p className="text-2xl font-extrabold">{totalPaxExp}</p>
-            </div>
-            <div className="aurelia-card p-4 border-l-[3px] border-l-green-500">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Pax Checked In</p>
-              <p className="text-2xl font-extrabold text-green-400">{totalPaxChecked}</p>
-            </div>
-            <div className="aurelia-card p-4 border-l-[3px] border-l-purple-500">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Guides Assigned</p>
-              <p className="text-2xl font-extrabold text-purple-400">{totalGuides}</p>
-            </div>
-            <div className="aurelia-card p-4 border-l-[3px] border-l-red-500">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Guide Costs</p>
-              <p className="text-2xl font-extrabold text-red-400 font-mono">€{totalGuideCosts.toFixed(2)}</p>
-            </div>
+            <button
+              onClick={copyCheckinLink}
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold"
+            >
+              {copied ? <Check size={14} className="text-green-500" /> : <Share2 size={14} />}
+              {copied ? 'Link Copied!' : 'Copy Check-in Link'}
+            </button>
           </div>
-
-          {/* TODAY'S GUIDE ASSIGNMENTS (from gsheet sync) */}
-          {gsheetAssignments.length > 0 && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <h2 className="text-sm font-black uppercase tracking-widest text-purple-400">📋 Today's Guide Assignments</h2>
-                <div className="h-[1px] flex-1 bg-purple-500/20" />
-                <span className="text-[10px] font-bold text-purple-500 uppercase tracking-widest">{gsheetAssignments.length} assignments</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {gsheetAssignments.map(a => {
-                  const guideInfo = guides.find(g => g.id === a.guide_id);
-                  return (
-                    <div
-                      key={a.id}
-                      className="aurelia-card p-4 border-l-[3px] border-[#f5a623]/50 space-y-1.5"
-                    >
-                      <div className="flex items-center gap-2 text-sm font-bold text-white">
-                        <span className="text-[#f5a623]">🕐</span>
-                        <span>{a.travel_time || '??:??'}</span>
-                        <span className="text-gray-400">·</span>
-                        <span className="truncate">{a.tour_name || a.option_name || 'Tour'}</span>
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        Guide: <span className="text-white font-semibold">{guideInfo?.name || a.guide_name || '—'}</span>
-                        {a.language && <> · <span className="text-gray-300">{a.language}</span></>}
-                      </div>
-                      <div className="flex items-center text-xs">
-                        <span className="text-gray-400">
-                          Pay: <span className="text-green-400 font-bold">€{Number(a.calculated_pay || 0).toFixed(0)}</span>
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {loading ? (
-            <div className="flex justify-center p-12"><div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin" /></div>
-          ) : bookings.length === 0 ? (
-            <div className="aurelia-card p-12 text-center flex flex-col items-center max-w-md mx-auto mt-12">
-              <CalendarIcon size={48} className="text-muted-foreground/30 mb-4" />
-              <h3 className="text-xl font-bold mb-2">No tours scheduled for today</h3>
-              <p className="text-muted-foreground mb-6">Check your ledger or sync from Google Sheets.</p>
-            </div>
-          ) : (
-            <div className="space-y-12">
-              {sortedTimes.map(time => (
-                <div key={time} className="space-y-8">
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2 text-[#f5a623] font-bold text-lg bg-[#f5a623]/10 px-4 py-1.5 rounded-full border border-[#f5a623]/20">
-                      <Clock size={18} />
-                      <span>{time}</span>
-                    </div>
-                    <div className="h-[1px] flex-1 bg-border/50" />
-                  </div>
-
-                  {Object.keys(grouped[time]).map(prod => (
-                    <div key={prod} className="pl-6 md:pl-10 space-y-6">
-                      {Object.keys(grouped[time][prod]).map(opt => {
-                        const rowBookings = grouped[time][prod][opt];
-                        const groupExpectedPax = rowBookings.reduce((sum, b) => sum + paxTotal(b), 0);
-
-                        // Filter assignments for THIS tour group
-                        const grpAssigns = assignments.filter(a => a.travel_time === time && (a.product_code === prod || a.product_name === prod) && a.option_name === opt);
-
-                        // Prefer the Dispatch session's guide(s) over the legacy assignment list when this group's bookings are in a session.
-                        const groupSessionId = rowBookings.map(b => bookingRefToSessionId.get(b.booking_ref)).find(Boolean);
-                        const sessionGuideNames = groupSessionId ? (sessionIdToGuideNames.get(groupSessionId) || []) : [];
-
-                        return (
-                          <div key={opt} className="aurelia-card overflow-hidden border border-[#f5a623]/10 shadow-lg" style={{ borderColor: 'hsl(var(--theme-border))' }}>
-                            {/* Group Header */}
-                            <div className="bg-[#0f0f17] border-b border-white/5 px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                              <div>
-                                <h3 className="font-extrabold text-lg flex items-center gap-2">
-                                  {prod} <span className="text-gray-500 font-normal">—</span> <span className="text-[#f5a623]">{opt}</span>
-                                </h3>
-                                <p className="text-xs text-gray-400 mt-1 font-medium">{rowBookings.length} bookings &middot; {groupExpectedPax} expected pax</p>
-                              </div>
-
-                              {/* Guide Assignment Section header */}
-                              <div className="flex flex-col items-end gap-2">
-                                <button
-                                  onClick={() => setAssignModal({ time, prod, opt, totalPax: groupExpectedPax })}
-                                  className="aurelia-gold-btn px-4 py-1.5 text-xs font-bold flex items-center gap-2"
-                                >
-                                  <UserPlus size={14} /> Assign Guide
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Assigned Guides List — Dispatch session guides win over legacy assignments */}
-                            {groupSessionId && sessionGuideNames.length > 0 ? (
-                              <div className="bg-[#13131a] border-b border-white/5 px-6 py-3">
-                                <p className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-2">Session Guide{sessionGuideNames.length > 1 ? 's' : ''}</p>
-                                <div className="flex flex-wrap gap-2">
-                                  {sessionGuideNames.map(name => (
-                                    <span key={name} className="text-xs font-bold bg-purple-500/10 text-purple-300 px-3 py-1.5 rounded-full border border-purple-500/20 flex items-center gap-1.5">
-                                      <Users size={12} /> {name}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : grpAssigns.length > 0 && (
-                              <div className="bg-[#13131a] border-b border-white/5 px-6 py-3 divide-y divide-white/5">
-                                {grpAssigns.map(a => {
-                                    const guideInfo = guides.find(g => g.id === a.guide_id);
-
-                                    const exactMatch = optionRates.find(r =>
-                                      r.guide_id === a.guide_id &&
-                                      r.product_code === (a.product_code || a.product_name) &&
-                                      r.option_name?.toLowerCase() === a.option_name?.toLowerCase()
-                                    );
-                                    const productMatch = exactMatch ? null : optionRates.find(r =>
-                                      r.guide_id === a.guide_id &&
-                                      r.product_code === (a.product_code || a.product_name) &&
-                                      (!r.option_name || r.option_name === '')
-                                    );
-
-                                    const source = a.rate_override ? '(manual)' : (exactMatch ? '(option rate)' : (productMatch ? '(product rate)' : '(base rate)'));
-                                    const sourceColor = a.rate_override ? 'text-gold' : (exactMatch || productMatch ? 'text-blue-400' : 'text-gray-500');
-
-                                    return (
-                                      <div key={a.id} className="py-2.5 flex items-center justify-between">
-                                        <div className="flex items-center gap-3">
-                                          <div className="p-1.5 bg-purple-500/10 text-purple-400 rounded-md"><Users size={16} /></div>
-                                          <div>
-                                            <p className="font-bold text-sm text-white">{guideInfo?.name || 'Unknown Guide'}</p>
-                                            <p className="text-xs text-gray-400">Pax Assigned: {a.pax_count}</p>
-                                          </div>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                          <div className="text-right">
-                                            <p className="font-mono text-sm font-bold text-green-400">€{a.calculated_pay}</p>
-                                            <p className={`text-[10px] font-bold uppercase tracking-tight ${sourceColor}`}>{source}</p>
-                                          </div>
-                                          <button onClick={() => handleRemoveAssignment(a.id)} className="text-xs text-red-400 hover:text-red-300 transition-colors bg-red-500/10 px-3 py-1.5 rounded font-bold">
-                                            Remove
-                                          </button>
-                                        </div>
-                                      </div>
-                                    );
-                                })}
-                              </div>
-                            )}
-
-                            {/* Bookings & Checkin List — same shared paris-style cards GuideCheckin uses */}
-                            <div className="p-3 md:p-4">
-                              <TourGroup time={time} code={opt} bookingsCount={rowBookings.length} totalPax={groupExpectedPax}>
-                                {rowBookings.map(b => {
-                                  const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
-                                  const isDone = cRecord?.status === 'checked_in' || b.status?.toUpperCase() === 'DONE';
-                                  const isNoShow = cRecord?.status === 'no_show';
-
-                                  return (
-                                    <GuestCard
-                                      key={b.id}
-                                      booking={b}
-                                      displayName={getDisplayName(b)}
-                                      isCheckedIn={isDone}
-                                      isNoShow={isNoShow}
-                                      checkedInAt={cRecord?.checked_in_at}
-                                      onCheckIn={() => setShowConfirm(b)}
-                                      onNoShow={() => recordCheckin(b, 'no_show')}
-                                      editableName
-                                      onSaveName={(newName) => handleSaveNameOverride(b, newName)}
-                                      sessions={sessionOptions}
-                                      currentSessionId={bookingRefToSessionId.get(b.booking_ref) || ''}
-                                      onMoveToSession={(sid) => handleMoveBookingToSession(b.booking_ref, sid)}
-                                    />
-                                  );
-                                })}
-                              </TourGroup>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* TEAM ALLOCATION & BALANCE — owner-only per-session controls */}
-          {!loading && sessions.filter((s: any) => (sessionIdToTeam.get(s.id) || []).length > 0).length > 0 && (
-            <div className="space-y-4 pt-4 border-t border-border/50">
-              <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                <Shuffle size={16} className="text-gold" /> Team Allocation
-              </h2>
-              {sessions
-                .filter((s: any) => (sessionIdToTeam.get(s.id) || []).length > 0)
-                .map((session: any) => (
-                  <div key={session.id} className="aurelia-card p-4 md:p-5 space-y-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="font-extrabold text-base">{session.label || 'Untitled Session'}</h3>
-                      <span className="text-xs text-muted-foreground">{session.start_time || '—'}</span>
-                    </div>
-                    <AllocationBoard
-                      guides={sessionIdToTeam.get(session.id) || []}
-                      guests={sessionIdToCheckedInGuests.get(session.id) || []}
-                      isOwner
-                      onMoveGuest={handleMoveGuest}
-                      onToggleLock={(guideId, locked) => handleToggleLock(session.id, guideId, locked)}
-                      onBalance={() => handleBalance(session.id)}
-                      balancing={balancingSessionId === session.id}
-                    />
-                  </div>
-                ))}
-            </div>
-          )}
         </div>
 
-        {/* --- ASSIGNMENT MODAL --- */}
-        {assignModal && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <AssignGuideModal
-              modalData={assignModal}
-              guides={guides}
-              optionRates={optionRates}
-              onClose={() => setAssignModal(null)}
-              onSave={handleSaveAssignment}
-            />
+        {/* SUMMARY BAR */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="aurelia-card p-4 border-l-[3px] border-l-[#f5a623]">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Sessions</p>
+            <p className="text-2xl font-extrabold">{sessions.length}</p>
+          </div>
+          <div className="aurelia-card p-4 border-l-[3px] border-l-blue-500">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Pax Expected</p>
+            <p className="text-2xl font-extrabold">{totalPaxExpected}</p>
+          </div>
+          <div className="aurelia-card p-4 border-l-[3px] border-l-green-500">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Pax Checked In</p>
+            <p className="text-2xl font-extrabold text-green-400">{totalPaxChecked}</p>
+          </div>
+          <div className="aurelia-card p-4 border-l-[3px] border-l-purple-500">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Guides Assigned</p>
+            <p className="text-2xl font-extrabold text-purple-400">{totalGuidesAssigned}</p>
+          </div>
+        </div>
+
+        {unsessionedBookings.length > 0 && (
+          <div className="flex items-start gap-3 text-sm bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-xl p-4">
+            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+            <span>
+              {unsessionedBookings.length} booking{unsessionedBookings.length !== 1 ? 's' : ''} today {unsessionedBookings.length !== 1 ? "aren't" : "isn't"} in a session yet
+              — build one in Dispatch to check {unsessionedBookings.length !== 1 ? 'them' : 'it'} in here.
+            </span>
           </div>
         )}
 
-        {/* --- CHECKIN CONFIRM MODAL (photo capture) — identical to GuideCheckin --- */}
-        {showConfirm && (
-          <CheckinConfirmModal
-            customerName={getDisplayName(showConfirm)}
-            pax={{ adult: showConfirm.pax_adult, youth: showConfirm.pax_youth, child: showConfirm.pax_child, infant: showConfirm.pax_infant }}
-            onConfirm={handleConfirmCheckin}
-            onCancel={() => setShowConfirm(null)}
-          />
+        {loading ? (
+          <div className="flex justify-center p-12"><div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin" /></div>
+        ) : sessions.length === 0 ? (
+          <div className="aurelia-card p-12 text-center flex flex-col items-center max-w-md mx-auto mt-12">
+            <CalendarIcon size={48} className="text-muted-foreground/30 mb-4" />
+            <h3 className="text-xl font-bold mb-2">No tour sessions for today</h3>
+            <p className="text-muted-foreground mb-6">Build a session in Dispatch to start checking guests in.</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {sessions.map((session: any) => (
+              <SessionBoard
+                key={session.id}
+                session={session}
+                guests={sessionIdToGuests.get(session.id) || []}
+                team={sessionIdToTeam.get(session.id) || []}
+                checkedInGuests={sessionIdToCheckedInGuests.get(session.id) || []}
+                onCheckInClick={(b: any) => setShowConfirm(b)}
+                onNoShow={(b: any) => recordCheckin(b, 'no_show')}
+                onSaveName={handleSaveNameOverride}
+                onResetCheckin={handleResetCheckin}
+                onMoveGuest={handleMoveGuest}
+                onToggleLock={handleToggleLock}
+                onBalance={handleBalance}
+                balancing={balancingSessionId === session.id}
+              />
+            ))}
+          </div>
         )}
       </div>
+
+      {/* CHECKIN CONFIRM MODAL (photo capture) — identical to GuideCheckin */}
+      {showConfirm && (
+        <CheckinConfirmModal
+          customerName={getDisplayName(showConfirm)}
+          pax={{ adult: showConfirm.pax_adult, youth: showConfirm.pax_youth, child: showConfirm.pax_child, infant: showConfirm.pax_infant }}
+          onConfirm={handleConfirmCheckin}
+          onCancel={() => setShowConfirm(null)}
+        />
+      )}
+    </div>
   );
 }
 
-// ────────── SUB-COMPONENTS ──────────
+// ────────── SESSION BOARD (Check-in / Allocation tabs) ──────────
 
-function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: any) {
-  const [guideId, setGuideId] = useState('');
-  const [pax, setPax] = useState(modalData.totalPax || 0);
-  const [overridePay, setOverridePay] = useState<string>('');
+function SessionBoard({
+  session,
+  guests,
+  team,
+  checkedInGuests,
+  onCheckInClick,
+  onNoShow,
+  onSaveName,
+  onResetCheckin,
+  onMoveGuest,
+  onToggleLock,
+  onBalance,
+  balancing,
+}: {
+  session: any;
+  guests: SessionGuestRow[];
+  team: AllocationGuide[];
+  checkedInGuests: AllocationGuest[];
+  onCheckInClick: (b: any) => void;
+  onNoShow: (b: any) => void;
+  onSaveName: (b: any, newName: string) => void;
+  onResetCheckin: (b: any) => void;
+  onMoveGuest: (bookingRef: string, newGuideId: string | null) => void;
+  onToggleLock: (sessionId: string, guideId: string, locked: boolean) => void;
+  onBalance: (sessionId: string) => void;
+  balancing: boolean;
+}) {
+  const [tab, setTab] = useState<'checkin' | 'allocation'>('checkin');
+  const [search, setSearch] = useState('');
 
-  const calculateResult = useMemo(() => {
-    if (!guideId) return { amount: 0, source: 'none' };
+  const totalGuests = guests.length;
+  const checkedInCount = guests.filter(g => g.isCheckedIn).length;
+  const pct = totalGuests > 0 ? Math.round((checkedInCount / totalGuests) * 100) : 0;
 
-    if (overridePay && !isNaN(parseFloat(overridePay))) {
-      return { amount: parseFloat(overridePay), source: 'manual' };
-    }
+  const filteredGuests = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return guests;
+    return guests.filter(g => g.displayName.toLowerCase().includes(q));
+  }, [guests, search]);
 
-    const guide = guides.find((x: any) => x.id === guideId);
-    if (!guide) return { amount: 0, source: 'none' };
-
-    // Level 2: exact product + option match
-    const exactMatch = optionRates.find((r: any) =>
-      r.guide_id === guideId &&
-      r.product_code === modalData.prod &&
-      r.option_name?.toLowerCase() === modalData.opt?.toLowerCase()
-    );
-    if (exactMatch) return { amount: exactMatch.rate, source: 'option' };
-
-    // Level 3: product code only
-    const productMatch = optionRates.find((r: any) =>
-      r.guide_id === guideId &&
-      r.product_code === modalData.prod &&
-      (!r.option_name || r.option_name === '')
-    );
-    if (productMatch) return { amount: productMatch.rate, source: 'product' };
-
-    // Level 4: base rate fallback
-    return { amount: guide.base_rate || 0, source: 'base' };
-  }, [guideId, overridePay, guides, optionRates, modalData.prod, modalData.opt]);
-
-  const handleSave = () => {
-    if (!guideId) return alert('Select a guide');
-
-    onSave({
-      guide_id: guideId,
-      travel_date: localDateStr(),
-      travel_time: modalData.time,
-      product_code: modalData.prod,
-      option_name: modalData.opt,
-      pax_count: pax,
-      rate_override: overridePay ? parseFloat(overridePay) : null,
-      calculated_pay: calculateResult.amount
-    });
-  };
+  const filteredPax = filteredGuests.reduce((s, g) => s + g.pax, 0);
 
   return (
-    <div className="bg-[#0f0f17] border border-white/10 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col pointer-events-auto">
-      <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-[#0a0a0f]">
-        <h2 className="font-bold text-lg text-white">Assign Guide</h2>
-        <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={20} /></button>
+    <div className="aurelia-card overflow-hidden border border-white/5">
+      <div className="bg-[#0f0f17] border-b border-white/5 px-4 md:px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-extrabold text-lg truncate">{session.label || 'Untitled Session'}</h3>
+          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1.5">
+            <Clock size={12} /> {session.start_time || '—'}
+          </p>
+        </div>
+        <div className="flex bg-white/5 p-1 rounded-xl shrink-0">
+          <button
+            onClick={() => setTab('checkin')}
+            className={`px-3 md:px-4 py-2 text-[11px] md:text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${tab === 'checkin' ? 'bg-gold text-black' : 'text-gray-400'}`}
+          >
+            Check-in
+          </button>
+          <button
+            onClick={() => setTab('allocation')}
+            className={`px-3 md:px-4 py-2 text-[11px] md:text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${tab === 'allocation' ? 'bg-gold text-black' : 'text-gray-400'}`}
+          >
+            Allocation
+          </button>
+        </div>
       </div>
 
-      <div className="p-6 space-y-6">
-        <div className="bg-white/5 p-3 rounded-lg border border-white/5 text-sm">
-          <p className="text-gray-400">Tour Group</p>
-          <p className="font-bold text-white mt-1">{modalData.prod} <span className="text-[#f5a623]">{modalData.opt}</span></p>
-          <p className="text-gray-400 mt-0.5">{modalData.time} &middot; {pax} pax assigned</p>
-        </div>
+      <div className="p-4 md:p-5">
+        {tab === 'checkin' ? (
+          <div className="space-y-4">
+            <div className="relative">
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search guests…"
+                className="w-full bg-white/5 border border-white/10 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-gray-500 focus:border-gold/50 outline-none"
+              />
+            </div>
 
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Select Guide</label>
-          <select value={guideId} onChange={e => setGuideId(e.target.value)} className="aurelia-input bg-[#13131a]">
-            <option value="">-- Choose Active Guide --</option>
-            {guides.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Pax Assigned</label>
-            <input type="number" min="0" value={pax} onChange={e => setPax(Number(e.target.value))} className="aurelia-input" />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Override €</label>
-            <input
-              type="number"
-              placeholder="Manual €"
-              value={overridePay}
-              onChange={e => setOverridePay(e.target.value)}
-              className="aurelia-input text-gold font-bold"
-            />
-          </div>
-        </div>
-
-        {guideId && (
-          <div className="p-4 bg-white/5 rounded-xl border border-white/5 flex items-center justify-between">
             <div>
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Calculated Pay</p>
-              <div className="flex items-center gap-2 mt-1">
-                <p className="text-2xl font-black text-white">€{calculateResult.amount}</p>
-                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
-                  calculateResult.source === 'manual' ? 'bg-gold/20 text-gold' :
-                  calculateResult.source === 'option' ? 'bg-purple-500/20 text-purple-400' :
-                  calculateResult.source === 'product' ? 'bg-blue-500/20 text-blue-400' :
-                  'bg-gray-500/20 text-gray-400'
-                }`}>
-                  {calculateResult.source} rate
-                </span>
+              <div className="flex items-center justify-between text-xs font-bold text-gray-400 mb-1.5">
+                <span>{checkedInCount} / {totalGuests} checked in</span>
+                <span className="text-gold">{pct}%</span>
+              </div>
+              <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                <div className="h-full bg-gold transition-all duration-300" style={{ width: `${pct}%` }} />
               </div>
             </div>
-          </div>
-        )}
-      </div>
 
-      <div className="p-6 border-t border-white/5 bg-[#0a0a0f] flex justify-end gap-3">
-        <button onClick={onClose} className="aurelia-ghost-btn px-6 py-2 border border-white/20 text-gray-300">Cancel</button>
-        <button onClick={handleSave} className="aurelia-gold-btn px-6 py-2 font-bold focus:scale-95 transition-all">Save Assignment</button>
+            {filteredGuests.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-8">
+                {guests.length === 0 ? 'No guests in this session.' : 'No guests match your search.'}
+              </p>
+            ) : (
+              <TourGroup
+                time={session.start_time || ''}
+                code={session.label || 'Session'}
+                bookingsCount={filteredGuests.length}
+                totalPax={filteredPax}
+              >
+                {filteredGuests.map(g => (
+                  <GuestCard
+                    key={g.booking.id}
+                    booking={g.booking}
+                    displayName={g.displayName}
+                    isCheckedIn={g.isCheckedIn}
+                    isNoShow={g.isNoShow}
+                    checkedInAt={g.checkedInAt}
+                    onCheckIn={() => onCheckInClick(g.booking)}
+                    onNoShow={() => onNoShow(g.booking)}
+                    editableName
+                    onSaveName={(newName) => onSaveName(g.booking, newName)}
+                    onReset={g.isCheckedIn ? () => onResetCheckin(g.booking) : undefined}
+                  />
+                ))}
+              </TourGroup>
+            )}
+          </div>
+        ) : (
+          <AllocationBoard
+            guides={team}
+            guests={checkedInGuests}
+            isOwner
+            onMoveGuest={onMoveGuest}
+            onToggleLock={(guideId, locked) => onToggleLock(session.id, guideId, locked)}
+            onBalance={() => onBalance(session.id)}
+            balancing={balancing}
+          />
+        )}
       </div>
     </div>
   );

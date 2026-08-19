@@ -28,6 +28,29 @@ export interface BalanceError {
   error: string;
 }
 
+// Lowest running total wins; ties go to the lowest guide index. This is the one tie-break rule
+// the whole allocation feature relies on — computeBalance applies it to a whole pool at once,
+// TodayToursPage's auto-allot-on-check-in applies it one guest at a time — both call this so
+// there's a single definition of "least loaded" instead of two copies that could drift apart.
+export function pickLeastLoadedGuide(
+  unlockedGuides: { id: string }[],
+  totalsByGuideId: Record<string, number>
+): string | null {
+  if (unlockedGuides.length === 0) return null;
+
+  let best = unlockedGuides[0];
+  let bestTotal = totalsByGuideId[best.id] ?? 0;
+  for (let i = 1; i < unlockedGuides.length; i++) {
+    const candidate = unlockedGuides[i];
+    const candidateTotal = totalsByGuideId[candidate.id] ?? 0;
+    if (candidateTotal < bestTotal) {
+      best = candidate;
+      bestTotal = candidateTotal;
+    }
+  }
+  return best.id;
+}
+
 export function computeBalance(
   guides: BalanceGuideInput[],
   guests: BalanceGuestInput[]
@@ -47,32 +70,18 @@ export function computeBalance(
   // the most "room" is still available across guides.
   const sortedPool = [...pool].sort((a, b) => b.pax - a.pax);
 
-  const totals = new Map<string, number>();
-  unlockedGuides.forEach(g => totals.set(g.id, 0));
+  const totalsByGuideId: Record<string, number> = {};
+  unlockedGuides.forEach(g => { totalsByGuideId[g.id] = 0; });
 
   const moves: BalanceMove[] = [];
 
   for (const guest of sortedPool) {
-    // Lowest running total wins; ties go to the lowest guide index.
-    let bestGuide = unlockedGuides[0];
-    let bestTotal = totals.get(bestGuide.id)!;
-    for (let i = 1; i < unlockedGuides.length; i++) {
-      const candidate = unlockedGuides[i];
-      const candidateTotal = totals.get(candidate.id)!;
-      if (candidateTotal < bestTotal) {
-        bestGuide = candidate;
-        bestTotal = candidateTotal;
-      }
-    }
-
-    totals.set(bestGuide.id, bestTotal + guest.pax);
-    if (guest.allottedGuideId !== bestGuide.id) {
-      moves.push({ bookingRef: guest.bookingRef, newGuideId: bestGuide.id });
+    const targetId = pickLeastLoadedGuide(unlockedGuides, totalsByGuideId)!; // unlockedGuides is non-empty (checked above)
+    totalsByGuideId[targetId] = (totalsByGuideId[targetId] ?? 0) + guest.pax;
+    if (guest.allottedGuideId !== targetId) {
+      moves.push({ bookingRef: guest.bookingRef, newGuideId: targetId });
     }
   }
-
-  const totalsByGuideId: Record<string, number> = {};
-  totals.forEach((total, guideId) => { totalsByGuideId[guideId] = total; });
 
   return { moves, totalsByGuideId };
 }

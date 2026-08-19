@@ -46,6 +46,8 @@ interface GuestCardProps {
   sessions?: SessionOption[];
   currentSessionId?: string;
   onMoveToSession?: (sessionId: string | null) => void;
+  /** Owner-only: revert a wrongly checked-in/no-show guest back to not-checked-in — omit to hide. */
+  onReset?: () => void;
 }
 
 export default function GuestCard({
@@ -64,6 +66,7 @@ export default function GuestCard({
   sessions,
   currentSessionId,
   onMoveToSession,
+  onReset,
 }: GuestCardProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -203,10 +206,18 @@ export default function GuestCard({
           )}
         </div>
       ) : (
-        <div className="text-center py-3 bg-white/[0.02] rounded-2xl border border-white/5">
+        <div className="flex items-center justify-between gap-3 py-3 px-4 bg-white/[0.02] rounded-2xl border border-white/5">
           <span className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">
             {isCheckedIn ? 'Checked In' : 'No Show Entry'} &middot; {checkedInAt ? new Date(checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
           </span>
+          {onReset && (
+            <button
+              onClick={onReset}
+              className="text-[10px] font-black uppercase tracking-widest text-red-400/80 hover:text-red-400 shrink-0 py-1 px-2 -my-1 -mr-2"
+            >
+              Reset
+            </button>
+          )}
         </div>
       )}
     </div>
