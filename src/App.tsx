@@ -25,6 +25,8 @@ import ChangeLogPage from "./pages/ChangeLogPage";
 import CheckinApp from "./pages/CheckinApp";
 import GuideClaimPage from "./pages/GuideClaimPage";
 import GuideCheckin from "./pages/GuideCheckin";
+import GuideProfile from "./pages/GuideProfile";
+import GuideReviews from "./pages/GuideReviews";
 import NotFound from "./pages/NotFound";
 import TourAssignmentsPage from "./pages/TourAssignmentsPage";
 import { setupGuideTables } from "./lib/setupTables";
@@ -97,6 +99,8 @@ const AppContent = () => {
             }
           >
             <Route path="checkin" element={<GuideCheckin />} />
+            <Route path="profile" element={<GuideProfile />} />
+            <Route path="reviews" element={<GuideReviews />} />
           </Route>
 
           <Route path="*" element={<NotFound />} />

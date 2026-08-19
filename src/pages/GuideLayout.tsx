@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, CalendarCheck, LogOut, Menu, X } from 'lucide-react';
+import { Home, CalendarCheck, User, Star, LogOut, Menu, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Logo from '@/components/Logo';
 import GuideHome from './GuideHome';
 import GuideCheckin from './GuideCheckin';
+import GuideProfile from './GuideProfile';
+import GuideReviews from './GuideReviews';
 
-type GuideView = 'dashboard' | 'checkin';
+type GuideView = 'dashboard' | 'checkin' | 'profile' | 'reviews';
 
 interface NavItemProps {
   icon: React.ElementType;
@@ -39,7 +41,11 @@ export default function GuideLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    setView(window.location.pathname.includes('/guide/checkin') ? 'checkin' : 'dashboard');
+    const path = window.location.pathname;
+    if (path.includes('/guide/checkin')) setView('checkin');
+    else if (path.includes('/guide/profile')) setView('profile');
+    else if (path.includes('/guide/reviews')) setView('reviews');
+    else setView('dashboard');
   }, []);
 
   const handleNavigate = (next: GuideView, path: string) => {
@@ -90,6 +96,8 @@ export default function GuideLayout() {
         <div className="flex-1 overflow-y-auto px-3 space-y-1">
           <NavItem icon={Home} label="Dashboard" active={view === 'dashboard'} onClick={() => handleNavigate('dashboard', '/guide')} />
           <NavItem icon={CalendarCheck} label="Today's Check-in" active={view === 'checkin'} onClick={() => handleNavigate('checkin', '/guide/checkin')} />
+          <NavItem icon={User} label="My Profile" active={view === 'profile'} onClick={() => handleNavigate('profile', '/guide/profile')} />
+          <NavItem icon={Star} label="My Reviews" active={view === 'reviews'} onClick={() => handleNavigate('reviews', '/guide/reviews')} />
         </div>
 
         <div className="p-3 border-t border-border/30">
@@ -110,6 +118,8 @@ export default function GuideLayout() {
       <main className="flex-1 min-w-0 ml-0 md:ml-[240px]">
         {view === 'dashboard' && <GuideHome />}
         {view === 'checkin' && <GuideCheckin />}
+        {view === 'profile' && <GuideProfile />}
+        {view === 'reviews' && <GuideReviews />}
       </main>
     </div>
   );
