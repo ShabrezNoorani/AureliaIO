@@ -7,6 +7,7 @@ import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
 import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/checkin/AllocationBoard';
 import { localDateStr } from '@/lib/utils';
+import { logChange } from '@/lib/changeLog';
 
 interface Booking {
   id: string;
@@ -293,24 +294,35 @@ export default function GuideCheckin() {
     recordCheckin(b, 'checked_in', photoBase64);
   };
 
-  // Saves a display-only name correction to checkins.display_name_override.
-  // Never touches bookings — the master sheet sync is untouched by this.
-  const handleSaveName = async (b: Booking, newName: string) => {
+  // Reverts a wrongly checked-in guest: deletes their checkins row for today, puts the booking
+  // back to UPCOMING, and clears their allotment. RLS already scopes every one of these writes to
+  // this guide's own sessions (via my_session_booking_refs()), so a guide can never reset a guest
+  // outside their own tours — this is a deliberate manual override, so moving status away from
+  // DONE here is intentional, not a bug.
+  const handleResetCheckin = async (b: Booking) => {
     if (!guideUserId) return;
-    const trimmed = newName.trim();
+    if (!confirm(`Reset check-in for ${getDisplayName(b)}? They'll return to not-checked-in.`)) return;
 
     const existing = await findCheckinRow(b.booking_ref);
-
     if (existing) {
-      await supabase.from('checkins').update({ display_name_override: trimmed || null }).eq('id', existing.id);
-    } else {
-      await supabase.from('checkins').insert({
-        user_id: guideUserId,
-        booking_ref: b.booking_ref,
-        travel_date: today,
-        display_name_override: trimmed || null,
-      });
+      await supabase.from('checkins').delete().eq('id', existing.id);
     }
+
+    await supabase.from('bookings').update({ status: 'UPCOMING' }).eq('id', b.id);
+
+    await supabase.from('session_bookings')
+      .update({ allotted_guide_id: null })
+      .eq('user_id', guideUserId)
+      .eq('booking_ref', b.booking_ref);
+
+    await logChange(supabase, guideUserId, {
+      tableName: 'bookings',
+      recordId: b.booking_ref,
+      fieldName: 'status',
+      oldValue: 'DONE',
+      newValue: 'UPCOMING',
+      description: `${b.booking_ref} check-in reset by guide ${guideName || ''}`.trim()
+    });
 
     loadData();
   };
@@ -369,8 +381,7 @@ export default function GuideCheckin() {
                         checkedInAt={cRecord?.checked_in_at}
                         onCheckIn={() => setShowConfirm(b)}
                         onNoShow={() => recordCheckin(b, 'no_show')}
-                        editableName
-                        onSaveName={(newName) => handleSaveName(b, newName)}
+                        onReset={isDone ? () => handleResetCheckin(b) : undefined}
                       />
                     );
                   })}

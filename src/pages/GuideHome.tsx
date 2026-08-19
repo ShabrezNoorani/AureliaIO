@@ -36,6 +36,7 @@ interface Booking {
 interface Guide {
   id: string;
   name: string;
+  guide_number: string;
 }
 
 const paxTotal = (b: Booking) =>
@@ -93,14 +94,16 @@ export default function GuideHome() {
         .order('tour_date', { ascending: true }).order('start_time', { ascending: true }),
       supabase.from('session_bookings').select('session_id, booking_ref')
         .eq('user_id', guideUserId).in('session_id', sessionIds),
-      supabase.from('guides').select('id, name')
-        .eq('user_id', guideUserId).eq('status', 'active').order('name'),
+      // RLS only lets a guide see their OWN guides row, so a direct select from `guides` here
+      // always comes back empty. my_company_guides() is a security-definer RPC returning the
+      // other active guides in the same company — not yet in the generated types, hence the cast.
+      (supabase.rpc as any)('my_company_guides'),
     ]);
 
     setSessions(sessRes.data || []);
     const mySessionBookings = sbRes.data || [];
     setSessionBookings(mySessionBookings);
-    setOtherGuides((guidesRes.data || []).filter(g => g.id !== guideId));
+    setOtherGuides(((guidesRes.data as Guide[]) || []).filter(g => g.id !== guideId));
 
     const refs = Array.from(new Set(mySessionBookings.map(sb => sb.booking_ref)));
     if (refs.length === 0) {
@@ -319,7 +322,9 @@ export default function GuideHome() {
                 className="aurelia-input w-full bg-[#13131a]"
               >
                 <option value="">-- Choose a guide --</option>
-                {otherGuides.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                {otherGuides.map(g => (
+                  <option key={g.id} value={g.id}>{g.name}{g.guide_number ? ` (${g.guide_number})` : ''}</option>
+                ))}
               </select>
             </div>
             <div className="p-6 border-t border-white/5 bg-[#0a0a0f] flex justify-end gap-3">

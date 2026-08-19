@@ -39,9 +39,15 @@ interface GuestCardProps {
   guides?: GuideOption[];
   selectedGuideId?: string;
   onSelectGuide?: (guideId: string) => void;
-  /** Inline passenger-name correction — omit to disable (keeps CheckinApp's public appearance unchanged). */
+  /**
+   * Inline passenger-name correction — requires BOTH editableName and isOwner, so a guide-facing
+   * caller can't accidentally enable it by only setting one. Omit either to keep CheckinApp's and
+   * GuideCheckin's appearance unchanged (name is always read-only there).
+   */
   editableName?: boolean;
   onSaveName?: (newName: string) => void | Promise<void>;
+  /** Owner-only gate — pass true from owner surfaces (Today's Tours). Guides must never pass this. */
+  isOwner?: boolean;
   /** Owner-only: move this booking to a different tour session — omit entirely to hide it. */
   sessions?: SessionOption[];
   currentSessionId?: string;
@@ -63,6 +69,7 @@ export default function GuestCard({
   onSelectGuide,
   editableName,
   onSaveName,
+  isOwner,
   sessions,
   currentSessionId,
   onMoveToSession,
@@ -97,7 +104,7 @@ export default function GuestCard({
             <span className="text-[10px] font-mono text-gray-500 font-bold">{booking.booking_ref}</span>
           </div>
 
-          {editableName ? (
+          {editableName && isOwner ? (
             isEditingName ? (
               <div className="flex items-center gap-1.5 pt-1">
                 <input

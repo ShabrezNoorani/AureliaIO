@@ -613,6 +613,7 @@ function SessionBoard({
                     onCheckIn={() => onCheckInClick(g.booking)}
                     onNoShow={() => onNoShow(g.booking)}
                     editableName
+                    isOwner
                     onSaveName={(newName) => onSaveName(g.booking, newName)}
                     onReset={g.isCheckedIn ? () => onResetCheckin(g.booking) : undefined}
                   />
