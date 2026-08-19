@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { useEffect } from 'react';
 import { TrendingUp, TrendingDown, Calendar, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useChartColors } from '@/lib/theme';
+import { localDateStr } from '@/lib/utils';
 
 const CHANNELS = ['All', 'Viator', 'GYG', 'Airbnb', 'Website', 'Other'];
 const QUICK_RANGES = ['YTD', '6M', '3M', '1M', 'Custom'];
@@ -74,8 +75,8 @@ export default function ExecutiveDashboard() {
     }
     
     if (quickRange !== 'Custom') {
-      setDateFrom(dFrom.toISOString().split('T')[0]);
-      setDateTo(today.toISOString().split('T')[0]);
+      setDateFrom(localDateStr(dFrom));
+      setDateTo(localDateStr(today));
     }
   }, [quickRange]);
 

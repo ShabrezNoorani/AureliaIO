@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Users, Activity, Euro, BarChart2, Calendar, FileText, X } from 'lucide-react';
 import { generateGuideInvoice } from '@/lib/generateInvoice';
+import { localDateStr } from '@/lib/utils';
 
 export default function GuideDashboard() {
   const { user, profile } = useAuth();
@@ -20,8 +21,8 @@ export default function GuideDashboard() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedGuide, setSelectedGuide] = useState<any | null>(null);
   const [invoiceDates, setInvoiceDates] = useState({
-    from: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-    to: new Date().toISOString().split('T')[0]
+    from: localDateStr(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
+    to: localDateStr()
   });
 
   const fetchData = async () => {
@@ -51,8 +52,8 @@ export default function GuideDashboard() {
 
   const filteredAssignments = useMemo(() => {
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-    
+    const todayStr = localDateStr(now);
+
     let start = '';
     let end = todayStr;
 
@@ -60,18 +61,18 @@ export default function GuideDashboard() {
       start = end = todayStr;
     } else if (dateRange === 'yesterday') {
       const y = new Date(); y.setDate(y.getDate() - 1);
-      start = end = y.toISOString().split('T')[0];
+      start = end = localDateStr(y);
     } else if (dateRange === 'month') {
       const first = new Date(now.getFullYear(), now.getMonth(), 1);
       const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      start = first.toISOString().split('T')[0];
-      end = last.toISOString().split('T')[0];
+      start = localDateStr(first);
+      end = localDateStr(last);
     } else if (dateRange === 'mtd') {
       const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      start = first.toISOString().split('T')[0];
+      start = localDateStr(first);
     } else if (dateRange === 'ytd') {
       const first = new Date(now.getFullYear(), 0, 1);
-      start = first.toISOString().split('T')[0];
+      start = localDateStr(first);
     }
 
     return assignments.filter(a => {

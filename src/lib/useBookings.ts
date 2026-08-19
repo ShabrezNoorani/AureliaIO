@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabase';
 import { useAuth } from '@/context/AuthContext';
+import { localDateStr } from './utils';
 
 export interface Booking {
   id?: string;
@@ -40,8 +41,8 @@ export const EMPTY_BOOKING: Booking = {
   option_name: '',
   customer_name: '',
   customer_phone: '',
-  booking_date: new Date().toISOString().slice(0, 10),
-  travel_date: new Date().toISOString().slice(0, 10),
+  booking_date: localDateStr(),
+  travel_date: localDateStr(),
   travel_time: '09:00',
   channel: 'Viator',
   promo_code: '',

@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle } from 'lucide-react';
 import { buildGoogleCalendarUrl, buildWhatsAppUrl } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
+import { localDateStr } from '@/lib/utils';
 
 interface Booking {
   id: string;
@@ -77,7 +78,7 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
 export default function DispatchPage() {
   const { user, profile } = useAuth();
 
-  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(() => localDateStr());
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [sessions, setSessions] = useState<TourSession[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingRow[]>([]);

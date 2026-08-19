@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { Calendar as CalendarIcon, Compass, Users, X } from 'lucide-react';
+import { localDateStr } from '@/lib/utils';
 
 interface SessionGuideRow {
   session_id: string;
@@ -58,7 +59,7 @@ export default function GuideHome() {
   const [reassignTargetId, setReassignTargetId] = useState('');
   const [reassigning, setReassigning] = useState(false);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = localDateStr();
   const todayStr = new Date().toLocaleDateString('en-US', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
   });

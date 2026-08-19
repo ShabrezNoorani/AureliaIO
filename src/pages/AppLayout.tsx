@@ -20,8 +20,9 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { syncMasterData } from '@/lib/gsheetSync';
 import { syncFromBokun } from '@/lib/bokunSync';
+import { localDateStr } from '@/lib/utils';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'assignments' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 const AppLayout = () => {
   const { user, profile } = useAuth();
@@ -163,8 +164,8 @@ const AppLayout = () => {
           if (sources.includes('bokun')) {
             if (profile.bokun_access_key && profile.bokun_secret_key) {
               const d = new Date(); d.setDate(d.getDate() - 90);
-              const startStr = d.toISOString().split('T')[0];
-              const endStr = new Date().toISOString().split('T')[0];
+              const startStr = localDateStr(d);
+              const endStr = localDateStr();
               await syncFromBokun(supabase, user.id, startStr, endStr);
               syncedAtLeastOne = true;
             }

@@ -6,6 +6,7 @@ import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
 import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/checkin/AllocationBoard';
+import { localDateStr } from '@/lib/utils';
 
 interface Booking {
   id: string;
@@ -73,7 +74,7 @@ export default function GuideCheckin() {
   const [loading, setLoading] = useState(true);
   const [showConfirm, setShowConfirm] = useState<Booking | null>(null);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = localDateStr();
   const todayStr = new Date().toLocaleDateString('en-US', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
   });

@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { fetchBokunProducts, syncBokunBookings, testBokunConnection } from '@/lib/bokunSync';
 import { syncMasterData, syncTourAssignments } from '@/lib/gsheetSync';
+import { localDateStr } from '@/lib/utils';
 
 const DEFAULT_SHEET_ID = '1EAI0SHtkJD5HHVj25rJcnzmoksTug249eIT4_JmiOR8';
 
@@ -43,9 +44,9 @@ export default function SettingsPage() {
   const [bokunInterval, setBokunInterval] = useState('1800000');
   const [syncStartDate, setSyncStartDate] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 90);
-    return d.toISOString().split('T')[0];
+    return localDateStr(d);
   });
-  const [syncEndDate, setSyncEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [syncEndDate, setSyncEndDate] = useState(() => localDateStr());
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState('');
 
@@ -282,7 +283,7 @@ export default function SettingsPage() {
   };
 
   const baseUrl = `${window.location.origin}/checkin/${checkinToken}`;
-  const todayUrl = `${baseUrl}?date=${new Date().toISOString().split('T')[0]}`;
+  const todayUrl = `${baseUrl}?date=${localDateStr()}`;
 
   const handleThemeChange = (theme: ThemeName) => {
     applyTheme(theme);

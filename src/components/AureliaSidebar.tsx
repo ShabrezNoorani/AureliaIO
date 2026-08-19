@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'assignments' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -216,7 +216,6 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
               <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => handleNavigate('admin-costs')} indent />
               <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => handleNavigate('today')} indent />
               <SidebarItem icon={Send} label="Dispatch" active={activeView === 'dispatch'} onClick={() => handleNavigate('dispatch', '/app/dispatch')} indent />
-              <SidebarItem icon={List} label="Tour Assignments" active={activeView === 'assignments'} onClick={() => handleNavigate('assignments', '/app/assignments')} indent />
               <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => handleNavigate('guides', '/app/guides')} indent />
                <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => handleNavigate('guide-dashboard', '/app/guide-dashboard')} indent />
               <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => handleNavigate('marketplace', '/app/marketplace')} indent />

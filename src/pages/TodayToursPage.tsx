@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
 import { computeBalance } from '@/lib/allocationBalance';
+import { localDateStr } from '@/lib/utils';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
@@ -31,7 +32,7 @@ export default function TodayToursPage() {
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
 
-  const [todayStrDate, setTodayStrDate] = useState(new Date().toISOString().split('T')[0]);
+  const [todayStrDate, setTodayStrDate] = useState(localDateStr());
 
   // Modal states
   const [assignModal, setAssignModal] = useState<any | null>(null);
@@ -41,7 +42,7 @@ export default function TodayToursPage() {
 
   const loadData = async () => {
     if (!user) return;
-    const today = new Date().toISOString().split('T')[0];
+    const today = localDateStr();
     setTodayStrDate(today);
 
     const [bRes, gRes, aRes, gsRes, cRes, rRes, sessRes] = await Promise.all([
@@ -723,7 +724,7 @@ function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: a
 
     onSave({
       guide_id: guideId,
-      travel_date: new Date().toISOString().split('T')[0],
+      travel_date: localDateStr(),
       travel_time: modalData.time,
       product_code: modalData.prod,
       option_name: modalData.opt,

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { localDateStr } from './utils';
 
 // ──────────── Helpers ────────────
 
@@ -413,7 +414,7 @@ export async function syncTourAssignments(
       if (dateStr) {
         const d = new Date(dateStr);
         if (!isNaN(d.getTime())) {
-          travelDate = d.toISOString().split('T')[0];
+          travelDate = localDateStr(d);
         }
       }
     } catch {

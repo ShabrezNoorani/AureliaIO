@@ -5,6 +5,7 @@ import { useSearchParams, useParams } from 'react-router-dom';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
+import { localDateStr } from '@/lib/utils';
 
 interface Guide {
   id: string;
@@ -66,7 +67,7 @@ export default function CheckinApp() {
   const [companyUserId, setCompanyUserId] = useState<string | null>(null);
   const [companyName, setCompanyName] = useState<string | null>(null);
 
-  const dateParam = searchParams.get('date') || new Date().toISOString().split('T')[0];
+  const dateParam = searchParams.get('date') || localDateStr();
 
   // Capture Modal State
   const [showConfirm, setShowConfirm] = useState<Booking | null>(null);
@@ -206,7 +207,7 @@ export default function CheckinApp() {
   const changeDate = (days: number) => {
     const d = new Date(dateParam);
     d.setDate(d.getDate() + days);
-    setSearchParams({ date: d.toISOString().split('T')[0] });
+    setSearchParams({ date: localDateStr(d) });
   };
 
   const logout = () => {
