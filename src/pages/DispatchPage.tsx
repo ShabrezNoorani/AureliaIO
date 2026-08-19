@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
 import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle } from 'lucide-react';
 import { buildGoogleCalendarUrl, buildWhatsAppUrl } from '@/lib/tourInvites';
+import { reassignSessionBookings } from '@/lib/sessionMoves';
 
 interface Booking {
   id: string;
@@ -225,16 +226,9 @@ export default function DispatchPage() {
     return selectedGroups.map(g => g.product_name).join(' + ');
   }, [selectedGroups]);
 
-  // A booking can only ever be in one session (unique(user_id, booking_ref)) — moving it
-  // anywhere, including into a brand-new session, means delete the old link then insert the new one.
   const reassignBookings = async (refs: string[], targetSessionId: string | null) => {
-    if (!user || refs.length === 0) return;
-    await supabase.from('session_bookings').delete().eq('user_id', user.id).in('booking_ref', refs);
-    if (targetSessionId) {
-      await supabase.from('session_bookings').insert(
-        refs.map(ref => ({ session_id: targetSessionId, booking_ref: ref, user_id: user.id }))
-      );
-    }
+    if (!user) return;
+    await reassignSessionBookings(supabase, user.id, refs, targetSessionId);
   };
 
   const handleCreateSession = async () => {

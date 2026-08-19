@@ -21,6 +21,11 @@ interface GuideOption {
   name: string;
 }
 
+interface SessionOption {
+  id: string;
+  name: string;
+}
+
 interface GuestCardProps {
   booking: GuestCardBooking;
   /** Overrides the displayed name when set and non-empty; falls back to booking.customer_name. */
@@ -37,6 +42,10 @@ interface GuestCardProps {
   /** Inline passenger-name correction — omit to disable (keeps CheckinApp's public appearance unchanged). */
   editableName?: boolean;
   onSaveName?: (newName: string) => void | Promise<void>;
+  /** Owner-only: move this booking to a different tour session — omit entirely to hide it. */
+  sessions?: SessionOption[];
+  currentSessionId?: string;
+  onMoveToSession?: (sessionId: string | null) => void;
 }
 
 export default function GuestCard({
@@ -52,6 +61,9 @@ export default function GuestCard({
   onSelectGuide,
   editableName,
   onSaveName,
+  sessions,
+  currentSessionId,
+  onMoveToSession,
 }: GuestCardProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -155,6 +167,20 @@ export default function GuestCard({
           >
             <option value="">-- No guide assigned --</option>
             {guides.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {sessions && onMoveToSession && (
+        <div className="pt-2">
+          <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest block mb-2 px-1">Move to Session</label>
+          <select
+            value={currentSessionId || ''}
+            onChange={(e) => onMoveToSession(e.target.value || null)}
+            className="w-full bg-white/5 border border-white/10 p-3 rounded-2xl text-sm font-bold focus:border-gold/50 outline-none appearance-none"
+          >
+            <option value="">-- Unassigned --</option>
+            {sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
       )}

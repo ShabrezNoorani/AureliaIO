@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
@@ -60,6 +60,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [guideUserId, setGuideUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Guards every setState below against firing after the provider has unmounted.
+  const mountedRef = useRef(true);
+  // Tracks which user id profile/role have already been hydrated for, so a repeat auth event
+  // for the SAME user (token refresh, tab-refocus re-announcement) never re-triggers a fetch.
+  const hydratedUserIdRef = useRef<string | null>(null);
+
   const fetchProfile = useCallback(async (userId: string) => {
     try {
       const profilePromise = supabase
@@ -80,6 +86,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         timeoutPromise
       ]);
 
+      if (!mountedRef.current) return;
+
       if (data) {
         setProfile(data as Profile);
       } else {
@@ -92,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } catch(e) {
       console.error('Profile fetch failed:', e);
+      if (!mountedRef.current) return;
       setProfile({
         id: userId,
         company_name: 'My Company',
@@ -107,14 +116,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // excluding that case here is what keeps an owner from being misclassified as a guide.
   const fetchRole = useCallback(async (userId: string) => {
     try {
-      const { data, error } = await supabase
+      const rolePromise = supabase
         .from('guides')
         .select('id, name, user_id')
         .eq('auth_user_id', userId)
         .neq('user_id', userId)
         .maybeSingle();
 
+      // Same 3s-timeout-race pattern as fetchProfile — a stalled request (e.g. right after a
+      // backgrounded tab resumes) must never be able to hang this forever.
+      const timeoutPromise = new Promise<{ data: null; error: null }>(
+        (resolve) => setTimeout(
+          () => resolve({ data: null, error: null }),
+          3000
+        )
+      );
+
+      const { data, error } = await Promise.race([rolePromise, timeoutPromise]);
+
       if (error) throw error;
+      if (!mountedRef.current) return;
 
       if (data) {
         setRole('guide');
@@ -129,6 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } catch (e) {
       console.error('Role lookup failed, defaulting to owner:', e);
+      if (!mountedRef.current) return;
       setRole('owner');
       setGuideId(null);
       setGuideName(null);
@@ -137,10 +159,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Resolves profile + role together so routing never has to guess (and flash the wrong shell)
-  // before both are known — loading only clears once this settles.
+  // before both are known. This is the ONLY place loading is ever set back to false, and the
+  // finally guarantees that happens no matter what — fetchProfile/fetchRole already can't hang
+  // (each races a 3s timeout) or throw (each catches internally), but this is the backstop.
   const hydrateUser = useCallback(async (userId: string) => {
-    await Promise.all([fetchProfile(userId), fetchRole(userId)]);
-    setLoading(false);
+    try {
+      await Promise.all([fetchProfile(userId), fetchRole(userId)]);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
   }, [fetchProfile, fetchRole]);
 
   const refreshProfile = useCallback(async () => {
@@ -163,6 +190,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.session) {
         setSession(data.session);
         setUser(data.session.user);
+        // Mark hydrated up front — supabase fires its own SIGNED_IN event right after this
+        // resolves, and it must see this and skip re-hydrating instead of doing it twice.
+        hydratedUserIdRef.current = data.session.user.id;
         await hydrateUser(data.session.user.id);
       }
 
@@ -196,6 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     keysToRemove.forEach(key => localStorage.removeItem(key));
 
+    hydratedUserIdRef.current = null;
     setProfile(null);
     setUser(null);
     setSession(null);
@@ -206,40 +237,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    let mounted = true;
+    mountedRef.current = true;
 
     supabase.auth.getSession().then(async ({ data: { session: initialSession } }) => {
-      if (!mounted) return;
+      if (!mountedRef.current) return;
       setSession(initialSession);
       setUser(initialSession?.user ?? null);
-      if (initialSession?.user) {
-        await hydrateUser(initialSession.user.id);
-      } else if (mounted) {
+
+      const initialUserId = initialSession?.user?.id ?? null;
+      if (initialUserId) {
+        // The ONLY hydrate that's allowed to gate the app's full-screen loading state.
+        hydratedUserIdRef.current = initialUserId;
+        await hydrateUser(initialUserId);
+      } else if (mountedRef.current) {
         setLoading(false);
       }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, newSession) => {
-        if (!mounted) return;
-        setSession(newSession);
-        setUser(newSession?.user ?? null);
+        if (!mountedRef.current) return;
 
-        if (newSession?.user) {
-          await hydrateUser(newSession.user.id);
-        } else {
+        const nextUser = newSession?.user ?? null;
+
+        setSession(newSession);
+        // Keep the `user` object reference stable when nothing about the account actually
+        // changed (same id, same updated_at). Supabase hands back a brand-new object on every
+        // event — including a plain TOKEN_REFRESHED on tab refocus — even when nothing changed,
+        // and several pages key their own data-loading effects off `user` by reference; without
+        // this, every refocus would spuriously re-trigger those loads (and if one of them ever
+        // hangs mid-fetch, the page it gates is stuck behind its own spinner forever).
+        setUser(prev => (
+          prev && nextUser && prev.id === nextUser.id && prev.updated_at === nextUser.updated_at
+        ) ? prev : nextUser);
+
+        const newUserId = nextUser?.id ?? null;
+
+        if (!newUserId) {
+          // Signed out.
+          hydratedUserIdRef.current = null;
           setProfile(null);
           setRole(null);
           setGuideId(null);
           setGuideName(null);
           setGuideUserId(null);
-          if (mounted) setLoading(false);
+          setLoading(false);
+          return;
         }
+
+        // Repeat event for a user we've already hydrated (TOKEN_REFRESHED, a SIGNED_IN
+        // re-announced on refocus, USER_UPDATED) — session/user are already fresh above, role
+        // never changed, and loading must NOT be touched: it only ever gates the initial load.
+        if (hydratedUserIdRef.current === newUserId) return;
+
+        hydratedUserIdRef.current = newUserId;
+        await hydrateUser(newUserId);
       }
     );
 
     return () => {
-      mounted = false;
+      mountedRef.current = false;
       subscription.unsubscribe();
     };
   }, [hydrateUser]);

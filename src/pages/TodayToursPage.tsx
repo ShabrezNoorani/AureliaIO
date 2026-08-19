@@ -1,9 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, CheckCircle2, UserPlus, Users, X, Share2, Copy, Check, Pencil } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, UserPlus, Users, X, Share2, Copy, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { logChange } from '@/lib/changeLog';
+import { reassignSessionBookings } from '@/lib/sessionMoves';
+import GuestCard from '@/components/checkin/GuestCard';
+import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
+import TourGroup from '@/components/checkin/TourGroup';
 
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
@@ -18,6 +22,7 @@ export default function TodayToursPage() {
   const [gsheetAssignments, setGsheetAssignments] = useState<any[]>([]);
   const [optionRates, setOptionRates] = useState<any[]>([]);
   const [checkins, setCheckins] = useState<any[]>([]);
+  const [sessions, setSessions] = useState<any[]>([]);
   const [sessionBookings, setSessionBookings] = useState<any[]>([]);
   const [sessionGuides, setSessionGuides] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,13 +32,8 @@ export default function TodayToursPage() {
 
   // Modal states
   const [assignModal, setAssignModal] = useState<any | null>(null);
-  const [checkinModal, setCheckinModal] = useState<any | null>(null);
+  const [showConfirm, setShowConfirm] = useState<any | null>(null);
   const [copied, setCopied] = useState(false);
-
-  // Inline name-override editing
-  const [editingNameId, setEditingNameId] = useState<string | null>(null);
-  const [nameDraft, setNameDraft] = useState('');
-  const [savingNameId, setSavingNameId] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!user) return;
@@ -47,7 +47,7 @@ export default function TodayToursPage() {
       supabase.from('guide_assignments').select('*').eq('user_id', user.id).eq('travel_date', today).eq('sync_source', 'gsheet_assignments').order('travel_time', { ascending: true }),
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
       supabase.from('guide_option_rates').select('*').eq('user_id', user.id),
-      supabase.from('tour_sessions').select('id').eq('user_id', user.id).eq('tour_date', today),
+      supabase.from('tour_sessions').select('id, label, start_time, tour_date').eq('user_id', user.id).eq('tour_date', today),
     ]);
 
     if (bRes.data) setBookings(bRes.data);
@@ -59,7 +59,9 @@ export default function TodayToursPage() {
 
     // Sessions built via Dispatch take priority for showing an assigned guide — fetch their
     // booking/guide links so the group header below can prefer them over legacy assignments.
-    const sessionIds = (sessRes.data || []).map((s: any) => s.id);
+    const sessionsData = sessRes.data || [];
+    setSessions(sessionsData);
+    const sessionIds = sessionsData.map((s: any) => s.id);
     if (sessionIds.length > 0) {
       const [sbRes, sgRes] = await Promise.all([
         supabase.from('session_bookings').select('session_id, booking_ref').eq('user_id', user.id).in('session_id', sessionIds),
@@ -165,6 +167,12 @@ export default function TodayToursPage() {
     return m;
   }, [sessionGuides, guides]);
 
+  // Owner-only: every session for today, in the shape GuestCard's "Move to Session" select expects.
+  const sessionOptions = useMemo(
+    () => sessions.map((s: any) => ({ id: s.id, name: s.label || 'Untitled Session' })),
+    [sessions]
+  );
+
   // Action handlers
   const handleRemoveAssignment = async (id: string) => {
     if (!confirm('Remove this assigned guide?')) return;
@@ -172,24 +180,25 @@ export default function TodayToursPage() {
     await supabase.from('guide_assignments').delete().eq('id', id);
   };
 
-  const handleConfirmCheckin = async (checkedInBy: string) => {
-    if (!user || !checkinModal) return;
-    const b = checkinModal;
+  // Records a check-in or no-show — identical to GuideCheckin's flow (same checkins row shape,
+  // same ticket-photo capture, same idempotency guard). The only owner-only addition is the
+  // existing change-log audit entry when a booking flips to DONE.
+  const recordCheckin = async (b: any, status: 'checked_in' | 'no_show', photoBase64: string | null = null) => {
+    if (!user) return;
 
-    setCheckinModal(null);
-
-    // Idempotency guard: a checked-in row for this booking must never be duplicated or re-triggered.
     const existing = await findCheckinRow(b.booking_ref);
-    if (existing?.status === 'checked_in') {
+    if (existing?.status === 'checked_in' || existing?.status === 'no_show') {
       loadData();
       return;
     }
 
+    const totalPax = paxTotal(b);
     const checkinFields = {
       checked_in_at: new Date().toISOString(),
-      checked_in_by: checkedInBy,
-      pax_checked_in: paxTotal(b),
-      status: 'checked_in',
+      checked_in_by: 'Coordinator',
+      pax_checked_in: status === 'checked_in' ? totalPax : 0,
+      status,
+      ticket_photo: photoBase64,
     };
 
     if (existing) {
@@ -203,29 +212,33 @@ export default function TodayToursPage() {
       });
     }
 
-    // Optimistic bookings UI update
-    setBookings(prev => prev.map(x => x.id === b.id ? { ...x, status: 'DONE' } : x));
+    if (status === 'checked_in') {
+      await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
 
-    await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
-
-    // Log Booking Status Change
-    await logChange(supabase, user.id, {
-      tableName: 'bookings',
-      recordId: b.booking_ref,
-      fieldName: 'status',
-      oldValue: b.status || 'CONFIRMED',
-      newValue: 'DONE',
-      description: `${b.booking_ref} status changed to DONE (Checked In)`
-    });
+      await logChange(supabase, user.id, {
+        tableName: 'bookings',
+        recordId: b.booking_ref,
+        fieldName: 'status',
+        oldValue: b.status || 'CONFIRMED',
+        newValue: 'DONE',
+        description: `${b.booking_ref} status changed to DONE (Checked In)`
+      });
+    }
 
     loadData();
+  };
+
+  const handleConfirmCheckin = (photoBase64: string | null) => {
+    if (!showConfirm) return;
+    const b = showConfirm;
+    setShowConfirm(null);
+    recordCheckin(b, 'checked_in', photoBase64);
   };
 
   // Saves a display-only name correction to checkins.display_name_override.
   // Never touches bookings — the master sheet sync is untouched by this.
   const handleSaveNameOverride = async (b: any, newName: string) => {
     if (!user) return;
-    setSavingNameId(b.id);
     const trimmed = newName.trim();
 
     const existing = await findCheckinRow(b.booking_ref);
@@ -241,8 +254,14 @@ export default function TodayToursPage() {
       });
     }
 
-    setEditingNameId(null);
-    setSavingNameId(null);
+    loadData();
+  };
+
+  // Owner-only: move a single booking to a different tour session (or unassign it), reusing the
+  // exact delete-then-insert write DispatchPage performs on session_bookings.
+  const handleMoveBookingToSession = async (bookingRef: string, targetSessionId: string | null) => {
+    if (!user) return;
+    await reassignSessionBookings(supabase, user.id, [bookingRef], targetSessionId);
     loadData();
   };
 
@@ -464,106 +483,33 @@ export default function TodayToursPage() {
                               </div>
                             )}
 
-                            {/* Bookings & Checkin List */}
-                            <div className="p-3 space-y-3">
-                              {rowBookings.map(b => {
-                                const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
-                                const isCheckedIn = cRecord?.status === 'checked_in' || b.status?.toUpperCase() === 'DONE';
-                                const displayName = getDisplayName(b);
-                                const bTotalPax = paxTotal(b);
-                                const isEditingName = editingNameId === b.id;
-                                const isSavingName = savingNameId === b.id;
+                            {/* Bookings & Checkin List — same shared paris-style cards GuideCheckin uses */}
+                            <div className="p-3 md:p-4">
+                              <TourGroup time={time} code={opt} bookingsCount={rowBookings.length} totalPax={groupExpectedPax}>
+                                {rowBookings.map(b => {
+                                  const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
+                                  const isDone = cRecord?.status === 'checked_in' || b.status?.toUpperCase() === 'DONE';
+                                  const isNoShow = cRecord?.status === 'no_show';
 
-                                return (
-                                  <div
-                                    key={b.id}
-                                    className={`rounded-2xl border p-4 transition-colors ${isCheckedIn ? 'bg-green-500/[0.04] border-green-500/20' : 'bg-white/[0.02] border-white/5 hover:border-white/10'}`}
-                                  >
-                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                                      <div className="flex items-center gap-3 min-w-0">
-                                        {isCheckedIn ? (
-                                          <div className="bg-green-500/20 p-1.5 rounded-full shrink-0">
-                                            <CheckCircle2 className="text-green-500" size={16} />
-                                          </div>
-                                        ) : (
-                                          <div className="w-7 h-7 rounded-full border-2 border-gray-600 shrink-0" />
-                                        )}
-                                        <div className="min-w-0">
-                                          {isEditingName ? (
-                                            <div className="flex items-center gap-1.5">
-                                              <input
-                                                autoFocus
-                                                value={nameDraft}
-                                                onChange={(e) => setNameDraft(e.target.value)}
-                                                onKeyDown={(e) => {
-                                                  if (e.key === 'Enter') handleSaveNameOverride(b, nameDraft);
-                                                  if (e.key === 'Escape') setEditingNameId(null);
-                                                }}
-                                                disabled={isSavingName}
-                                                className="aurelia-input py-1 h-8 w-40 text-sm font-bold"
-                                              />
-                                              <button
-                                                onClick={() => handleSaveNameOverride(b, nameDraft)}
-                                                disabled={isSavingName}
-                                                className="text-green-400 hover:text-green-300 p-1 disabled:opacity-50"
-                                                title="Save name"
-                                              >
-                                                <Check size={14} />
-                                              </button>
-                                              <button
-                                                onClick={() => setEditingNameId(null)}
-                                                disabled={isSavingName}
-                                                className="text-gray-500 hover:text-white p-1 disabled:opacity-50"
-                                                title="Cancel"
-                                              >
-                                                <X size={14} />
-                                              </button>
-                                            </div>
-                                          ) : (
-                                            <div className="flex items-center gap-1.5 group/name">
-                                              <p className="font-bold text-sm text-white truncate">{displayName}</p>
-                                              <button
-                                                onClick={() => { setEditingNameId(b.id); setNameDraft(displayName); }}
-                                                className="opacity-100 md:opacity-0 md:group-hover/name:opacity-100 text-gray-500 hover:text-gold transition-opacity p-0.5 shrink-0"
-                                                title="Edit displayed name"
-                                              >
-                                                <Pencil size={11} />
-                                              </button>
-                                            </div>
-                                          )}
-                                          <div className="flex items-center gap-2 mt-0.5">
-                                            <span className="text-[10px] font-black bg-white/10 px-1.5 py-0.5 rounded text-gold uppercase">{b.channel || 'OTA'}</span>
-                                            <span className="font-mono text-[10px] text-gray-500">{b.booking_ref}</span>
-                                          </div>
-                                        </div>
-                                      </div>
-
-                                      <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap sm:shrink-0">
-                                        <div className="text-xs text-gray-300 font-bold w-fit px-2.5 py-1.5 bg-black/20 rounded-lg border border-white/5 flex items-center gap-1.5">
-                                          <Users size={12} className="text-gray-500 shrink-0" />
-                                          <span className="whitespace-nowrap">A:{b.pax_adult || 0} Y:{b.pax_youth || 0} C:{b.pax_child || 0} I:{b.pax_infant || 0}</span>
-                                          <span className="text-gold whitespace-nowrap">&middot; {bTotalPax} pax</span>
-                                        </div>
-
-                                        {isCheckedIn ? (
-                                          <div className="text-center px-3 py-1.5 bg-white/[0.02] rounded-xl border border-white/5 shrink-0">
-                                            <span className="text-[9px] font-black uppercase tracking-widest text-gray-500 whitespace-nowrap">
-                                              Checked in{cRecord?.checked_in_at ? ` ${new Date(cRecord.checked_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
-                                            </span>
-                                          </div>
-                                        ) : (
-                                          <button
-                                            onClick={() => setCheckinModal({ ...b, displayName })}
-                                            className="bg-gold text-black px-4 py-2 rounded-xl font-black text-[11px] uppercase tracking-widest shadow-lg shadow-gold/20 active:scale-95 transition-all shrink-0"
-                                          >
-                                            Check In
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                                  return (
+                                    <GuestCard
+                                      key={b.id}
+                                      booking={b}
+                                      displayName={getDisplayName(b)}
+                                      isCheckedIn={isDone}
+                                      isNoShow={isNoShow}
+                                      checkedInAt={cRecord?.checked_in_at}
+                                      onCheckIn={() => setShowConfirm(b)}
+                                      onNoShow={() => recordCheckin(b, 'no_show')}
+                                      editableName
+                                      onSaveName={(newName) => handleSaveNameOverride(b, newName)}
+                                      sessions={sessionOptions}
+                                      currentSessionId={bookingRefToSessionId.get(b.booking_ref) || ''}
+                                      onMoveToSession={(sid) => handleMoveBookingToSession(b.booking_ref, sid)}
+                                    />
+                                  );
+                                })}
+                              </TourGroup>
                             </div>
                           </div>
                         );
@@ -589,16 +535,14 @@ export default function TodayToursPage() {
           </div>
         )}
 
-        {/* --- CHECKIN MODAL --- */}
-        {checkinModal && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <CheckinModal
-              modalData={checkinModal}
-              guides={guides}
-              onClose={() => setCheckinModal(null)}
-              onSave={(by: string) => handleConfirmCheckin(by)}
-            />
-          </div>
+        {/* --- CHECKIN CONFIRM MODAL (photo capture) — identical to GuideCheckin --- */}
+        {showConfirm && (
+          <CheckinConfirmModal
+            customerName={getDisplayName(showConfirm)}
+            pax={{ adult: showConfirm.pax_adult, youth: showConfirm.pax_youth, child: showConfirm.pax_child, infant: showConfirm.pax_infant }}
+            onConfirm={handleConfirmCheckin}
+            onCancel={() => setShowConfirm(null)}
+          />
         )}
       </div>
   );
@@ -718,53 +662,6 @@ function AssignGuideModal({ modalData, guides, optionRates, onClose, onSave }: a
       <div className="p-6 border-t border-white/5 bg-[#0a0a0f] flex justify-end gap-3">
         <button onClick={onClose} className="aurelia-ghost-btn px-6 py-2 border border-white/20 text-gray-300">Cancel</button>
         <button onClick={handleSave} className="aurelia-gold-btn px-6 py-2 font-bold focus:scale-95 transition-all">Save Assignment</button>
-      </div>
-    </div>
-  );
-}
-
-function CheckinModal({ modalData, guides, onClose, onSave }: any) {
-  const [by, setBy] = useState('');
-  const totalPax = paxTotal(modalData);
-
-  return (
-    <div className="bg-[#0f0f12] border border-white/10 rounded-[2.5rem] w-full max-w-sm shadow-2xl overflow-hidden flex flex-col pointer-events-auto">
-      <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-[#0a0a0f]">
-        <h2 className="font-black text-lg text-white">Confirm Check-in</h2>
-        <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={20} /></button>
-      </div>
-
-      <div className="p-6 space-y-6">
-        <div className="text-center space-y-2">
-          <h3 className="text-xl font-black text-white">{modalData.displayName || modalData.customer_name}</h3>
-          <p className="font-mono text-xs text-gold">{modalData.booking_ref}</p>
-          <div className="flex flex-col items-center gap-1 pt-2">
-            <div className="flex items-center gap-2 text-white font-bold text-sm">
-              <Users size={16} className="text-gray-500" />
-              <span>A:{modalData.pax_adult || 0} Y:{modalData.pax_youth || 0} C:{modalData.pax_child || 0} I:{modalData.pax_infant || 0}</span>
-            </div>
-            <p className="text-[10px] font-black uppercase text-gold">{totalPax} total pax</p>
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-gray-500 uppercase mb-2">Checked In By</label>
-          <select value={by} onChange={e => setBy(e.target.value)} className="aurelia-input bg-[#13131a]">
-            <option value="">-- Select Person --</option>
-            <option value="Coordinator">Coordinator</option>
-            {guides.map((g: any) => <option key={g.id} value={g.name}>{g.name}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div className="p-6 border-t border-white/5 bg-[#0a0a0f] flex justify-end gap-3">
-        <button onClick={onClose} className="aurelia-ghost-btn px-6 py-2 border border-white/20 text-gray-300">Cancel</button>
-        <button
-          onClick={() => onSave(by || 'Unknown')}
-          className="bg-gold text-black px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-gold/20 flex items-center gap-2 active:scale-95 transition-all"
-        >
-          <CheckCircle2 size={16} /> Confirm
-        </button>
       </div>
     </div>
   );
