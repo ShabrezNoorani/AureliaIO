@@ -755,21 +755,31 @@ export type Database = {
       }
       session_bookings: {
         Row: {
+          allotted_guide_id: string | null
           booking_ref: string
           session_id: string
           user_id: string
         }
         Insert: {
+          allotted_guide_id?: string | null
           booking_ref: string
           session_id: string
           user_id: string
         }
         Update: {
+          allotted_guide_id?: string | null
           booking_ref?: string
           session_id?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "session_bookings_allotted_guide_id_fkey"
+            columns: ["allotted_guide_id"]
+            isOneToOne: false
+            referencedRelation: "guides"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "session_bookings_session_id_fkey"
             columns: ["session_id"]
@@ -786,6 +796,7 @@ export type Database = {
           reassigned_from: string | null
           responded_at: string | null
           session_id: string
+          shuffle_locked: boolean
           status: string
           user_id: string
         }
@@ -795,6 +806,7 @@ export type Database = {
           reassigned_from?: string | null
           responded_at?: string | null
           session_id: string
+          shuffle_locked?: boolean
           status?: string
           user_id: string
         }
@@ -804,6 +816,7 @@ export type Database = {
           reassigned_from?: string | null
           responded_at?: string | null
           session_id?: string
+          shuffle_locked?: boolean
           status?: string
           user_id?: string
         }
