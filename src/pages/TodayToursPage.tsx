@@ -1,13 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, UserPlus, Users, X, Share2, Copy, Check } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, UserPlus, Users, X, Share2, Copy, Check, Shuffle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
+import { computeBalance } from '@/lib/allocationBalance';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
+import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/checkin/AllocationBoard';
 
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
@@ -34,6 +37,7 @@ export default function TodayToursPage() {
   const [assignModal, setAssignModal] = useState<any | null>(null);
   const [showConfirm, setShowConfirm] = useState<any | null>(null);
   const [copied, setCopied] = useState(false);
+  const [balancingSessionId, setBalancingSessionId] = useState<string | null>(null);
 
   const loadData = async () => {
     if (!user) return;
@@ -64,8 +68,8 @@ export default function TodayToursPage() {
     const sessionIds = sessionsData.map((s: any) => s.id);
     if (sessionIds.length > 0) {
       const [sbRes, sgRes] = await Promise.all([
-        supabase.from('session_bookings').select('session_id, booking_ref').eq('user_id', user.id).in('session_id', sessionIds),
-        supabase.from('session_guides').select('session_id, guide_id').eq('user_id', user.id).in('session_id', sessionIds),
+        supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
+        supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status').eq('user_id', user.id).in('session_id', sessionIds),
       ]);
       setSessionBookings(sbRes.data || []);
       setSessionGuides(sgRes.data || []);
@@ -146,6 +150,42 @@ export default function TodayToursPage() {
     const override = cRecord?.display_name_override;
     return override && String(override).trim() ? override : b.customer_name;
   };
+
+  // Accepted guides per session, for the allocation board — only guides actually working the
+  // tour get a column.
+  const sessionIdToTeam = useMemo(() => {
+    const m = new Map<string, AllocationGuide[]>();
+    sessionGuides.forEach((sg: any) => {
+      if (sg.status !== 'accepted') return;
+      const guide = guides.find(g => g.id === sg.guide_id);
+      if (!guide) return;
+      const arr = m.get(sg.session_id) || [];
+      arr.push({ id: sg.guide_id, name: guide.name, locked: !!sg.shuffle_locked });
+      m.set(sg.session_id, arr);
+    });
+    return m;
+  }, [sessionGuides, guides]);
+
+  // Checked-in guests only, grouped by their CURRENT session_bookings.allotted_guide_id — never
+  // the frozen checkins.checked_in_by — so a guest's shown guide always reflects live allotment.
+  const sessionIdToCheckedInGuests = useMemo(() => {
+    const m = new Map<string, AllocationGuest[]>();
+    sessionBookings.forEach((sb: any) => {
+      const cRecord = checkins.find(c => c.booking_ref === sb.booking_ref);
+      if (cRecord?.status !== 'checked_in') return;
+      const b = bookings.find(bk => bk.booking_ref === sb.booking_ref);
+      if (!b) return;
+      const arr = m.get(sb.session_id) || [];
+      arr.push({
+        bookingRef: sb.booking_ref,
+        displayName: getDisplayName(b),
+        pax: paxTotal(b),
+        allottedGuideId: sb.allotted_guide_id ?? null,
+      });
+      m.set(sb.session_id, arr);
+    });
+    return m;
+  }, [sessionBookings, checkins, bookings]);
 
   // Dispatch-built sessions take priority over the legacy guide_assignments list when a
   // booking belongs to one.
@@ -263,6 +303,71 @@ export default function TodayToursPage() {
     if (!user) return;
     await reassignSessionBookings(supabase, user.id, [bookingRef], targetSessionId);
     loadData();
+  };
+
+  // Owner-only: move a single checked-in guest to a different guide (or unassign to holding).
+  const handleMoveGuest = async (bookingRef: string, newGuideId: string | null) => {
+    if (!user) return;
+    await supabase.from('session_bookings')
+      .update({ allotted_guide_id: newGuideId })
+      .eq('user_id', user.id)
+      .eq('booking_ref', bookingRef);
+    loadData();
+  };
+
+  // Owner-only: lock/unlock a guide on a session — locked guides and their guests are excluded
+  // from Balance entirely.
+  const handleToggleLock = async (sessionId: string, guideId: string, locked: boolean) => {
+    if (!user) return;
+    await supabase.from('session_guides')
+      .update({ shuffle_locked: locked })
+      .eq('user_id', user.id)
+      .eq('session_id', sessionId)
+      .eq('guide_id', guideId);
+    loadData();
+  };
+
+  // Owner-only: run the Balance algorithm for one session and persist the resulting moves.
+  const handleBalance = async (sessionId: string) => {
+    if (!user) return;
+    const teamGuides = sessionIdToTeam.get(sessionId) || [];
+    const checkedInGuests = sessionIdToCheckedInGuests.get(sessionId) || [];
+
+    const result = computeBalance(
+      teamGuides.map(g => ({ id: g.id, locked: g.locked })),
+      checkedInGuests.map(g => ({ bookingRef: g.bookingRef, pax: g.pax, allottedGuideId: g.allottedGuideId }))
+    );
+
+    if ('error' in result) {
+      toast.error(result.error);
+      return;
+    }
+
+    if (result.moves.length === 0) {
+      toast.success('Already balanced — no changes needed.');
+      return;
+    }
+
+    setBalancingSessionId(sessionId);
+    try {
+      // session_bookings has no single-column primary key — every row is scoped by (user_id, booking_ref).
+      await Promise.all(result.moves.map(m =>
+        supabase.from('session_bookings')
+          .update({ allotted_guide_id: m.newGuideId })
+          .eq('user_id', user.id)
+          .eq('booking_ref', m.bookingRef)
+      ));
+
+      const summary = teamGuides
+        .filter(g => !g.locked)
+        .map(g => `${g.name}: ${result.totalsByGuideId[g.id] ?? 0} pax`)
+        .join(' · ');
+      toast.success(`Balanced ${result.moves.length} guest${result.moves.length !== 1 ? 's' : ''} — ${summary}`);
+
+      await loadData();
+    } finally {
+      setBalancingSessionId(null);
+    }
   };
 
   const handleSaveAssignment = async (payload: any) => {
@@ -518,6 +623,34 @@ export default function TodayToursPage() {
                   ))}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* TEAM ALLOCATION & BALANCE — owner-only per-session controls */}
+          {!loading && sessions.filter((s: any) => (sessionIdToTeam.get(s.id) || []).length > 0).length > 0 && (
+            <div className="space-y-4 pt-4 border-t border-border/50">
+              <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                <Shuffle size={16} className="text-gold" /> Team Allocation
+              </h2>
+              {sessions
+                .filter((s: any) => (sessionIdToTeam.get(s.id) || []).length > 0)
+                .map((session: any) => (
+                  <div key={session.id} className="aurelia-card p-4 md:p-5 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="font-extrabold text-base">{session.label || 'Untitled Session'}</h3>
+                      <span className="text-xs text-muted-foreground">{session.start_time || '—'}</span>
+                    </div>
+                    <AllocationBoard
+                      guides={sessionIdToTeam.get(session.id) || []}
+                      guests={sessionIdToCheckedInGuests.get(session.id) || []}
+                      isOwner
+                      onMoveGuest={handleMoveGuest}
+                      onToggleLock={(guideId, locked) => handleToggleLock(session.id, guideId, locked)}
+                      onBalance={() => handleBalance(session.id)}
+                      balancing={balancingSessionId === session.id}
+                    />
+                  </div>
+                ))}
             </div>
           )}
         </div>

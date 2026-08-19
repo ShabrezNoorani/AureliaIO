@@ -5,6 +5,7 @@ import { Calendar as CalendarIcon } from 'lucide-react';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
+import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/checkin/AllocationBoard';
 
 interface Booking {
   id: string;
@@ -41,6 +42,18 @@ interface TourSession {
 interface SessionBookingRow {
   session_id: string;
   booking_ref: string;
+  allotted_guide_id: string | null;
+}
+
+interface SessionGuideRow {
+  session_id: string;
+  guide_id: string;
+  shuffle_locked: boolean;
+}
+
+interface GuideProfile {
+  id: string;
+  name: string;
 }
 
 const paxTotal = (b: Booking) =>
@@ -53,6 +66,8 @@ export default function GuideCheckin() {
   // checkins reads to this guide's own sessions — no client-side guide_id filtering needed here.
   const [sessions, setSessions] = useState<TourSession[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingRow[]>([]);
+  const [teamSessionGuides, setTeamSessionGuides] = useState<SessionGuideRow[]>([]);
+  const [guideProfiles, setGuideProfiles] = useState<GuideProfile[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [checkins, setCheckins] = useState<Checkin[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,6 +95,8 @@ export default function GuideCheckin() {
     if (acceptedSessionIds.length === 0) {
       setSessions([]);
       setSessionBookings([]);
+      setTeamSessionGuides([]);
+      setGuideProfiles([]);
       setBookings([]);
       setCheckins([]);
       setLoading(false);
@@ -100,37 +117,51 @@ export default function GuideCheckin() {
     const sessionIds = mySessions.map(s => s.id);
     if (sessionIds.length === 0) {
       setSessionBookings([]);
+      setTeamSessionGuides([]);
+      setGuideProfiles([]);
       setBookings([]);
       setCheckins([]);
       setLoading(false);
       return;
     }
 
-    const { data: sbData } = await supabase
-      .from('session_bookings')
-      .select('session_id, booking_ref')
-      .eq('user_id', guideUserId)
-      .in('session_id', sessionIds);
+    const [sbRes, teamRes] = await Promise.all([
+      supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id')
+        .eq('user_id', guideUserId).in('session_id', sessionIds),
+      // The full accepted roster for these sessions (not just this guide) — the allocation
+      // board is a team view so a guide can see where everyone stands, read-only.
+      supabase.from('session_guides').select('session_id, guide_id, shuffle_locked')
+        .eq('user_id', guideUserId).eq('status', 'accepted').in('session_id', sessionIds),
+    ]);
 
-    const mySessionBookings = sbData || [];
+    const mySessionBookings = sbRes.data || [];
     setSessionBookings(mySessionBookings);
+    const teamGuides = teamRes.data || [];
+    setTeamSessionGuides(teamGuides);
 
     const refs = Array.from(new Set(mySessionBookings.map(sb => sb.booking_ref)));
+    const teamGuideIds = Array.from(new Set(teamGuides.map(tg => tg.guide_id)));
+
     if (refs.length === 0) {
       setBookings([]);
       setCheckins([]);
+      setGuideProfiles([]);
       setLoading(false);
       return;
     }
 
-    const [bRes, cRes] = await Promise.all([
+    const [bRes, cRes, gRes] = await Promise.all([
       supabase.from('bookings').select('*').eq('user_id', guideUserId).in('booking_ref', refs),
       supabase.from('checkins').select('booking_ref, status, checked_in_at, display_name_override')
         .eq('user_id', guideUserId).eq('travel_date', today).in('booking_ref', refs),
+      teamGuideIds.length > 0
+        ? supabase.from('guides').select('id, name').eq('user_id', guideUserId).in('id', teamGuideIds)
+        : Promise.resolve({ data: [] as GuideProfile[] }),
     ]);
 
     setBookings(bRes.data || []);
     setCheckins(cRes.data || []);
+    setGuideProfiles((gRes.data as GuideProfile[]) || []);
     setLoading(false);
   };
 
@@ -155,6 +186,18 @@ export default function GuideCheckin() {
     return map;
   }, [sessionBookings, bookings]);
 
+  const sessionIdToTeam = useMemo(() => {
+    const m = new Map<string, AllocationGuide[]>();
+    teamSessionGuides.forEach(tg => {
+      const profile = guideProfiles.find(g => g.id === tg.guide_id);
+      if (!profile) return;
+      const arr = m.get(tg.session_id) || [];
+      arr.push({ id: tg.guide_id, name: profile.name, locked: tg.shuffle_locked });
+      m.set(tg.session_id, arr);
+    });
+    return m;
+  }, [teamSessionGuides, guideProfiles]);
+
   const findCheckinRow = async (bookingRef: string) => {
     if (!guideUserId) return null;
     const { data } = await supabase
@@ -172,6 +215,27 @@ export default function GuideCheckin() {
     const override = cRecord?.display_name_override;
     return override && String(override).trim() ? override : b.customer_name;
   };
+
+  // Checked-in guests only, grouped by their CURRENT session_bookings.allotted_guide_id — never
+  // the frozen checkins.checked_in_by — so a guest's shown guide always reflects live allotment.
+  const sessionIdToCheckedInGuests = useMemo(() => {
+    const m = new Map<string, AllocationGuest[]>();
+    sessionBookings.forEach(sb => {
+      const cRecord = checkins.find(c => c.booking_ref === sb.booking_ref);
+      if (cRecord?.status !== 'checked_in') return;
+      const b = bookings.find(bk => bk.booking_ref === sb.booking_ref);
+      if (!b) return;
+      const arr = m.get(sb.session_id) || [];
+      arr.push({
+        bookingRef: sb.booking_ref,
+        displayName: getDisplayName(b),
+        pax: paxTotal(b),
+        allottedGuideId: sb.allotted_guide_id,
+      });
+      m.set(sb.session_id, arr);
+    });
+    return m;
+  }, [sessionBookings, checkins, bookings]);
 
   // Records a check-in or no-show. Only a checked-in confirmation also flips the booking to
   // DONE (matching the owner page's existing side effect) — nothing else ever touches bookings,
@@ -207,6 +271,15 @@ export default function GuideCheckin() {
 
     if (status === 'checked_in') {
       await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
+
+      // Auto-allot: whichever guide performs the check-in gets this guest by default. The owner
+      // can still move it from the Today's Tours allocation board.
+      if (guideId) {
+        await supabase.from('session_bookings')
+          .update({ allotted_guide_id: guideId })
+          .eq('user_id', guideUserId)
+          .eq('booking_ref', b.booking_ref);
+      }
     }
 
     loadData();
@@ -269,35 +342,52 @@ export default function GuideCheckin() {
             const sessionBookingsList = sessionBookingsMap.get(session.id) || [];
             const totalPax = sessionBookingsList.reduce((sum, b) => sum + paxTotal(b), 0);
 
-            return (
-              <TourGroup
-                key={session.id}
-                time={session.start_time || ''}
-                code={session.label || 'Session'}
-                bookingsCount={sessionBookingsList.length}
-                totalPax={totalPax}
-              >
-                {sessionBookingsList.map(b => {
-                  const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
-                  const isDone = cRecord?.status === 'checked_in';
-                  const isNoShow = cRecord?.status === 'no_show';
+            const teamGuides = sessionIdToTeam.get(session.id) || [];
+            const checkedInGuests = sessionIdToCheckedInGuests.get(session.id) || [];
 
-                  return (
-                    <GuestCard
-                      key={b.id}
-                      booking={b}
-                      displayName={getDisplayName(b)}
-                      isCheckedIn={isDone}
-                      isNoShow={isNoShow}
-                      checkedInAt={cRecord?.checked_in_at}
-                      onCheckIn={() => setShowConfirm(b)}
-                      onNoShow={() => recordCheckin(b, 'no_show')}
-                      editableName
-                      onSaveName={(newName) => handleSaveName(b, newName)}
+            return (
+              <div key={session.id} className="space-y-4">
+                <TourGroup
+                  time={session.start_time || ''}
+                  code={session.label || 'Session'}
+                  bookingsCount={sessionBookingsList.length}
+                  totalPax={totalPax}
+                >
+                  {sessionBookingsList.map(b => {
+                    const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
+                    const isDone = cRecord?.status === 'checked_in';
+                    const isNoShow = cRecord?.status === 'no_show';
+
+                    return (
+                      <GuestCard
+                        key={b.id}
+                        booking={b}
+                        displayName={getDisplayName(b)}
+                        isCheckedIn={isDone}
+                        isNoShow={isNoShow}
+                        checkedInAt={cRecord?.checked_in_at}
+                        onCheckIn={() => setShowConfirm(b)}
+                        onNoShow={() => recordCheckin(b, 'no_show')}
+                        editableName
+                        onSaveName={(newName) => handleSaveName(b, newName)}
+                      />
+                    );
+                  })}
+                </TourGroup>
+
+                {teamGuides.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-2 px-1">
+                      Team Allocation
+                    </p>
+                    <AllocationBoard
+                      guides={teamGuides}
+                      guests={checkedInGuests}
+                      highlightGuideId={guideId || undefined}
                     />
-                  );
-                })}
-              </TourGroup>
+                  </div>
+                )}
+              </div>
             );
           })
         )}
