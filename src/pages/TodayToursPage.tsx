@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, Share2, Check, Search, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
@@ -25,7 +25,7 @@ interface SessionGuestRow {
 }
 
 export default function TodayToursPage() {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
 
   const [bookings, setBookings] = useState<any[]>([]);
   const [guides, setGuides] = useState<any[]>([]);
@@ -39,7 +39,6 @@ export default function TodayToursPage() {
   const [todayStrDate, setTodayStrDate] = useState(localDateStr());
 
   const [showConfirm, setShowConfirm] = useState<any | null>(null);
-  const [copied, setCopied] = useState(false);
   const [balancingSessionId, setBalancingSessionId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -471,14 +470,6 @@ export default function TodayToursPage() {
     }
   };
 
-  const copyCheckinLink = () => {
-    if (!profile?.checkin_token) return alert('No check-in token found. Please visit Settings to generate one.');
-    const url = `${window.location.origin}/checkin/${profile.checkin_token}?date=${todayStrDate}`;
-    navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
   return (
     <div className="relative">
       <div className="p-4 md:p-8 pb-32 max-w-5xl mx-auto space-y-8 animate-fade-in">
@@ -497,23 +488,14 @@ export default function TodayToursPage() {
               <Clock size={20} />
               <span>{timeStr}</span>
             </div>
-            <div className="flex flex-wrap justify-end gap-2">
-              <button
-                onClick={handleManualRefresh}
-                disabled={refreshing}
-                title="Refresh"
-                className="flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold disabled:opacity-50"
-              >
-                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-              </button>
-              <button
-                onClick={copyCheckinLink}
-                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold"
-              >
-                {copied ? <Check size={14} className="text-green-500" /> : <Share2 size={14} />}
-                {copied ? 'Link Copied!' : 'Copy Check-in Link'}
-              </button>
-            </div>
+            <button
+              onClick={handleManualRefresh}
+              disabled={refreshing}
+              title="Refresh"
+              className="flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+            </button>
           </div>
         </div>
 

@@ -116,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // excluding that case here is what keeps an owner from being misclassified as a guide.
   const fetchRole = useCallback(async (userId: string) => {
     try {
-      const rolePromise = supabase
+      const lookupGuideRow = () => supabase
         .from('guides')
         .select('id, name, user_id')
         .eq('auth_user_id', userId)
@@ -125,17 +125,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Same 3s-timeout-race pattern as fetchProfile — a stalled request (e.g. right after a
       // backgrounded tab resumes) must never be able to hang this forever.
-      const timeoutPromise = new Promise<{ data: null; error: null }>(
+      const timeoutPromise = () => new Promise<{ data: null; error: null }>(
         (resolve) => setTimeout(
           () => resolve({ data: null, error: null }),
           3000
         )
       );
 
-      const { data, error } = await Promise.race([rolePromise, timeoutPromise]);
+      let { data, error } = await Promise.race([lookupGuideRow(), timeoutPromise()]);
 
       if (error) throw error;
       if (!mountedRef.current) return;
+
+      // Safety net: a guide whose claim was interrupted (e.g. email confirmation was required,
+      // so no session existed yet when claim_guide_account() needed to run) can log in fine —
+      // their auth.users row exists — but their guides row is still unlinked. On first login
+      // with no direct match, try the email-based repair RPC once before concluding "owner".
+      // repair_guide_claim isn't in the generated types yet (regenerate to drop this cast).
+      if (!data) {
+        const { data: repaired } = await (supabase.rpc as any)('repair_guide_claim');
+        if (repaired) {
+          const retry = await Promise.race([lookupGuideRow(), timeoutPromise()]);
+          if (!mountedRef.current) return;
+          data = retry.data;
+        }
+      }
 
       if (data) {
         setRole('guide');

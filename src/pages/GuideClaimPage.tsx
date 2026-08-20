@@ -4,7 +4,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 
-type PageState = 'loading' | 'invalid' | 'form' | 'success' | 'used' | 'already-registered';
+type PageState = 'loading' | 'invalid' | 'form' | 'success' | 'used' | 'already-registered' | 'pending-confirmation';
 
 export default function GuideClaimPage() {
   const { token } = useParams<{ token: string }>();
@@ -74,8 +74,13 @@ export default function GuideClaimPage() {
         throw signUpError;
       }
 
+      // claim_guide_account needs a live session — it reads auth.uid() server-side. If email
+      // confirmation is required, signUp() returns no session yet, so we can't call it now.
+      // Rather than dead-end here, leave the guide row unclaimed-but-linkable: their claim_token
+      // is still set, and once they confirm their email and log in for the first time,
+      // AuthContext's repair_guide_claim() safety net finishes the link automatically.
       if (!signUpData.session) {
-        setError('Check your email to confirm your account, then open this link again to finish setup.');
+        setState('pending-confirmation');
         return;
       }
 
@@ -85,7 +90,25 @@ export default function GuideClaimPage() {
 
       if (claimError) throw claimError;
 
-      setState(claimed ? 'success' : 'used');
+      if (!claimed) {
+        setState('used');
+        return;
+      }
+
+      // Never report success without confirming auth_user_id actually landed — re-read the row
+      // rather than trusting the RPC's boolean alone.
+      const { data: guideRow, error: verifyError } = await supabase
+        .from('guides')
+        .select('id')
+        .eq('auth_user_id', signUpData.session.user.id)
+        .maybeSingle();
+
+      if (verifyError || !guideRow) {
+        setError('Your account was created, but we could not confirm the link to your guide profile. Try logging in — it may finish linking automatically — or contact your coordinator.');
+        return;
+      }
+
+      setState('success');
     } catch (err: any) {
       setError(err.message || 'Something went wrong. Please try again.');
     } finally {
@@ -152,6 +175,25 @@ export default function GuideClaimPage() {
     );
   }
 
+  if (state === 'pending-confirmation') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#0f0f17] px-6">
+        <div className="w-full max-w-md text-center">
+          <div className="flex justify-center mb-8">
+            <Logo size="lg" showSubtitle={false} />
+          </div>
+          <div className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/20 text-sm text-amber-300 mb-6">
+            Almost there — check your email and click the confirmation link to activate your
+            account. Once confirmed, just log in and your guide profile links automatically.
+          </div>
+          <Link to="/login" className="text-[#f5a623] hover:underline font-medium text-sm">
+            Go to login →
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (state === 'already-registered') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#0f0f17] px-6">
@@ -160,7 +202,8 @@ export default function GuideClaimPage() {
             <Logo size="lg" showSubtitle={false} />
           </div>
           <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400 mb-6">
-            An account with this email already exists. Please log in instead.
+            An account with this email already exists. Log in instead — if it's yours, your guide
+            profile will finish linking automatically.
           </div>
           <Link to="/login" className="aurelia-gold-btn inline-flex w-full py-3 text-base font-bold items-center justify-center gap-2">
             Go to login →
