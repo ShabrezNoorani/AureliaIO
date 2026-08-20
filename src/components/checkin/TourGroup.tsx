@@ -28,7 +28,9 @@ export default function TourGroup({ time, code, bookingsCount, totalPax, sharedG
         </div>
       </div>
 
-      <div className="space-y-4">
+      {/* Tight gap between guest rows — the rows themselves are compact now, a generous gap here
+          would undo that density. */}
+      <div className="space-y-1.5">
         {children}
       </div>
     </div>
