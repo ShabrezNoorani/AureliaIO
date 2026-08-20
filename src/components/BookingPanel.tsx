@@ -243,12 +243,12 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
               <option value="CANCELLED_LATE">CANCELLED LATE</option>
             </select>
             {draft.status === 'CANCELLED_EARLY' && (
-              <div className="mt-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-400">
+              <div className="mt-3 p-3 rounded-lg bg-blue-600/10 border border-blue-600/20 text-xs text-blue-700">
                 ℹ Revenue = €0. Ticket costs = €0 (refunded).
               </div>
             )}
             {draft.status === 'CANCELLED_LATE' && (
-              <div className="mt-3 p-3 rounded-lg bg-orange-500/10 border border-orange-500/20 text-xs text-orange-400">
+              <div className="mt-3 p-3 rounded-lg bg-orange-600/10 border border-orange-600/20 text-xs text-orange-700">
                 ⚠ Revenue kept. Ticket costs are a loss.
               </div>
             )}

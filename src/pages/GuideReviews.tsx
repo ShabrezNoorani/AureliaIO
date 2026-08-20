@@ -114,29 +114,29 @@ export default function GuideReviews() {
       </div>
 
       {error && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">{error}</div>
+        <div className="p-3 rounded-lg bg-red-600/10 border border-red-600/20 text-sm text-red-700">{error}</div>
       )}
 
       <section className="aurelia-card p-5 space-y-4">
-        <h2 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-white/5 pb-2">Log a Review</h2>
+        <h2 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-border pb-2">Log a Review</h2>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Stars</label>
-            <select value={formStars} onChange={e => setFormStars(Number(e.target.value))} className="aurelia-input appearance-none bg-[#1a1a1f] w-full">
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Stars</label>
+            <select value={formStars} onChange={e => setFormStars(Number(e.target.value))} className="aurelia-input appearance-none bg-muted text-foreground w-full">
               {[5, 4, 3, 2, 1].map(n => <option key={n} value={n}>{n} star{n !== 1 ? 's' : ''}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">How Many</label>
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">How Many</label>
             <input type="number" min={1} value={formQuantity} onChange={e => setFormQuantity(Math.max(1, Number(e.target.value)))} className="aurelia-input" />
           </div>
         </div>
         <div>
-          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Source (optional)</label>
+          <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Source (optional)</label>
           <input value={formSource} onChange={e => setFormSource(e.target.value)} className="aurelia-input" placeholder="e.g. Viator, TripAdvisor" />
         </div>
         <div>
-          <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Note (optional)</label>
+          <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Note (optional)</label>
           <textarea rows={2} value={formNote} onChange={e => setFormNote(e.target.value)} className="aurelia-input resize-none" placeholder="Anything worth remembering about this feedback" />
         </div>
         <button onClick={handleSubmit} disabled={submitting} className="aurelia-gold-btn w-full py-2.5 font-bold disabled:opacity-50">
@@ -164,9 +164,9 @@ export default function GuideReviews() {
                   </div>
                 </div>
                 {r.verified ? (
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 shrink-0">Verified</span>
+                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-green-600/15 text-green-700 shrink-0">Verified</span>
                 ) : (
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 shrink-0">Pending verification</span>
+                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-600/15 text-amber-700 shrink-0">Pending verification</span>
                 )}
               </div>
             ))}

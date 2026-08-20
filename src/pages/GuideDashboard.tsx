@@ -118,19 +118,19 @@ export default function GuideDashboard() {
   return (
     <div style={{ padding: '32px' }} className="animate-fade-in">
       <div className="p-8 max-w-6xl mx-auto space-y-8 animate-fade-in">
-        <div className="flex items-center justify-between border-b border-white/5 pb-6">
+        <div className="flex items-center justify-between border-b border-border pb-6">
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight">Guide Dashboard</h1>
-            <p className="text-gray-400 text-sm mt-1">Performance tracking and earnings overview</p>
+            <p className="text-muted-foreground text-sm mt-1">Performance tracking and earnings overview</p>
           </div>
-          
-          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
+
+          <div className="flex bg-muted p-1 rounded-xl border border-border">
             {(['today', 'yesterday', 'month', 'mtd', 'ytd'] as const).map(mode => (
               <button
                 key={mode}
                 onClick={() => setDateRange(mode)}
                 className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
-                  dateRange === mode ? 'bg-white/10 text-white shadow-xl' : 'text-gray-500 hover:text-gray-300'
+                  dateRange === mode ? 'bg-muted text-foreground shadow-xl' : 'text-muted-foreground hover:text-foreground/80'
                 }`}
               >
                 {mode === 'month' ? 'This Month' : mode}
@@ -144,10 +144,10 @@ export default function GuideDashboard() {
             <div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin" />
           </div>
         ) : guides.length === 0 ? (
-          <div className="flex flex-col items-center justify-center p-20 text-center border border-dashed border-white/10 rounded-2xl bg-white/[0.02]">
+          <div className="flex flex-col items-center justify-center p-20 text-center border border-dashed border-border rounded-2xl bg-muted">
             <div className="text-7xl mb-6">📊</div>
             <h3 className="text-2xl font-extrabold mb-2">No guide data yet</h3>
-            <p className="text-gray-400 mb-8 max-w-sm">Add guides first to see performance</p>
+            <p className="text-muted-foreground mb-8 max-w-sm">Add guides first to see performance</p>
             <button 
               onClick={() => navigate('/app/guides')}
               className="aurelia-gold-btn px-8 py-3 font-bold flex items-center gap-2"
@@ -159,65 +159,65 @@ export default function GuideDashboard() {
           <div className="space-y-8">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="aurelia-card p-6 border-l-[4px] border-l-blue-500">
-                <div className="flex items-center gap-3 text-gray-500 mb-2">
+                <div className="flex items-center gap-3 text-muted-foreground mb-2">
                   <Activity size={18} />
                   <span className="text-xs font-bold uppercase tracking-widest">Total Tours</span>
                 </div>
                 <div className="text-4xl font-extrabold">{totalTours}</div>
               </div>
               <div className="aurelia-card p-6 border-l-[4px] border-l-gold">
-                <div className="flex items-center gap-3 text-gray-500 mb-2">
+                <div className="flex items-center gap-3 text-muted-foreground mb-2">
                   <Euro size={18} />
                   <span className="text-xs font-bold uppercase tracking-widest">Total Earnings</span>
                 </div>
                 <div className="text-4xl font-extrabold text-gold">€{totalEarnings.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
               </div>
               <div className="aurelia-card p-6 border-l-[4px] border-l-purple-500">
-                <div className="flex items-center gap-3 text-gray-500 mb-2">
+                <div className="flex items-center gap-3 text-muted-foreground mb-2">
                   <BarChart2 size={18} />
                   <span className="text-xs font-bold uppercase tracking-widest">Avg / Tour</span>
                 </div>
-                <div className="text-4xl font-extrabold text-purple-400">€{totalTours > 0 ? (totalEarnings / totalTours).toFixed(2) : '0.00'}</div>
+                <div className="text-4xl font-extrabold text-purple-700">€{totalTours > 0 ? (totalEarnings / totalTours).toFixed(2) : '0.00'}</div>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {guideStats.map(g => (
-                <div key={g.id} className="aurelia-card p-6 border border-white/5 hover:border-gold/30 transition-all group">
+                <div key={g.id} className="aurelia-card p-6 border border-border hover:border-gold/30 transition-all group">
                   <div className="flex items-center gap-4 mb-6">
-                    <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-xl border border-white/10 group-hover:border-gold/50 transition-colors">
+                    <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-xl border border-border group-hover:border-gold/50 transition-colors">
                       👤
                     </div>
                     <div>
-                      <div className="font-extrabold text-lg text-white group-hover:text-gold transition-colors">{g.name}</div>
-                      <div className="text-xs font-mono text-gray-500 uppercase tracking-widest">{g.guide_number}</div>
+                      <div className="font-extrabold text-lg text-foreground group-hover:text-gold transition-colors">{g.name}</div>
+                      <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest">{g.guide_number}</div>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5">
-                      <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Tours</div>
+                    <div className="bg-muted p-3 rounded-xl border border-border">
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Tours</div>
                       <div className="text-xl font-bold">{g.tours}</div>
                     </div>
-                    <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5">
-                      <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Earnings</div>
+                    <div className="bg-muted p-3 rounded-xl border border-border">
+                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Earnings</div>
                       <div className="text-xl font-bold text-gold">€{g.earnings.toLocaleString()}</div>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 mt-6">
-                    <button 
+                    <button
                       onClick={() => { setSelectedGuide(g); setShowDetailsModal(true); }}
-                      className="py-3 bg-white/5 border border-white/10 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-white/10 hover:border-gold/30 transition-all flex items-center justify-center gap-2 group/btn"
+                      className="py-3 bg-muted border border-border rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-muted/70 hover:border-gold/30 transition-all flex items-center justify-center gap-2 group/btn"
                     >
-                      <Activity size={14} className="text-gray-500 group-hover/btn:text-gold" />
+                      <Activity size={14} className="text-muted-foreground group-hover/btn:text-gold" />
                       Details
                     </button>
-                    <button 
+                    <button
                       onClick={() => { setSelectedGuide(g); setShowInvoiceModal(true); }}
-                      className="py-3 bg-white/5 border border-white/10 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-white/10 hover:border-gold/30 transition-all flex items-center justify-center gap-2 group/btn"
+                      className="py-3 bg-muted border border-border rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-muted/70 hover:border-gold/30 transition-all flex items-center justify-center gap-2 group/btn"
                     >
-                      <FileText size={14} className="text-gray-500 group-hover/btn:text-gold" />
+                      <FileText size={14} className="text-muted-foreground group-hover/btn:text-gold" />
                       Invoice
                     </button>
                   </div>
@@ -230,20 +230,20 @@ export default function GuideDashboard() {
         {/* DETAILS MODAL */}
         {showDetailsModal && selectedGuide && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-fade-in">
-            <div className="bg-[#0f0f12] border border-white/10 rounded-[32px] w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl overflow-hidden">
-              <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+            <div className="bg-card border border-border rounded-[32px] w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+              <div className="p-8 border-b border-border flex items-center justify-between bg-muted">
                 <div>
                   <h2 className="text-2xl font-black">Assignment Details</h2>
-                  <p className="text-xs text-gray-400 uppercase tracking-widest mt-1">{selectedGuide.name} · {dateRange}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">{selectedGuide.name} · {dateRange}</p>
                 </div>
-                <button onClick={() => setShowDetailsModal(false)} className="p-2 hover:bg-white/5 rounded-xl text-gray-500 hover:text-white transition-colors">
+                <button onClick={() => setShowDetailsModal(false)} className="p-2 hover:bg-muted rounded-xl text-muted-foreground hover:text-foreground transition-colors">
                   <X size={24} />
                 </button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-4">
                 <table className="w-full text-left text-xs">
-                  <thead className="text-[10px] font-bold text-gray-500 uppercase tracking-widest border-b border-white/5">
+                  <thead className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest border-b border-border">
                     <tr>
                       <th className="px-3 py-3">Date</th>
                       <th className="px-3 py-3">Time</th>
@@ -256,21 +256,21 @@ export default function GuideDashboard() {
                       <th className="px-3 py-3 text-center">Paid?</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/5">
+                  <tbody className="divide-y divide-border">
                     {filteredAssignments.filter(a => a.guide_id === selectedGuide.id).map(a => (
-                      <tr key={a.id} className="hover:bg-white/[0.02] transition-colors">
-                        <td className="px-3 py-3 font-mono text-gray-400 whitespace-nowrap">{a.travel_date}</td>
-                        <td className="px-3 py-3 text-gray-400">{a.travel_time || '—'}</td>
+                      <tr key={a.id} className="hover:bg-muted transition-colors">
+                        <td className="px-3 py-3 font-mono text-muted-foreground whitespace-nowrap">{a.travel_date}</td>
+                        <td className="px-3 py-3 text-muted-foreground">{a.travel_time || '—'}</td>
                         <td className="px-3 py-3 font-bold">{a.tour_name || a.product_code || a.product_name || '—'}</td>
-                        <td className="px-3 py-3 text-gray-300">{a.language || '—'}</td>
-                        <td className="px-3 py-3 text-gray-400">{a.tour_type || '—'}</td>
+                        <td className="px-3 py-3 text-foreground/80">{a.language || '—'}</td>
+                        <td className="px-3 py-3 text-muted-foreground">{a.tour_type || '—'}</td>
                         <td className="px-3 py-3 text-right font-mono">€{Number(a.calculated_pay || 0).toFixed(2)}</td>
                         <td className="px-3 py-3 text-right font-mono text-gold">{a.bonus ? `€${Number(a.bonus).toFixed(2)}` : '—'}</td>
-                        <td className="px-3 py-3 text-right font-black text-green-400">€{Number(a.total_pay || a.calculated_pay || 0).toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right font-black text-green-700">€{Number(a.total_pay || a.calculated_pay || 0).toFixed(2)}</td>
                         <td className="px-3 py-3 text-center">
                           {a.is_paid
-                            ? <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-green-500/20 text-green-400">Paid</span>
-                            : <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-orange-500/20 text-orange-400">Pending</span>
+                            ? <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-green-600/20 text-green-700">Paid</span>
+                            : <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-orange-600/20 text-orange-700">Pending</span>
                           }
                         </td>
                       </tr>
@@ -285,52 +285,52 @@ export default function GuideDashboard() {
         {/* INVOICE MODAL */}
         {showInvoiceModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-fade-in">
-            <div className="bg-[#0f0f12] border border-white/10 rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden animate-slide-up">
-              <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+            <div className="bg-card border border-border rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden animate-slide-up">
+              <div className="p-8 border-b border-border flex items-center justify-between bg-muted">
                 <div>
                   <h2 className="text-2xl font-black">Generate Invoice</h2>
-                  <p className="text-xs text-gray-500 uppercase tracking-widest mt-1">{selectedGuide?.name}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">{selectedGuide?.name}</p>
                 </div>
-                <button 
+                <button
                   onClick={() => setShowInvoiceModal(false)}
-                  className="p-2 hover:bg-white/5 rounded-xl transition-colors text-gray-500 hover:text-white"
+                  className="p-2 hover:bg-muted rounded-xl transition-colors text-muted-foreground hover:text-foreground"
                 >
                   <X size={24} />
                 </button>
               </div>
-              
+
               <div className="p-8 space-y-6">
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Start Date</label>
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Start Date</label>
                     <div className="relative">
-                      <input 
-                        type="date" 
-                        value={invoiceDates.from} 
+                      <input
+                        type="date"
+                        value={invoiceDates.from}
                         onChange={e => setInvoiceDates(prev => ({ ...prev, from: e.target.value }))}
                         className="aurelia-input w-full pl-10"
                       />
-                      <Calendar className="absolute left-3 top-3 text-gray-600" size={16} />
+                      <Calendar className="absolute left-3 top-3 text-muted-foreground" size={16} />
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">End Date</label>
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">End Date</label>
                     <div className="relative">
-                      <input 
-                        type="date" 
-                        value={invoiceDates.to} 
+                      <input
+                        type="date"
+                        value={invoiceDates.to}
                         onChange={e => setInvoiceDates(prev => ({ ...prev, to: e.target.value }))}
                         className="aurelia-input w-full pl-10"
                       />
-                      <Calendar className="absolute left-3 top-3 text-gray-600" size={16} />
+                      <Calendar className="absolute left-3 top-3 text-muted-foreground" size={16} />
                     </div>
                   </div>
                 </div>
 
                 <div className="pt-4 flex gap-3">
-                  <button 
+                  <button
                     onClick={() => setShowInvoiceModal(false)}
-                    className="flex-1 py-4 rounded-2xl font-bold border border-white/10 hover:bg-white/5 transition-colors"
+                    className="flex-1 py-4 rounded-2xl font-bold border border-border hover:bg-muted transition-colors"
                   >
                     Cancel
                   </button>

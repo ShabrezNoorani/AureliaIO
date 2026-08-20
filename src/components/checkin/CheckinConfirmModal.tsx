@@ -31,12 +31,12 @@ export default function CheckinConfirmModal({ customerName, pax, onConfirm, onCa
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl animate-fade-in">
-      <div className="bg-[#0f0f12] border border-white/10 rounded-[3rem] w-full max-w-sm shadow-2xl p-8 space-y-8 animate-slide-up">
+      <div className="bg-card border border-border rounded-[3rem] w-full max-w-sm shadow-2xl p-8 space-y-8 animate-slide-up">
         <div className="text-center space-y-2">
-          <h2 className="text-2xl font-black">Confirm Check-in</h2>
-          <p className="text-xs text-gray-500 uppercase tracking-widest">Customer: {customerName}</p>
+          <h2 className="text-2xl font-black text-foreground">Confirm Check-in</h2>
+          <p className="text-xs text-muted-foreground uppercase tracking-widest">Customer: {customerName}</p>
           <div className="flex flex-col items-center gap-1 pt-2">
-            <div className="flex items-center gap-2 text-white font-bold">
+            <div className="flex items-center gap-2 text-foreground font-bold">
               <span className="text-lg">👥</span>
               <span>A:{pax.adult || 0} Y:{pax.youth || 0} C:{pax.child || 0} I:{pax.infant || 0}</span>
             </div>
@@ -46,14 +46,14 @@ export default function CheckinConfirmModal({ customerName, pax, onConfirm, onCa
 
         <div
           onClick={() => fileInputRef.current?.click()}
-          className="aspect-square bg-white/5 border-2 border-dashed border-white/10 rounded-[2.5rem] flex flex-col items-center justify-center gap-3 cursor-pointer overflow-hidden relative group"
+          className="aspect-square bg-muted border-2 border-dashed border-border rounded-[2.5rem] flex flex-col items-center justify-center gap-3 cursor-pointer overflow-hidden relative group"
         >
           {photoBase64 ? (
             <img src={photoBase64} className="w-full h-full object-cover" />
           ) : (
             <>
-              <Camera size={32} className="text-gray-600 group-hover:text-gold transition-colors" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Ticket Photo (Optional)</span>
+              <Camera size={32} className="text-muted-foreground group-hover:text-gold transition-colors" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ticket Photo (Optional)</span>
             </>
           )}
           <input
@@ -75,7 +75,7 @@ export default function CheckinConfirmModal({ customerName, pax, onConfirm, onCa
           </button>
           <button
             onClick={onCancel}
-            className="w-full py-5 bg-white/5 border border-white/10 rounded-2xl font-bold text-xs uppercase tracking-widest"
+            className="w-full py-5 bg-muted border border-border rounded-2xl font-bold text-xs uppercase tracking-widest text-foreground"
           >
             Cancel
           </button>

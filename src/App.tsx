@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes, useNavigate } from "react-router-dom";
+import { BrowserRouter, Route, Routes, useNavigate, useLocation } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -49,13 +49,27 @@ const RootRoute = () => {
 };
 
 const AppContent = () => {
+  const location = useLocation();
+
   useEffect(() => {
     setupGuideTables();
   }, []);
 
+  // The old floating-numbers canvas was built for the previous dark marketing look. The
+  // authenticated app (owner /app/*, guide /guide/* excluding the pre-login claim link, and the
+  // public guest check-in page) stays calm and static. The landing page ("/") now has its own
+  // bespoke, tasteful animation (a slow gradient drift + on-scroll reveals) that's meant to be the
+  // only motion a visitor sees there, so the old canvas is retired from it too rather than the two
+  // clashing.
+  const hideAnimatedBackground =
+    location.pathname === '/' ||
+    location.pathname.startsWith('/app') ||
+    (location.pathname.startsWith('/guide') && !location.pathname.startsWith('/guide/claim')) ||
+    location.pathname.startsWith('/checkin/');
+
   return (
     <div style={{ position: 'relative', minHeight: '100vh' }}>
-      <FinancialCanvas />
+      {!hideAnimatedBackground && <FinancialCanvas />}
       <AuthProvider>
         <Routes>
           {/* Public routes */}

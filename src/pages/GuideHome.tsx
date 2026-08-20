@@ -197,7 +197,7 @@ export default function GuideHome() {
       <div>
         <h1 className="text-3xl font-extrabold tracking-tight mb-2">Welcome back, {guideName || 'Guide'} 👋</h1>
         <div className="flex items-center gap-2 text-muted-foreground font-medium">
-          <CalendarIcon size={16} className="text-[#f5a623]" />
+          <CalendarIcon size={16} className="text-gold" />
           <span>{todayStr}</span>
         </div>
       </div>
@@ -209,15 +209,15 @@ export default function GuideHome() {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4">
-            <div className="aurelia-card p-6 border-l-[3px] border-l-[#f5a623]">
-              <div className="flex items-center gap-2 text-gray-400 mb-1">
+            <div className="aurelia-card p-6 border-l-[3px] border-l-gold">
+              <div className="flex items-center gap-2 text-muted-foreground mb-1">
                 <Compass size={14} />
                 <p className="text-[10px] font-bold uppercase tracking-widest">Tours Today</p>
               </div>
               <p className="text-3xl font-extrabold">{totalTours}</p>
             </div>
             <div className="aurelia-card p-6 border-l-[3px] border-l-blue-500">
-              <div className="flex items-center gap-2 text-gray-400 mb-1">
+              <div className="flex items-center gap-2 text-muted-foreground mb-1">
                 <Users size={14} />
                 <p className="text-[10px] font-bold uppercase tracking-widest">Expected Pax</p>
               </div>
@@ -235,7 +235,7 @@ export default function GuideHome() {
             <>
               {pendingOffers.length > 0 && (
                 <section className="space-y-3">
-                  <h2 className="text-sm font-black uppercase tracking-widest text-amber-400">Pending Offers</h2>
+                  <h2 className="text-sm font-black uppercase tracking-widest text-amber-700">Pending Offers</h2>
                   <div className="space-y-3">
                     {pendingOffers.map(({ sg, session }) => (
                       <div key={sg.session_id} className="aurelia-card p-4 border-l-[3px] border-l-amber-500 space-y-3">
@@ -260,7 +260,7 @@ export default function GuideHome() {
                           <button
                             onClick={() => handleRespond(sg.session_id, false)}
                             disabled={respondingId === sg.session_id}
-                            className="bg-red-500/10 border border-red-500/20 text-red-400 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest disabled:opacity-50 active:scale-95 transition-all"
+                            className="bg-red-600/10 border border-red-600/20 text-red-700 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest disabled:opacity-50 active:scale-95 transition-all"
                           >
                             Decline
                           </button>
@@ -290,7 +290,7 @@ export default function GuideHome() {
                           </div>
                           <button
                             onClick={() => openReassign(sg.session_id)}
-                            className="text-[10px] font-bold uppercase text-muted-foreground hover:text-gold border border-white/10 hover:border-gold/30 rounded-lg px-2.5 py-1.5 shrink-0 transition-colors"
+                            className="text-[10px] font-bold uppercase text-muted-foreground hover:text-gold border border-border hover:border-gold/30 rounded-lg px-2.5 py-1.5 shrink-0 transition-colors"
                           >
                             Give to another guide
                           </button>
@@ -307,10 +307,10 @@ export default function GuideHome() {
 
       {reassignSessionId && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#0f0f12] border border-white/10 rounded-[2rem] w-full max-w-sm shadow-2xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-[#0a0a0f]">
-              <h2 className="font-black text-lg text-white">Give to another guide</h2>
-              <button onClick={() => setReassignSessionId(null)} className="text-gray-500 hover:text-white"><X size={20} /></button>
+          <div className="bg-card border border-border rounded-[2rem] w-full max-w-sm shadow-2xl overflow-hidden">
+            <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted">
+              <h2 className="font-black text-lg text-foreground">Give to another guide</h2>
+              <button onClick={() => setReassignSessionId(null)} className="text-muted-foreground hover:text-foreground"><X size={20} /></button>
             </div>
             <div className="p-6 space-y-4">
               <p className="text-sm text-muted-foreground">
@@ -319,7 +319,7 @@ export default function GuideHome() {
               <select
                 value={reassignTargetId}
                 onChange={e => setReassignTargetId(e.target.value)}
-                className="aurelia-input w-full bg-[#13131a]"
+                className="aurelia-input w-full bg-muted text-foreground"
               >
                 <option value="">-- Choose a guide --</option>
                 {otherGuides.map(g => (
@@ -327,8 +327,8 @@ export default function GuideHome() {
                 ))}
               </select>
             </div>
-            <div className="p-6 border-t border-white/5 bg-[#0a0a0f] flex justify-end gap-3">
-              <button onClick={() => setReassignSessionId(null)} className="aurelia-ghost-btn px-5 py-2 border border-white/20 text-gray-300">Cancel</button>
+            <div className="p-6 border-t border-border bg-muted flex justify-end gap-3">
+              <button onClick={() => setReassignSessionId(null)} className="aurelia-ghost-btn px-5 py-2 border border-border text-foreground/80">Cancel</button>
               <button
                 onClick={handleReassign}
                 disabled={!reassignTargetId || reassigning}

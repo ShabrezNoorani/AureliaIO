@@ -68,6 +68,9 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        // Landing-page-only display serif — pairs with Inter for an "expensive" editorial feel
+        // on the marketing hero/headlines without touching the app's body font anywhere else.
+        serif: ['Fraunces', 'Georgia', 'serif'],
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -91,12 +94,21 @@ export default {
           from: { opacity: "0", transform: "translateX(-8px)" },
           to: { opacity: "1", transform: "translateX(0)" },
         },
+        // Slow, gentle drift for the landing-page hero's background glow — the only place in the
+        // app with a looping animation. Kept subtle: small travel distance, long duration.
+        "blob-drift": {
+          "0%, 100%": { transform: "translate(0, 0) scale(1)" },
+          "33%": { transform: "translate(4%, -6%) scale(1.06)" },
+          "66%": { transform: "translate(-5%, 4%) scale(0.96)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.3s ease-out",
         "slide-in": "slide-in 0.3s ease-out",
+        "blob-drift-a": "blob-drift 22s ease-in-out infinite",
+        "blob-drift-b": "blob-drift 28s ease-in-out infinite reverse",
       },
     },
   },

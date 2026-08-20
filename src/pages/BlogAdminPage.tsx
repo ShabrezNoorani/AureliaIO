@@ -268,14 +268,14 @@ Do not include a title — just the body.`
   };
 
   return (
-    <div className="p-8 pb-32 max-w-[1200px] mx-auto text-white">
+    <div className="p-8 pb-32 max-w-[1200px] mx-auto text-foreground">
       {/* HEADER */}
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-2xl font-bold">Blog Manager</h1>
         <div className="flex gap-3">
           <button 
             onClick={() => setIsAiModalOpen(true)}
-            className="aurelia-ghost-btn px-4 py-2 flex items-center gap-2 border border-[#f5a623]/30 text-[#f5a623] hover:bg-[#f5a623]/10"
+            className="aurelia-ghost-btn px-4 py-2 flex items-center gap-2 border border-gold/30 text-gold hover:bg-gold/10"
           >
             <Sparkles size={16} /> Generate with AI
           </button>
@@ -288,15 +288,15 @@ Do not include a title — just the body.`
         </div>
       </div>
 
-      {error && <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-500 rounded">{error}</div>}
+      {error && <div className="mb-6 p-4 bg-red-600/10 border border-red-600/20 text-red-700 rounded">{error}</div>}
 
       {/* EMPTY SEED BANNER */}
       {!loading && checkComplete && blogs.length === 0 && (
-        <div className="mb-8 p-6 bg-[#f5a623]/10 border border-[#f5a623] rounded-xl flex items-center justify-between shadow-lg shadow-[#f5a623]/10">
+        <div className="mb-8 p-6 bg-gold/10 border border-gold rounded-xl flex items-center justify-between shadow-lg shadow-gold/10">
           <div>
-            <h3 className="text-lg font-bold text-[#f5a623] mb-1">No articles yet. Add 3 sample articles to get started?</h3>
+            <h3 className="text-lg font-bold text-gold mb-1">No articles yet. Add 3 sample articles to get started?</h3>
           </div>
-          <button onClick={handleSeedPosts} className="aurelia-ghost-btn border border-[#f5a623]/50 text-[#f5a623] hover:bg-[#f5a623]/20 px-6 py-2">
+          <button onClick={handleSeedPosts} className="aurelia-ghost-btn border border-gold/50 text-gold hover:bg-gold/20 px-6 py-2">
             Add Sample Posts
           </button>
         </div>
@@ -306,7 +306,7 @@ Do not include a title — just the body.`
       <div className="bg-panel-bg border border-border/50 rounded-xl overflow-hidden shadow-lg shadow-black/20">
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
-            <thead className="text-xs text-muted-foreground uppercase bg-black/20 border-b border-border/50">
+            <thead className="text-xs text-muted-foreground uppercase bg-muted border-b border-border/50">
               <tr>
                 <th className="px-6 py-4 font-semibold">Title</th>
                 <th className="px-6 py-4 font-semibold">Category</th>
@@ -322,32 +322,32 @@ Do not include a title — just the body.`
                 <tr><td colSpan={5} className="text-center py-8 text-muted-foreground">No blogs found.</td></tr>
               ) : (
                 blogs.map(blog => (
-                  <tr key={blog.id} className="border-b border-border/30 hover:bg-white/[0.02] transition-colors">
+                  <tr key={blog.id} className="border-b border-border/30 hover:bg-muted transition-colors">
                     <td className="px-6 py-4 font-medium max-w-[300px] truncate">{blog.title}</td>
                     <td className="px-6 py-4">
-                      <span className="bg-white/5 px-2 py-1 flex w-fit rounded text-xs text-gray-300 font-medium">
+                      <span className="bg-muted px-2 py-1 flex w-fit rounded text-xs text-foreground/80 font-medium">
                         {blog.category}
                       </span>
                     </td>
                     <td className="px-6 py-4">
                       {blog.published ? (
-                        <span className="bg-green-500/10 text-green-500 border border-green-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">Published</span>
+                        <span className="bg-green-600/10 text-green-700 border border-green-600/20 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">Published</span>
                       ) : (
-                        <span className="bg-gray-500/10 text-gray-400 border border-gray-500/20 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">Draft</span>
+                        <span className="bg-muted text-muted-foreground border border-border px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">Draft</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-gray-500">
+                    <td className="px-6 py-4 text-muted-foreground">
                       {blog.published && blog.published_at ? new Date(blog.published_at).toLocaleDateString() : '—'}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-3">
-                        <button onClick={() => handleTogglePublish(blog)} className="text-gray-400 hover:text-white transition-colors" title={blog.published ? 'Unpublish' : 'Publish'}>
+                        <button onClick={() => handleTogglePublish(blog)} className="text-muted-foreground hover:text-foreground transition-colors" title={blog.published ? 'Unpublish' : 'Publish'}>
                           {blog.published ? <EyeOff size={16} /> : <Check size={16} />}
                         </button>
-                        <button onClick={() => openEditPost(blog)} className="text-gray-400 hover:text-[#f5a623] transition-colors">
+                        <button onClick={() => openEditPost(blog)} className="text-muted-foreground hover:text-gold transition-colors">
                           <PenSquare size={16} />
                         </button>
-                        <button onClick={() => handleDelete(blog.id)} className="text-gray-400 hover:text-red-400 transition-colors">
+                        <button onClick={() => handleDelete(blog.id)} className="text-muted-foreground hover:text-red-700 transition-colors">
                           <Trash2 size={16} />
                         </button>
                       </div>
@@ -364,54 +364,54 @@ Do not include a title — just the body.`
       {isEditorOpen && (
         <>
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 transition-opacity" onClick={closeEditor} />
-          <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-[#0f0f17] border-l border-white/10 z-50 shadow-2xl flex flex-col transform transition-transform duration-300">
+          <div className="fixed inset-y-0 right-0 w-full max-w-2xl bg-card border-l border-border z-50 shadow-2xl flex flex-col transform transition-transform duration-300">
             {/* Editor Header */}
-            <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-[#0a0a0f]">
+            <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted">
               <div className="flex items-center gap-4">
                 <h2 className="font-bold text-lg">{currentBlogId ? 'Edit Post' : 'New Post'}</h2>
-                {lastSaved && <span className="text-xs text-green-500">Saved {lastSaved.toLocaleTimeString()}</span>}
+                {lastSaved && <span className="text-xs text-green-700">Saved {lastSaved.toLocaleTimeString()}</span>}
               </div>
-              <button onClick={closeEditor} className="text-gray-500 hover:text-white"><X size={20} /></button>
+              <button onClick={closeEditor} className="text-muted-foreground hover:text-foreground"><X size={20} /></button>
             </div>
             
             {/* Editor Body */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Title</label>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Title</label>
                 <input 
                   type="text" value={formData.title || ''} onChange={e => handleTitleChange(e.target.value)}
-                  className="w-full bg-[#13131a] border border-white/10 rounded-lg px-4 py-3 text-white focus:border-[#f5a623] focus:ring-1 focus:ring-[#f5a623] transition-all text-xl font-bold"
+                  className="w-full bg-muted border border-border rounded-lg px-4 py-3 text-foreground focus:border-gold focus:ring-1 focus:ring-gold transition-all text-xl font-bold"
                   placeholder="The True Cost of Running a Tour"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Slug</label>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Slug</label>
                   <input type="text" value={formData.slug || ''} onChange={e => setFormData({...formData, slug: e.target.value})} className="aurelia-input" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Category</label>
-                  <select value={formData.category || 'Pricing'} onChange={e => setFormData({...formData, category: e.target.value})} className="aurelia-input appearance-none bg-[#13131a]">
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Category</label>
+                  <select value={formData.category || 'Pricing'} onChange={e => setFormData({...formData, category: e.target.value})} className="aurelia-input appearance-none bg-muted">
                     {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Read Time (minutes)</label>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Read Time (minutes)</label>
                 <input type="number" min="1" value={formData.read_time || 5} onChange={e => setFormData({...formData, read_time: Number(e.target.value)})} className="aurelia-input w-32" />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Excerpt (2-3 sentences)</label>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Excerpt (2-3 sentences)</label>
                 <textarea rows={3} value={formData.excerpt || ''} onChange={e => setFormData({...formData, excerpt: e.target.value})} className="aurelia-input resize-none" placeholder="Brief summary for the blog card grid..." />
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Content (Markdown)</label>
-                  <a href="https://www.markdownguide.org/cheat-sheet/" target="_blank" rel="noreferrer" className="text-xs text-[#f5a623] hover:underline">Markdown Cheatsheet</a>
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Content (Markdown)</label>
+                  <a href="https://www.markdownguide.org/cheat-sheet/" target="_blank" rel="noreferrer" className="text-xs text-gold hover:underline">Markdown Cheatsheet</a>
                 </div>
                 <textarea 
                   rows={20} value={formData.content || ''} onChange={e => setFormData({...formData, content: e.target.value})} 
@@ -422,10 +422,10 @@ Do not include a title — just the body.`
             </div>
 
             {/* Editor Footer */}
-            <div className="p-6 border-t border-white/5 bg-[#0a0a0f] flex items-center justify-between">
+            <div className="p-6 border-t border-border bg-muted flex items-center justify-between">
               <button 
                 onClick={() => handleSave(false)} disabled={saving}
-                className="aurelia-ghost-btn px-6 py-2 border border-white/20 text-gray-300 hover:text-white"
+                className="aurelia-ghost-btn px-6 py-2 border border-border text-foreground/80 hover:text-foreground"
               >
                 {saving ? 'Saving...' : 'Save as Draft'}
               </button>
@@ -444,34 +444,34 @@ Do not include a title — just the body.`
       {isAiModalOpen && (
         <>
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-[#0f0f17] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-[#0a0a0f]">
+            <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
+              <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted">
                 <h2 className="font-bold text-lg flex items-center gap-2">
-                  <Sparkles size={18} className="text-[#f5a623]" /> Generate Blog Post with AI
+                  <Sparkles size={18} className="text-gold" /> Generate Blog Post with AI
                 </h2>
-                <button onClick={() => !isGenerating && setIsAiModalOpen(false)} className="text-gray-500 hover:text-white"><X size={20} /></button>
+                <button onClick={() => !isGenerating && setIsAiModalOpen(false)} className="text-muted-foreground hover:text-foreground"><X size={20} /></button>
               </div>
               
               <div className="p-6 space-y-6">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Topic</label>
+                  <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Topic</label>
                   <input 
                     type="text" value={aiTopic} onChange={e => setAiTopic(e.target.value)} disabled={isGenerating}
                     className="aurelia-input" placeholder="e.g. How to price Louvre tours"
                   />
-                  <p className="text-xs text-gray-500 mt-2">What should this article be about?</p>
+                  <p className="text-xs text-muted-foreground mt-2">What should this article be about?</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Category</label>
-                    <select value={aiCategory} onChange={e => setAiCategory(e.target.value)} disabled={isGenerating} className="aurelia-input bg-[#13131a]">
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Category</label>
+                    <select value={aiCategory} onChange={e => setAiCategory(e.target.value)} disabled={isGenerating} className="aurelia-input bg-muted">
                       {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Target Length</label>
-                    <select value={aiLength} onChange={e => setAiLength(Number(e.target.value))} disabled={isGenerating} className="aurelia-input bg-[#13131a]">
+                    <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Target Length</label>
+                    <select value={aiLength} onChange={e => setAiLength(Number(e.target.value))} disabled={isGenerating} className="aurelia-input bg-muted">
                       <option value={5}>Short (5 min)</option>
                       <option value={8}>Medium (8 min)</option>
                       <option value={12}>Long (12 min)</option>

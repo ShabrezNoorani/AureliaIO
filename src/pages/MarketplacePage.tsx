@@ -108,10 +108,10 @@ export default function MarketplacePage() {
     <div style={{ padding: '32px' }} className="animate-fade-in">
         <div className="p-8 max-w-7xl mx-auto space-y-8 animate-fade-in">
           
-          <div className="flex items-center justify-between border-b border-white/5 pb-6">
+          <div className="flex items-center justify-between border-b border-border pb-6">
             <div>
               <h1 className="text-3xl font-extrabold tracking-tight">Marketplace Coverage</h1>
-              <p className="text-gray-400 text-sm mt-1">Cross-platform distribution matrix</p>
+              <p className="text-muted-foreground text-sm mt-1">Cross-platform distribution matrix</p>
             </div>
             <button 
               onClick={() => openPanel()}
@@ -122,10 +122,10 @@ export default function MarketplacePage() {
           </div>
 
           {!loading && products.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-20 text-center border border-dashed border-white/10 rounded-2xl bg-white/[0.02]">
+            <div className="flex flex-col items-center justify-center p-20 text-center border border-dashed border-border rounded-2xl bg-muted">
               <div className="text-7xl mb-6">🗺️</div>
               <h3 className="text-2xl font-extrabold mb-2">No products listed yet</h3>
-              <p className="text-gray-400 mb-8 max-w-sm">
+              <p className="text-muted-foreground mb-8 max-w-sm">
                 Track which of your products are listed on which OTAs
               </p>
               <button 
@@ -136,36 +136,36 @@ export default function MarketplacePage() {
               </button>
             </div>
           ) : (
-            <div className="aurelia-card border border-white/5 overflow-x-auto">
+            <div className="aurelia-card border border-border overflow-x-auto">
               <table className="w-full text-left text-sm whitespace-nowrap">
-                <thead className="bg-white/5 text-[10px] text-gray-500 uppercase tracking-widest font-extrabold">
+                <thead className="bg-muted text-[10px] text-muted-foreground uppercase tracking-widest font-extrabold">
                   <tr>
-                    <th className="px-6 py-5 sticky left-0 bg-[#0c0c0e] z-10 border-r border-white/5">Product Mapping</th>
+                    <th className="px-6 py-5 sticky left-0 bg-card z-10 border-r border-border">Product Mapping</th>
                     {OTAS.map(ota => (
-                      <th key={ota} className="px-4 py-5 text-center min-w-[100px] border-r border-white/5">{ota}</th>
+                      <th key={ota} className="px-4 py-5 text-center min-w-[100px] border-r border-border">{ota}</th>
                     ))}
                     <th className="px-6 py-5 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-border">
                   {products.map(p => (
-                    <tr key={p.id} className="hover:bg-white/[0.01] transition-colors group">
-                      <td className="px-6 py-4 sticky left-0 bg-[#0c0c0e] z-10 border-r border-white/5">
-                        <div className="font-bold text-white text-base">{p.name}</div>
+                    <tr key={p.id} className="hover:bg-muted/40 transition-colors group">
+                      <td className="px-6 py-4 sticky left-0 bg-card z-10 border-r border-border">
+                        <div className="font-bold text-foreground text-base">{p.name}</div>
                         <div className="text-[10px] font-mono text-gold flex items-center gap-2 mt-0.5">
-                          {p.code} <span className="text-gray-600">|</span> {p.option}
+                          {p.code} <span className="text-muted-foreground">|</span> {p.option}
                         </div>
                       </td>
                       {OTAS.map(ota => {
                         const status = p.listings[ota]?.status || 'missing';
                         return (
-                          <td key={ota} className="px-4 py-4 text-center border-r border-white/5">
+                          <td key={ota} className="px-4 py-4 text-center border-r border-border">
                             <button 
                               onClick={() => toggleListing(p.id, ota)}
                               className={`w-8 h-8 rounded-full mx-auto flex items-center justify-center text-xs transition-all ${
-                                status === 'active' ? 'bg-green-500/20 text-green-500 border border-green-500/30' :
+                                status === 'active' ? 'bg-green-600/20 text-green-700 border border-green-600/30' :
                                 status === 'paused' ? 'bg-gold/20 text-gold border border-gold/30' :
-                                'bg-white/5 text-gray-600 border border-white/5'
+                                'bg-muted text-muted-foreground border border-border'
                               }`}
                             >
                               {status === 'active' ? '✓' : status === 'paused' ? '||' : '—'}
@@ -175,10 +175,10 @@ export default function MarketplacePage() {
                       })}
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => openPanel(p)} className="p-2 text-gray-500 hover:text-white transition-colors">
+                          <button onClick={() => openPanel(p)} className="p-2 text-muted-foreground hover:text-foreground transition-colors">
                             <Globe size={16} />
                           </button>
-                          <button onClick={() => handleDelete(p.id)} className="p-2 text-gray-500 hover:text-red-500 transition-colors">
+                          <button onClick={() => handleDelete(p.id)} className="p-2 text-muted-foreground hover:text-red-700 transition-colors">
                             <X size={16} />
                           </button>
                         </div>
@@ -195,13 +195,13 @@ export default function MarketplacePage() {
         {panelOpen && (
           <>
             <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100]" onClick={() => setPanelOpen(false)} />
-            <div className="fixed inset-y-0 right-0 w-[450px] bg-[#0f0f12] border-l border-white/10 z-[101] shadow-2xl flex flex-col">
-              <div className="p-8 border-b border-white/5 flex items-center justify-between">
+            <div className="fixed inset-y-0 right-0 w-[450px] bg-card border-l border-border z-[101] shadow-2xl flex flex-col">
+              <div className="p-8 border-b border-border flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-extrabold">{editingProduct ? 'Edit Product' : 'Add Product'}</h2>
-                  <p className="text-xs text-gray-500 uppercase tracking-widest mt-1">Marketplace Distribution</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">Marketplace Distribution</p>
                 </div>
-                <button onClick={() => setPanelOpen(false)} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={() => setPanelOpen(false)} className="text-muted-foreground hover:text-foreground transition-colors">
                   <X size={28} />
                 </button>
               </div>
@@ -209,7 +209,7 @@ export default function MarketplacePage() {
               <div className="p-8 flex-1 overflow-y-auto space-y-8">
                 <div className="space-y-6">
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Product Name</label>
+                    <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">Product Name</label>
                     <input 
                       type="text" 
                       value={form.name}
@@ -220,7 +220,7 @@ export default function MarketplacePage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Internal Code</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">Internal Code</label>
                       <input 
                         type="text" 
                         value={form.code}
@@ -230,7 +230,7 @@ export default function MarketplacePage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Primary Option</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">Primary Option</label>
                       <input 
                         type="text" 
                         value={form.option}
@@ -248,17 +248,17 @@ export default function MarketplacePage() {
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-gold">Distribution Matrix</h4>
-                    <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
                       Once added, you can toggle presence across all 10+ major OTAs directly in the main matrix.
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div className="p-8 border-t border-white/5 bg-white/[0.02] flex items-center gap-4">
+              <div className="p-8 border-t border-border bg-muted flex items-center gap-4">
                 <button 
                   onClick={() => setPanelOpen(false)}
-                  className="flex-1 px-4 py-4 rounded-xl border border-white/10 font-bold hover:bg-white/5 transition-colors text-sm"
+                  className="flex-1 px-4 py-4 rounded-xl border border-border font-bold hover:bg-muted transition-colors text-sm"
                 >
                   Discard
                 </button>

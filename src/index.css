@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Fraunces:opsz,wght@9..144,400..900&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,58 +6,61 @@
 
 @layer base {
   :root {
-    /* Aurelia Dark Theme Mapped */
-    --background: var(--theme-bg, 240 25% 4%);
-    --foreground: var(--theme-text, 210 40% 98%);
+    /* Aurelia Light Theme Mapped — these are fallback-of-last-resort values only; the real
+       values are set from THEMES in src/lib/theme.ts via applyTheme(), called synchronously in
+       main.tsx before React's first paint. Kept in sync with THEMES.light so a JS failure still
+       renders light, not the old dark palette. */
+    --background: var(--theme-bg, 48 20% 96%);
+    --foreground: var(--theme-text, 24 9% 10%);
 
-    --card: var(--theme-card, 240 18% 9%);
-    --card-foreground: var(--theme-text, 210 40% 98%);
+    --card: var(--theme-card, 0 0% 100%);
+    --card-foreground: var(--theme-text, 24 9% 10%);
 
-    --popover: 240 18% 9%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 9% 10%;
 
-    --primary: var(--theme-accent, 37 91% 55%);
-    --primary-foreground: 0 0% 0%;
+    --primary: var(--theme-accent, 32 95% 37%);
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: var(--theme-border, 240 15% 13%);
-    --secondary-foreground: var(--theme-text, 210 40% 98%);
+    --secondary: var(--theme-border, 40 20% 88%);
+    --secondary-foreground: var(--theme-text, 24 9% 10%);
 
-    --muted: var(--theme-border, 240 15% 13%);
-    --muted-foreground: var(--theme-text-muted, 215 16% 62%);
+    --muted: var(--theme-border, 40 20% 88%);
+    --muted-foreground: var(--theme-text-muted, 24 6% 44%);
 
-    --accent: var(--theme-card, 240 12% 15%);
-    --accent-foreground: var(--theme-text, 210 40% 98%);
+    --accent: var(--theme-card, 40 20% 94%);
+    --accent-foreground: var(--theme-text, 24 9% 10%);
 
-    --destructive: 0 84% 60%;       
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: var(--theme-border, 240 15% 18%);
-    --input: var(--theme-border, 240 15% 15%);
-    --ring: var(--theme-accent, 37 91% 55%);
+    --border: var(--theme-border, 40 20% 88%);
+    --input: var(--theme-border, 40 20% 88%);
+    --ring: var(--theme-accent, 32 95% 37%);
 
     --radius: 0.75rem;
 
     /* Aurelia custom tokens */
-    --gold: var(--theme-accent, 37 91% 55%);
-    --gold-muted: 37 50% 35%; /* Leaving alone for specific overrides, though gold logic overwrites */
-    --gold-glow: var(--theme-accent, 37 91% 55%) / 0.15;
-    --sidebar-bg: var(--theme-sidebar, 230 25% 7%);
-    --sidebar-border: var(--theme-border, 240 15% 12%);
-    --profit-positive: 142 71% 45%; /* #22c55e */
-    --profit-negative: 0 84% 60%;   /* #ef4444 */
-    --surface-elevated: 240 18% 11%;
-    --surface-subtle: 240 18% 8%;
-    --hover: 240 14% 11%;           
-    --card-shadow: var(--card-shadow-var, 0 0 0 1px rgba(255,255,255,0.03), 0 2px 8px rgba(0,0,0,0.3));
-    --card-shadow-hover: var(--card-shadow-hover-var, 0 0 0 1px rgba(255,255,255,0.05), 0 4px 16px rgba(0,0,0,0.4));
+    --gold: var(--theme-accent, 32 95% 37%);
+    --gold-muted: 32 60% 45%;
+    --gold-glow: var(--theme-accent, 32 95% 37%) / 0.12;
+    --sidebar-bg: var(--theme-sidebar, 0 0% 100%);
+    --sidebar-border: var(--theme-border, 40 20% 88%);
+    --profit-positive: 142 71% 35%; /* darkened from dark-mode's 45% lightness for AA on white */
+    --profit-negative: 0 72% 46%;   /* darkened from dark-mode's 60% lightness for AA on white */
+    --surface-elevated: 0 0% 100%;
+    --surface-subtle: 40 20% 94%;
+    --hover: 40 20% 92%;
+    --card-shadow: var(--card-shadow-var, 0 1px 2px rgba(28,25,23,0.04), 0 1px 3px rgba(28,25,23,0.06));
+    --card-shadow-hover: var(--card-shadow-hover-var, 0 2px 6px rgba(28,25,23,0.06), 0 6px 16px rgba(28,25,23,0.08));
 
-    --sidebar-background: 230 25% 7%;
-    --sidebar-foreground: 215 16% 62%;
-    --sidebar-primary: 37 91% 55%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 24 6% 44%;
+    --sidebar-primary: 32 95% 37%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 0 0% 100% / 0.06;
-    --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-ring: 37 91% 55%;
+    --sidebar-accent: 24 9% 10% / 0.05;
+    --sidebar-accent-foreground: 24 9% 10%;
+    --sidebar-ring: 32 95% 37%;
   }
 }
 

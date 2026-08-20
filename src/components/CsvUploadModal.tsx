@@ -258,7 +258,7 @@ export default function CsvUploadModal({ onImport, onClose }: CsvUploadModalProp
             <p className="text-lg font-bold text-foreground mb-3">Import Complete</p>
             <p className="text-sm text-profit-positive mb-1">✅ {result.inserted} bookings imported successfully</p>
             {result.skipped > 0 && (
-              <p className="text-sm text-orange-400">⚠ {result.skipped} rows skipped (duplicate booking ref)</p>
+              <p className="text-sm text-orange-700">⚠ {result.skipped} rows skipped (duplicate booking ref)</p>
             )}
             <button onClick={onClose} className="aurelia-gold-btn mt-6">Close</button>
           </div>

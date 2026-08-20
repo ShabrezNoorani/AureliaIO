@@ -295,14 +295,14 @@ export default function ExecutiveDashboard() {
         <div className="flex flex-wrap items-end gap-3 justify-between">
           <div className="flex flex-wrap gap-2 items-center">
             {/* Row 1 */}
-            <div className="bg-white/5 p-1 rounded-lg border border-border flex text-xs">
+            <div className="bg-muted p-1 rounded-lg border border-border flex text-xs">
               <button onClick={() => setDateMode('travel')} className={`px-4 py-1.5 rounded-md transition-colors ${dateMode === 'travel' ? 'bg-background shadow-sm border border-border/50 font-bold' : 'text-muted-foreground'}`}>Travel Date</button>
               <button onClick={() => setDateMode('booking')} className={`px-4 py-1.5 rounded-md transition-colors ${dateMode === 'booking' ? 'bg-background shadow-sm border border-border/50 font-bold' : 'text-muted-foreground'}`}>Booking Date</button>
             </div>
 
-            <div className="bg-white/5 p-1 rounded-lg border border-border flex text-xs ml-4">
+            <div className="bg-muted p-1 rounded-lg border border-border flex text-xs ml-4">
               {QUICK_RANGES.map(r => (
-                <button key={r} onClick={() => setQuickRange(r)} className={`px-3 py-1.5 rounded-md transition-colors ${quickRange === r ? 'bg-primary text-primary-foreground font-bold' : 'text-muted-foreground hover:bg-white/5'}`}>{r}</button>
+                <button key={r} onClick={() => setQuickRange(r)} className={`px-3 py-1.5 rounded-md transition-colors ${quickRange === r ? 'bg-primary text-primary-foreground font-bold' : 'text-muted-foreground hover:bg-muted/60'}`}>{r}</button>
               ))}
             </div>
 
@@ -327,7 +327,7 @@ export default function ExecutiveDashboard() {
           </select>
 
           <label className="flex items-center gap-2 cursor-pointer text-muted-foreground hover:text-foreground">
-            <input type="checkbox" checked={includeCancelled} onChange={e => setIncludeCancelled(e.target.checked)} className="rounded border-border bg-black/20 text-gold focus:ring-gold focus:ring-offset-background" />
+            <input type="checkbox" checked={includeCancelled} onChange={e => setIncludeCancelled(e.target.checked)} className="rounded border-border bg-muted text-gold focus:ring-gold focus:ring-offset-background" />
             Include Cancelled Bookings
           </label>
         </div>
@@ -407,7 +407,7 @@ export default function ExecutiveDashboard() {
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {alerts.length === 0 ? (
-            <div className="aurelia-card p-4 bg-green-500/10 border-green-500/20 text-green-400 flex items-center gap-3 md:col-span-2 lg:col-span-3">
+            <div className="aurelia-card p-4 bg-green-600/10 border-green-600/20 text-green-700 flex items-center gap-3 md:col-span-2 lg:col-span-3">
               <CheckCircle2 size={18} />
               <span className="text-sm font-bold">All metrics looking healthy this period.</span>
             </div>
@@ -433,7 +433,7 @@ export default function ExecutiveDashboard() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-left">
               <thead>
-                <tr className="bg-[#13131a] border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
+                <tr className="bg-muted border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
                   <th className="py-3 px-4 font-bold">Code</th>
                   <th className="py-3 px-3 font-bold text-center">Options</th>
                   <th className="py-3 px-3 font-bold text-center">Bookings</th>
@@ -441,12 +441,12 @@ export default function ExecutiveDashboard() {
                   <th className="py-3 px-4 font-bold text-right">Gross Rev</th>
                   <th className="py-3 px-4 font-bold text-right text-gold">Op. Profit</th>
                   <th className="py-3 px-4 font-bold text-right">Margin %</th>
-                  <th className="py-3 px-4 font-bold text-right text-red-400/80">Cancel Loss €</th>
+                  <th className="py-3 px-4 font-bold text-right text-red-700/80">Cancel Loss €</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
                 {productPerformance.map(p => (
-                  <tr key={p.code} className="hover:bg-white/5 transition-colors group cursor-pointer" onClick={() => setProductFilter(p.code)}>
+                  <tr key={p.code} className="hover:bg-muted/60 transition-colors group cursor-pointer" onClick={() => setProductFilter(p.code)}>
                     <td className="py-3 px-4 font-semibold text-foreground relative">
                       {/* Sublets border indicator */}
                       <div className={`absolute left-0 top-0 bottom-0 w-1 ${p.margin > 0.4 ? 'bg-profit-positive' : p.margin >= 0.2 ? 'bg-gold' : 'bg-profit-negative'}`} />
@@ -458,7 +458,7 @@ export default function ExecutiveDashboard() {
                     <td className="py-3 px-4 text-right tabular-nums text-foreground">{fmtEuro(p.gross)}</td>
                     <td className="py-3 px-4 text-right tabular-nums font-bold text-gold">{fmtEuro(p.opProfit)}</td>
                     <td className="py-3 px-4 text-right tabular-nums text-foreground">{fmtPct(p.margin)}</td>
-                    <td className="py-3 px-4 text-right tabular-nums text-red-400 font-medium">{p.cancelLoss > 0 ? fmtEuro(p.cancelLoss) : '—'}</td>
+                    <td className="py-3 px-4 text-right tabular-nums text-red-700 font-medium">{p.cancelLoss > 0 ? fmtEuro(p.cancelLoss) : '—'}</td>
                   </tr>
                 ))}
                 {productPerformance.length === 0 && (
@@ -494,7 +494,7 @@ export default function ExecutiveDashboard() {
             </ResponsiveContainer>
           </div>
           {totalCancelLoss > 0 && (
-            <div className="mt-auto p-4 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center gap-2 text-red-500 font-bold text-xs">
+            <div className="mt-auto p-4 rounded-lg bg-red-600/10 border border-red-600/20 flex items-center gap-2 text-red-700 font-bold text-xs">
               <AlertCircle size={14} /> Cancellation Losses: {fmtEuro(totalCancelLoss)}
             </div>
           )}

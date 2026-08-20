@@ -26,19 +26,19 @@ class AnalyticsErrorBoundary extends Component<{children: ReactNode, resetError:
   render() {
     if (this.state.hasError) {
       return (
-        <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto text-white animate-fade-in">
+        <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto text-foreground animate-fade-in">
           <div className="flex flex-wrap items-center gap-3 mb-8">
             <button onClick={() => this.props.navigate('/app')} className="aurelia-ghost-btn p-2 mr-2">
               <ArrowLeft size={20} />
             </button>
-            <h1 className="text-2xl font-bold text-red-500 flex items-center gap-2"><AlertTriangle /> Analytics Error</h1>
+            <h1 className="text-2xl font-bold text-red-700 flex items-center gap-2"><AlertTriangle /> Analytics Error</h1>
             <div className="flex-1" />
             <button onClick={() => this.props.navigate('/app')} className="aurelia-ghost-btn px-4 py-2">Back to Dashboard</button>
           </div>
-          <div className="aurelia-card p-8 border-red-500/30 bg-red-500/5 text-center flex flex-col items-center">
-            <AlertTriangle size={48} className="text-red-400 mb-4" />
-            <h2 className="text-xl font-bold text-red-400 mb-2">Something went wrong rendering the charts.</h2>
-            <p className="text-red-200/70 mb-6 max-w-lg">There was an unexpected error parsing the dataset. Please report this issue or try reloading the page.</p>
+          <div className="aurelia-card p-8 border-red-600/30 bg-red-600/5 text-center flex flex-col items-center">
+            <AlertTriangle size={48} className="text-red-700 mb-4" />
+            <h2 className="text-xl font-bold text-red-700 mb-2">Something went wrong rendering the charts.</h2>
+            <p className="text-red-700/70 mb-6 max-w-lg">There was an unexpected error parsing the dataset. Please report this issue or try reloading the page.</p>
             <button onClick={() => window.location.reload()} className="aurelia-gold-btn px-6 py-2">Reload Page</button>
           </div>
         </div>
@@ -465,7 +465,7 @@ function AnalyticsPage() {
   const fmtP = (v: number) => `${((v||0)*100).toFixed(1)}%`;
 
   if (loading) return (
-    <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto text-white">
+    <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto text-foreground">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
         <h1 className="text-2xl font-bold flex items-center gap-2 text-muted-foreground"><Filter size={24} /> Analytics Explorer</h1>
         <button onClick={() => navigate('/app')} className="aurelia-ghost-btn px-4 py-2 flex items-center gap-2"><ArrowLeft size={16} /> Back to Dashboard</button>
@@ -480,7 +480,7 @@ function AnalyticsPage() {
   // EMPTY STATE //
   if (!bookings || bookings.length === 0) {
     return (
-      <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto text-white animate-fade-in">
+      <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto text-foreground animate-fade-in">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
           <h1 className="text-2xl font-bold flex items-center gap-2"><Filter className="text-gold" size={24} /> Analytics Explorer</h1>
           <button onClick={() => navigate('/app')} className="aurelia-ghost-btn px-4 py-2 flex items-center gap-2"><ArrowLeft size={16} /> Back to Dashboard</button>
@@ -503,7 +503,7 @@ function AnalyticsPage() {
 
   // CONTENT STATE //
   return (
-    <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto animate-fade-in text-white">
+    <div className="p-4 md:p-8 pb-32 max-w-[1600px] mx-auto animate-fade-in text-foreground">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/app')} className="aurelia-ghost-btn p-2 mr-2">
@@ -512,7 +512,7 @@ function AnalyticsPage() {
           <Filter className="text-gold" size={24} />
           <h1 className="text-2xl font-bold">Analytics Explorer</h1>
         </div>
-        <button onClick={() => navigate('/app')} className="aurelia-ghost-btn px-4 py-2 border border-white/20 hover:bg-white/10">Back to Dashboard</button>
+        <button onClick={() => navigate('/app')} className="aurelia-ghost-btn px-4 py-2 border border-border hover:bg-muted">Back to Dashboard</button>
       </div>
 
       {/* FILTERS */}
@@ -577,7 +577,7 @@ function AnalyticsPage() {
       <div className="aurelia-card p-5 mb-6">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-sm font-bold tracking-widest text-muted-foreground uppercase">Revenue Trend</h2>
-          <div className="flex bg-white/5 p-1 rounded-lg">
+          <div className="flex bg-muted p-1 rounded-lg">
             {['Monthly', 'By Product', 'By Channel'].map(m => (
               <button key={m} onClick={() => setTrendMode(m as any)} 
                 className={`px-3 py-1 text-xs rounded-md transition-all ${trendMode === m ? 'bg-background font-bold shadow-sm border border-border/50 text-foreground' : 'text-muted-foreground'}`}>
@@ -673,7 +673,7 @@ function AnalyticsPage() {
           {monthlyTable.length > 0 ? (
             <table className="w-full text-xs text-left">
               <thead>
-                <tr className="bg-[#13131a] border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
+                <tr className="bg-muted border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
                   <th className="py-3 px-4 font-bold">Month</th>
                   <th className="py-3 px-3 font-bold text-center">Bookings</th>
                   <th className="py-3 px-3 font-bold text-center">Pax</th>
@@ -683,12 +683,12 @@ function AnalyticsPage() {
                   <th className="py-3 px-3 font-bold text-right">Costs</th>
                   <th className="py-3 px-4 font-bold text-right">Net Profit</th>
                   <th className="py-3 px-4 font-bold text-right">Margin %</th>
-                  <th className="py-3 px-4 font-bold text-right text-red-400">Cancel Loss</th>
+                  <th className="py-3 px-4 font-bold text-right text-red-700">Cancel Loss</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
                 {monthlyTable.map(m => (
-                  <tr key={m.month} className={`hover:bg-white/5 transition-colors cursor-pointer ${m.sort === -1 ? 'bg-primary/5 font-bold' : ''}`}
+                  <tr key={m.month} className={`hover:bg-muted/60 transition-colors cursor-pointer ${m.sort === -1 ? 'bg-primary/5 font-bold' : ''}`}
                       onClick={() => m.sort !== -1 && setMonthFilter(m.month.split(' ')[0])}>
                     <td className="py-3 px-4 font-semibold">{m.month}</td>
                     <td className="py-3 px-3 text-center tabular-nums">{m.bk}</td>
@@ -701,7 +701,7 @@ function AnalyticsPage() {
                     <td className={`py-3 px-4 text-right tabular-nums font-bold ${
                       m.margin > 0.4 ? 'text-profit-positive' : m.margin >= 0.2 ? 'text-gold' : 'text-profit-negative'
                     }`}>{fmtP(m.margin)}</td>
-                    <td className="py-3 px-4 text-right tabular-nums text-red-400 font-medium">{m.cancLoss > 0 ? fmtE(m.cancLoss) : '—'}</td>
+                    <td className="py-3 px-4 text-right tabular-nums text-red-700 font-medium">{m.cancLoss > 0 ? fmtE(m.cancLoss) : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -795,7 +795,7 @@ function AnalyticsPage() {
             {dayPnlData.length > 0 ? (
               <table className="w-full text-xs text-left">
                 <thead>
-                  <tr className="bg-[#13131a] border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
+                  <tr className="bg-muted border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
                     <th className="py-3 px-4 font-bold">Date</th>
                     <th className="py-3 px-3 font-bold text-center">Bookings</th>
                     <th className="py-3 px-3 font-bold text-center">Pax</th>
@@ -806,7 +806,7 @@ function AnalyticsPage() {
                 </thead>
                 <tbody className="divide-y divide-border/40">
                   {dayPnlData.map(d => (
-                    <tr key={d.date} className="hover:bg-white/5 transition-colors">
+                    <tr key={d.date} className="hover:bg-muted/60 transition-colors">
                       <td className="py-3 px-4 font-semibold tabular-nums">
                         {new Date(d.date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
                       </td>
@@ -848,7 +848,7 @@ function AnalyticsPage() {
              productList.map(p => (
               <button key={p.name} onClick={() => setProductDrilldown(p.name)}
                 className={`w-full text-left p-3 rounded-lg flex items-center justify-between border transition-all ${
-                  productDrilldown === p.name ? 'border-primary bg-primary/10 pl-4' : 'border-transparent hover:bg-white/5 bg-white-[0.02]'
+                  productDrilldown === p.name ? 'border-primary bg-primary/10 pl-4' : 'border-transparent hover:bg-muted'
                 }`}>
                 <div className="overflow-hidden flex-1 pr-2">
                   <div className="font-semibold text-sm truncate">{p.name}</div>
@@ -904,7 +904,7 @@ function AnalyticsPage() {
                 {activeProductData.options.length > 0 ? (
                   <table className="w-full text-xs text-left">
                     <thead>
-                      <tr className="bg-[#13131a] border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
+                      <tr className="bg-muted border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
                         <th className="py-2.5 px-4 font-bold">Option Name</th>
                         <th className="py-2.5 px-3 font-bold text-center">Bookings</th>
                         <th className="py-2.5 px-4 font-bold text-right">Gross Rev</th>
@@ -913,7 +913,7 @@ function AnalyticsPage() {
                     </thead>
                     <tbody className="divide-y divide-border/40">
                       {activeProductData.options.map(o => (
-                        <tr key={o.opt} className="hover:bg-white/5 transition-colors">
+                        <tr key={o.opt} className="hover:bg-muted/60 transition-colors">
                           <td className="py-2.5 px-4 font-medium">{o.opt}</td>
                           <td className="py-2.5 px-3 text-center tabular-nums">{o.bk}</td>
                           <td className="py-2.5 px-4 text-right tabular-nums">{fmtE(o.gross)}</td>
@@ -991,20 +991,20 @@ function AnalyticsPage() {
 
       {/* ROW 7: CANCELLATIONS */}
       <h2 className="text-sm font-bold tracking-widest text-muted-foreground uppercase mb-4 flex items-center gap-2">
-        <AlertTriangle size={16} className="text-red-400" /> Cancellation Intelligence
+        <AlertTriangle size={16} className="text-red-700" /> Cancellation Intelligence
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="aurelia-card p-5 border-l-[3px] border-l-red-500/50 bg-red-500/5">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-1 group flex items-center gap-1.5 text-red-400">Cancellation Rate</div>
-          <div className="text-2xl font-black text-red-50">{cancelData.rate.toFixed(1)}%</div>
+        <div className="aurelia-card p-5 border-l-[3px] border-l-red-500/50 bg-red-600/5">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-1 group flex items-center gap-1.5 text-red-700">Cancellation Rate</div>
+          <div className="text-2xl font-black text-red-800">{cancelData.rate.toFixed(1)}%</div>
         </div>
         <div className="aurelia-card p-5 border-l-[3px] border-l-orange-500/50">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-1">Revenue Lost</div>
           <div className="text-2xl font-black tabular-nums">{fmtE(cancelData.revLost)}</div>
         </div>
-        <div className="aurelia-card p-5 border-l-[3px] border-l-red-500 bg-red-500/10">
-          <div className="text-[10px] text-red-400 uppercase tracking-wider font-bold mb-1">Ticket Cost Lost (Non-refundable)</div>
-          <div className="text-2xl font-black tabular-nums text-red-100">{fmtE(cancelData.tickLost)}</div>
+        <div className="aurelia-card p-5 border-l-[3px] border-l-red-500 bg-red-600/10">
+          <div className="text-[10px] text-red-700 uppercase tracking-wider font-bold mb-1">Ticket Cost Lost (Non-refundable)</div>
+          <div className="text-2xl font-black tabular-nums text-red-800">{fmtE(cancelData.tickLost)}</div>
         </div>
       </div>
 
@@ -1036,28 +1036,28 @@ function AnalyticsPage() {
         <div className="lg:col-span-2 aurelia-card overflow-hidden">
           <div className="p-4 bg-muted/20 border-b border-border flex justify-between items-center">
             <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Top Losses</h3>
-            <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded font-bold">TOTAL NON-REFUNDABLE: {fmtE(cancelData.tickLost)}</span>
+            <span className="text-[10px] bg-red-600/20 text-red-700 px-2 py-0.5 rounded font-bold">TOTAL NON-REFUNDABLE: {fmtE(cancelData.tickLost)}</span>
           </div>
           <div className="overflow-x-auto h-[250px] aurelia-scrollbar">
             {cancelData.table.length > 0 ? (
               <table className="w-full text-xs text-left">
-                <thead className="sticky top-0 bg-[#13131a] z-10">
+                <thead className="sticky top-0 bg-muted z-10">
                   <tr className="border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
                     <th className="py-2 px-4 font-bold">Ref</th>
                     <th className="py-2 px-3 font-bold">Product</th>
                     <th className="py-2 px-3 font-bold">Travel</th>
                     <th className="py-2 px-3 font-bold text-right">Rev. Lost</th>
-                    <th className="py-2 px-4 font-bold text-right text-red-400">Ticket Cost Lost</th>
+                    <th className="py-2 px-4 font-bold text-right text-red-700">Ticket Cost Lost</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/40">
                   {cancelData.table.map(b => (
-                    <tr key={b?.id || b?.booking_ref || Math.random()} className="hover:bg-white/5 transition-colors">
+                    <tr key={b?.id || b?.booking_ref || Math.random()} className="hover:bg-muted/60 transition-colors">
                       <td className="py-2 px-4 font-semibold">{b?.booking_ref || '—'}</td>
                       <td className="py-2 px-3 text-muted-foreground truncate max-w-[120px]">{b?.product_name || 'Unknown'}</td>
                       <td className="py-2 px-3 tabular-nums">{b?.travel_date || '—'}</td>
                       <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{fmtE(b?.gross_revenue)}</td>
-                      <td className="py-2 px-4 text-right tabular-nums text-red-400 font-bold">{b?.ticket_cost > 0 ? fmtE(b?.ticket_cost) : '—'}</td>
+                      <td className="py-2 px-4 text-right tabular-nums text-red-700 font-bold">{b?.ticket_cost > 0 ? fmtE(b?.ticket_cost) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>

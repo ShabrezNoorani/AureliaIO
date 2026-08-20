@@ -63,7 +63,7 @@ export default function AllocationBoard({
   const selectedGuest = selectedRef ? guests.find(g => g.bookingRef === selectedRef) || null : null;
 
   if (guides.length === 0) {
-    return <p className="text-xs text-gray-500 italic py-2">No guides on this session yet.</p>;
+    return <p className="text-xs text-muted-foreground italic py-2">No guides on this session yet.</p>;
   }
 
   const holdingPax = holding.reduce((s, g) => s + g.pax, 0);
@@ -90,10 +90,10 @@ export default function AllocationBoard({
         key={g.bookingRef}
         onClick={(e) => { e.stopPropagation(); handleGuestTap(g.bookingRef); }}
         className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-xs transition-all ${
-          isSelected ? 'bg-gold/20 ring-2 ring-gold' : 'bg-black/20'
+          isSelected ? 'bg-gold/20 ring-2 ring-gold' : 'bg-muted'
         } ${canMove ? 'cursor-pointer active:scale-[0.98]' : ''}`}
       >
-        <span className="font-semibold truncate">{g.displayName}</span>
+        <span className="font-semibold truncate text-foreground">{g.displayName}</span>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-gold font-bold">{g.pax}</span>
           {canMove && (
@@ -101,7 +101,7 @@ export default function AllocationBoard({
               value={columnGuideId || ''}
               onClick={(e) => e.stopPropagation()}
               onChange={(e) => { onMoveGuest!(g.bookingRef, e.target.value || null); setSelectedRef(null); }}
-              className="bg-[#1a1a1f] border border-white/10 rounded-lg text-[10px] py-1 px-1.5 outline-none max-w-[90px]"
+              className="bg-background border border-border text-foreground rounded-lg text-[10px] py-1 px-1.5 outline-none max-w-[90px]"
             >
               <option value="">Unassign</option>
               {guides.map(gg => <option key={gg.id} value={gg.id}>{gg.name}</option>)}
@@ -145,21 +145,21 @@ export default function AllocationBoard({
               key={guide.id}
               onClick={() => handleColumnTap(guide.id)}
               className={`w-[250px] shrink-0 snap-start flex flex-col rounded-2xl p-4 space-y-2.5 border transition-all ${
-                isSelf ? 'border-gold/40' : 'border-white/10'
+                isSelf ? 'border-gold/40' : 'border-border'
               } ${
-                isValidDropTarget ? 'ring-2 ring-gold/40 bg-gold/[0.04] cursor-pointer' : 'bg-white/5'
+                isValidDropTarget ? 'ring-2 ring-gold/40 bg-gold/[0.04] cursor-pointer' : 'bg-card shadow-sm'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="font-bold text-sm truncate">{guide.name}</span>
+                  <span className="font-bold text-sm truncate text-foreground">{guide.name}</span>
                   {isSelf && <span className="text-[9px] font-black uppercase text-gold shrink-0">You</span>}
                 </div>
                 {isOwner && onToggleLock && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onToggleLock(guide.id, !guide.locked); }}
                     title={guide.locked ? 'Unlock (include in Balance)' : 'Lock (exclude from Balance)'}
-                    className={`p-1.5 rounded-lg transition-colors shrink-0 ${guide.locked ? 'bg-gold/20 text-gold' : 'bg-white/5 text-gray-500 hover:text-white'}`}
+                    className={`p-1.5 rounded-lg transition-colors shrink-0 ${guide.locked ? 'bg-gold/20 text-gold' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
                   >
                     {guide.locked ? <Lock size={13} /> : <Unlock size={13} />}
                   </button>
@@ -171,7 +171,7 @@ export default function AllocationBoard({
                   <Users size={12} /> {total} pax
                 </span>
                 {guide.locked && (
-                  <span className="text-[9px] font-black uppercase text-gray-400 bg-white/10 px-2 py-0.5 rounded-full shrink-0">
+                  <span className="text-[9px] font-black uppercase text-muted-foreground bg-muted px-2 py-0.5 rounded-full shrink-0">
                     Locked
                   </span>
                 )}
@@ -179,7 +179,7 @@ export default function AllocationBoard({
 
               <div className="space-y-1.5 overflow-y-auto max-h-[420px] aurelia-scrollbar">
                 {list.length === 0 ? (
-                  <p className="text-[11px] text-gray-600 italic">No guests allotted.</p>
+                  <p className="text-[11px] text-muted-foreground italic">No guests allotted.</p>
                 ) : (
                   list.map(g => renderGuestRow(g, guide.id))
                 )}
@@ -194,16 +194,16 @@ export default function AllocationBoard({
           className={`w-[250px] shrink-0 snap-start flex flex-col rounded-2xl p-4 space-y-2.5 border border-dashed transition-all ${
             canMove && selectedGuest && selectedGuest.allottedGuideId !== null
               ? 'ring-2 ring-gold/40 bg-gold/[0.04] border-gold/30 cursor-pointer'
-              : 'bg-white/[0.03] border-white/10'
+              : 'bg-muted/50 border-border'
           }`}
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-black uppercase tracking-widest text-gray-400">Unallotted</span>
-            <span className="text-xs font-bold text-gray-500">{holdingPax} pax</span>
+            <span className="text-xs font-black uppercase tracking-widest text-muted-foreground">Unallotted</span>
+            <span className="text-xs font-bold text-muted-foreground">{holdingPax} pax</span>
           </div>
           <div className="space-y-1.5 overflow-y-auto max-h-[420px] aurelia-scrollbar">
             {holding.length === 0 ? (
-              <p className="text-[11px] text-gray-600 italic">Everyone checked in is allotted.</p>
+              <p className="text-[11px] text-muted-foreground italic">Everyone checked in is allotted.</p>
             ) : (
               holding.map(g => renderGuestRow(g, null))
             )}

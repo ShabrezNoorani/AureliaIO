@@ -88,7 +88,7 @@ function TrialStatusPill({ profile }: { profile: Profile | null }) {
     return (
       <button
         onClick={() => navigate('/pricing')}
-        className="w-full text-left px-4 py-2.5 rounded-lg text-xs font-semibold bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/15 transition-colors mb-2"
+        className="w-full text-left px-4 py-2.5 rounded-lg text-xs font-semibold bg-red-600/10 border border-red-600/20 text-red-700 hover:bg-red-600/15 transition-colors mb-2"
       >
         ⚠ Trial: {daysLeft} day{daysLeft !== 1 ? 's' : ''} left — Subscribe
       </button>
@@ -96,7 +96,7 @@ function TrialStatusPill({ profile }: { profile: Profile | null }) {
   }
 
   return (
-    <div className="px-4 py-2.5 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-white mb-2">
+    <div className="px-4 py-2.5 rounded-lg text-xs font-semibold bg-muted border border-border text-foreground mb-2">
       ✦ Trial: {daysLeft} day{daysLeft !== 1 ? 's' : ''} left
     </div>
   );
@@ -147,7 +147,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
       {/* Mobile close button */}
       <button
         onClick={onCloseMobile}
-        className="md:hidden absolute top-4 right-4 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+        className="md:hidden absolute top-4 right-4 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
         aria-label="Close menu"
       >
         <X size={18} />
@@ -155,7 +155,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
 
       {/* Logo */}
       <div className="px-6 pt-8 pb-6">
-        <Logo size="md" />
+        <Logo size="md" light />
       </div>
 
       {/* Navigation */}
@@ -260,7 +260,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
           {/* Theme Palette Toggle */}
           <button 
             onClick={cycleTheme}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-gold hover:bg-white/5 transition-colors"
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-gold hover:bg-muted transition-colors"
             title={`Current Theme: ${currentThemeObj?.name}`}
           >
             <Palette size={16} />
@@ -270,7 +270,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
         {/* Logout */}
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-4 py-2.5 mt-2 rounded-lg text-sm font-medium text-red-400/70 hover:text-red-400 hover:bg-red-500/8 transition-all duration-200"
+          className="w-full flex items-center gap-3 px-4 py-2.5 mt-2 rounded-lg text-sm font-medium text-red-700/70 hover:text-red-700 hover:bg-red-600/10 transition-all duration-200"
         >
           <LogOut size={16} />
           <span>Logout</span>

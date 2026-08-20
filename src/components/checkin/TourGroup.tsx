@@ -13,11 +13,11 @@ interface TourGroupProps {
 export default function TourGroup({ time, code, bookingsCount, totalPax, sharedGuideName, children }: TourGroupProps) {
   return (
     <div className="space-y-4">
-      <div className="sticky top-16 z-40 bg-[#060608]/80 backdrop-blur-md py-2 px-3 rounded-2xl border border-white/5 flex items-center justify-between text-[11px] font-black uppercase tracking-widest text-gray-400">
+      <div className="sticky top-16 z-40 bg-background/80 backdrop-blur-md py-2 px-3 rounded-2xl border border-border flex items-center justify-between text-[11px] font-black uppercase tracking-widest text-muted-foreground">
         <div className="flex items-center gap-2">
           <Clock size={14} className="text-gold" />
-          <span className="text-white">{time}</span>
-          <span className="text-gray-600">·</span>
+          <span className="text-foreground">{time}</span>
+          <span className="text-muted-foreground/60">·</span>
           <span>{code}</span>
         </div>
         <div>

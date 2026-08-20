@@ -43,11 +43,11 @@ const DEFAULT_COLS = [
 ];
 
 const STATUS_STYLES: Record<string, string> = {
-  UPCOMING: 'bg-blue-500/15 text-blue-400 border-blue-500/20',
-  DONE: 'bg-green-500/15 text-green-400 border-green-500/20',
-  NO_SHOW: 'bg-orange-500/15 text-orange-400 border-orange-500/20 text-[#f5a623] bg-[#f5a623]/10 border-[#f5a623]/20', // override to orange as requested
-  CANCELLED_EARLY: 'bg-red-500/15 text-red-400 border-red-500/20',
-  CANCELLED_LATE: 'bg-red-500/10 text-orange-400 border-orange-500/20',
+  UPCOMING: 'bg-blue-600/15 text-blue-700 border-blue-600/20',
+  DONE: 'bg-green-600/15 text-green-700 border-green-600/20',
+  NO_SHOW: 'bg-orange-600/15 text-orange-700 border-orange-600/20', // override to orange as requested
+  CANCELLED_EARLY: 'bg-red-600/15 text-red-700 border-red-600/20',
+  CANCELLED_LATE: 'bg-red-600/10 text-orange-700 border-orange-600/20',
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -65,9 +65,9 @@ function formatPax(b: any) {
 
 function SourceBadge({ source }: { source: string }) {
   const styles: Record<string, string> = {
-    bokun: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-    gsheet: 'bg-green-500/10 text-green-400 border-green-500/20',
-    manual: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
+    bokun: 'bg-blue-600/10 text-blue-700 border-blue-600/20',
+    gsheet: 'bg-green-600/10 text-green-700 border-green-600/20',
+    manual: 'bg-muted text-muted-foreground border-border',
   };
   const label: Record<string, string> = {
     bokun: 'Bokun',
@@ -301,7 +301,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
             {syncing || !bookingsLoaded ? 'Syncing…' : 'Sync from Google Sheets'}
           </button>
           <button onClick={handleForceSync} disabled={syncing || !bookingsLoaded}
-            className="aurelia-ghost-btn flex items-center gap-2 border border-orange-500/20 text-orange-400 hover:bg-orange-500/10 disabled:opacity-50">
+            className="aurelia-ghost-btn flex items-center gap-2 border border-orange-600/20 text-orange-700 hover:bg-orange-600/10 disabled:opacity-50">
             <AlertTriangle size={14} />
             Force Full Re-sync
           </button>
@@ -311,9 +311,9 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       {/* Sync message */}
       {syncMsg && (
         <div className={`p-3 rounded-lg text-xs font-medium mb-4 border animate-fade-in ${
-          syncMsg.startsWith('✅') ? 'bg-green-500/10 border-green-500/20 text-green-400' :
-          syncMsg.startsWith('❌') || syncMsg.startsWith('⚠') ? 'bg-red-500/10 border-red-500/20 text-red-400' :
-          'bg-blue-500/10 border-blue-500/20 text-blue-400'
+          syncMsg.startsWith('✅') ? 'bg-green-600/10 border-green-600/20 text-green-700' :
+          syncMsg.startsWith('❌') || syncMsg.startsWith('⚠') ? 'bg-red-600/10 border-red-600/20 text-red-700' :
+          'bg-blue-600/10 border-blue-600/20 text-blue-700'
         }`}>
           {syncMsg}
           <button onClick={() => setSyncMsg('')} className="ml-3 opacity-50 hover:opacity-100">✕</button>
@@ -412,7 +412,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       {/* Table - Horizontally Scrollable Exact Specifications */}
       {filtered.length > 0 && (
         <div className="aurelia-card relative flex flex-col w-full overflow-hidden">
-          <div className="overflow-x-auto w-full max-w-full block flex-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent pb-1">
+          <div className="overflow-x-auto w-full max-w-full block flex-1 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent pb-1">
             <table className="w-full text-[13px] text-foreground table-fixed min-w-[2400px]">
               <thead>
                 <tr className="border-b" style={{ borderColor: 'hsl(var(--theme-border))', backgroundColor: 'hsl(var(--theme-card))' }}>
@@ -437,7 +437,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                           <span className="truncate pr-2">{col.label}</span>
                         </div>
                         <div 
-                          className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/20 z-40 transition-colors"
+                          className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-muted z-40 transition-colors"
                           style={{ borderRight: '1px solid hsl(var(--theme-border) / 0.5)' }}
                           onMouseDown={(e) => {
                             e.preventDefault();
@@ -481,7 +481,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                           case 'bdate': return <span className="tabular-nums text-muted-foreground">{b.booking_date || '—'}</span>;
                           case 'chan': return <span className="text-muted-foreground">{b.channel || '—'}</span>;
                           case 'promo': return <span className="text-muted-foreground">{b.promo_code || '—'}</span>;
-                          case 'pax': return <span className="tabular-nums text-emerald-400 font-mono text-[11px]">{formatPax(b)}</span>;
+                          case 'pax': return <span className="tabular-nums text-emerald-700 font-mono text-[11px]">{formatPax(b)}</span>;
                           case 'tpax': return <span className="tabular-nums text-muted-foreground">{calcTotalPax(b)}</span>;
                           case 'gross': return <span className="tabular-nums text-foreground">{fmtEuro(b.gross_revenue)}</span>;
                           case 'comm': return <span className="tabular-nums text-muted-foreground">{b.commission_rate ? `${b.commission_rate}%` : '—'}</span>;
@@ -498,10 +498,10 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                               <button onClick={() => generateBookingInvoice(b, profile?.company_name || 'AURELIA Suite')} className="p-1 px-1.5 rounded transition-colors text-gold border border-gold/20 hover:bg-gold/10" title="Download Invoice">
                                 <FileDown size={12} />
                               </button>
-                              <button onClick={() => handleEdit(b)} className="p-1 px-1.5 rounded transition-colors" style={{ backgroundColor: 'rgba(255,255,255,0.05)', color: 'hsl(var(--theme-text-sec))' }}>
+                              <button onClick={() => handleEdit(b)} className="p-1 px-1.5 rounded transition-colors bg-muted" style={{ color: 'hsl(var(--theme-text-sec))' }}>
                                 <Pencil size={12} />
                               </button>
-                              <button onClick={() => handleDelete(b)} className="p-1 px-1.5 rounded transition-colors border border-red-500/20 text-red-400 hover:bg-red-500/10">
+                              <button onClick={() => handleDelete(b)} className="p-1 px-1.5 rounded transition-colors border border-red-600/20 text-red-700 hover:bg-red-600/10">
                                 <Trash2 size={12} />
                               </button>
                             </div>

@@ -64,12 +64,12 @@ export default function MultiSelect({ label, options, selected, onChange }: Mult
       <button 
         type="button" 
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between rounded bg-[#0f1117] border border-[#2a2a3e] px-3 py-1.5 text-xs text-white min-w-[140px] hover:border-white/20 transition-colors"
+        className="flex items-center justify-between rounded bg-background border border-border px-3 py-1.5 text-xs text-foreground min-w-[140px] hover:border-muted-foreground/30 transition-colors"
       >
-        <span className={allSelected ? 'text-gray-400' : 'text-white truncate max-w-[120px]'}>{displayText}</span>
+        <span className={allSelected ? 'text-muted-foreground' : 'text-foreground truncate max-w-[120px]'}>{displayText}</span>
         <div className="flex items-center gap-1.5 opacity-60">
           {!allSelected && (
-            <div onClick={clearSelection} className="hover:text-red-400 rounded-full p-0.5" title="Clear">
+            <div onClick={clearSelection} className="hover:text-red-700 rounded-full p-0.5" title="Clear">
               <X size={12} />
             </div>
           )}
@@ -78,31 +78,31 @@ export default function MultiSelect({ label, options, selected, onChange }: Mult
       </button>
 
       {isOpen && (
-        <div className="absolute top-full left-0 mt-2 w-48 bg-[#13131a] border border-[#2a2a3e] rounded-lg shadow-xl shadow-black/40 z-50 overflow-hidden text-sm animate-fade-in">
+        <div className="absolute top-full left-0 mt-2 w-48 bg-card border border-border rounded-lg shadow-xl z-50 overflow-hidden text-sm animate-fade-in">
           <div className="max-h-60 overflow-y-auto aurelia-scrollbar py-1">
             <button
               onClick={() => toggleOption('All')}
-              className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/5 text-left transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-2 hover:bg-muted text-left transition-colors"
             >
-              <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${allSelected ? 'bg-[#f5a623] border-[#f5a623]' : 'border-gray-500'}`}>
-                {allSelected && <Check size={12} className="text-[#0a0a0f] font-bold" />}
+              <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${allSelected ? 'bg-gold border-gold' : 'border-border'}`}>
+                {allSelected && <Check size={12} className="text-black font-bold" />}
               </div>
-              <span className={allSelected ? 'text-white font-medium' : 'text-gray-400'}>All {label}</span>
+              <span className={allSelected ? 'text-foreground font-medium' : 'text-muted-foreground'}>All {label}</span>
             </button>
-            <div className="h-px bg-[#2a2a3e] mx-2 my-1" />
-            
+            <div className="h-px bg-border mx-2 my-1" />
+
             {options.filter(o => o.value !== 'All').map(opt => {
               const isSelected = selected.includes(opt.value);
               return (
                 <button
                   key={opt.value}
                   onClick={() => toggleOption(opt.value)}
-                  className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/5 text-left transition-colors"
+                  className="w-full flex items-center gap-3 px-3 py-2 hover:bg-muted text-left transition-colors"
                 >
-                  <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-[#f5a623] border-[#f5a623]' : 'border-gray-500'}`}>
-                    {isSelected && <Check size={12} className="text-[#0a0a0f] font-bold" />}
+                  <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${isSelected ? 'bg-gold border-gold' : 'border-border'}`}>
+                    {isSelected && <Check size={12} className="text-black font-bold" />}
                   </div>
-                  <span className={isSelected ? 'text-white' : 'text-gray-300'}>{opt.label}</span>
+                  <span className={isSelected ? 'text-foreground' : 'text-foreground/80'}>{opt.label}</span>
                 </button>
               );
             })}

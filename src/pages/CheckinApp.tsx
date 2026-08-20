@@ -236,11 +236,11 @@ export default function CheckinApp() {
 
   if (isValidToken === false) {
     return (
-      <div className="min-h-screen bg-[#060608] text-white p-6 flex flex-col items-center justify-center max-w-[480px] mx-auto font-sans text-center">
-        <div className="text-4xl font-black text-red-500 mb-6 italic tracking-tighter">AURELIA</div>
-        <div className="w-20 h-20 rounded-full bg-red-500/10 flex items-center justify-center text-3xl mb-8">❌</div>
+      <div className="min-h-screen bg-background text-foreground p-6 flex flex-col items-center justify-center max-w-[480px] mx-auto font-sans text-center">
+        <div className="text-4xl font-black text-red-700 mb-6 italic tracking-tighter">AURELIA</div>
+        <div className="w-20 h-20 rounded-full bg-red-600/10 flex items-center justify-center text-3xl mb-8">❌</div>
         <h1 className="text-2xl font-black mb-4">Invalid Link</h1>
-        <p className="text-gray-400 text-sm leading-relaxed max-w-[280px]">
+        <p className="text-muted-foreground text-sm leading-relaxed max-w-[280px]">
           This check-in link is invalid or has expired. Please contact your tour coordinator for a new link.
         </p>
       </div>
@@ -249,7 +249,7 @@ export default function CheckinApp() {
 
   if (loading && isValidToken === null) {
     return (
-      <div className="min-h-screen bg-[#060608] flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-gold border-t-transparent animate-spin rounded-full" />
       </div>
     );
@@ -257,25 +257,25 @@ export default function CheckinApp() {
 
   if (!selectedGuideId) {
     return (
-      <div className="min-h-screen bg-[#060608] text-white p-6 flex flex-col items-center justify-center max-w-[480px] mx-auto font-sans">
+      <div className="min-h-screen bg-background text-foreground p-6 flex flex-col items-center justify-center max-w-[480px] mx-auto font-sans">
         <div className="text-center mb-12 animate-fade-in">
           <div className="text-4xl font-black text-gold mb-1 tracking-tighter italic">AURELIA</div>
-          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500 mb-8 flex items-center justify-center gap-2">
+          <div className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-8 flex items-center justify-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
             {companyName}
           </div>
-          <h1 className="text-xl font-bold text-gray-300">Select your name</h1>
+          <h1 className="text-xl font-bold text-foreground/80">Select your name</h1>
         </div>
         <div className="grid grid-cols-2 gap-4 w-full">
           {guides.map(g => (
             <button
               key={g.id}
               onClick={() => handleSelectSelf(g)}
-              className="bg-white/5 border border-white/10 p-6 rounded-[2rem] text-center hover:border-gold/50 transition-all active:scale-95 touch-manipulation min-h-[140px] flex flex-col items-center justify-center group"
+              className="bg-card border border-border shadow-sm p-6 rounded-[2rem] text-center hover:border-gold/50 transition-all active:scale-95 touch-manipulation min-h-[140px] flex flex-col items-center justify-center group"
             >
-              <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-xl mb-3 group-hover:bg-gold/20 group-hover:text-gold transition-colors">👤</div>
+              <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-xl mb-3 group-hover:bg-gold/20 group-hover:text-gold transition-colors">👤</div>
               <div className="text-lg font-black">{g.name}</div>
-              <div className="text-[10px] font-mono text-gray-500 uppercase mt-1 tracking-widest">{g.guide_number}</div>
+              <div className="text-[10px] font-mono text-muted-foreground uppercase mt-1 tracking-widest">{g.guide_number}</div>
             </button>
           ))}
         </div>
@@ -284,21 +284,21 @@ export default function CheckinApp() {
   }
 
   return (
-    <div className="min-h-screen bg-[#060608] text-white max-w-[480px] mx-auto flex flex-col pb-44 font-sans antialiased">
+    <div className="min-h-screen bg-background text-foreground max-w-[480px] mx-auto flex flex-col pb-44 font-sans antialiased">
       {/* HEADER */}
-      <header className="sticky top-0 z-50 bg-[#060608]/90 backdrop-blur-2xl border-b border-white/5 p-4 flex items-center justify-between">
+      <header className="sticky top-0 z-50 bg-background/90 backdrop-blur-2xl border-b border-border p-4 flex items-center justify-between">
         <div className="flex flex-col">
           <div className="text-2xl font-black text-gold tracking-tighter italic leading-none">AUR.</div>
-          <div className="text-[8px] font-black uppercase text-gray-500 tracking-widest mt-1 opacity-60">✦ {companyName}</div>
+          <div className="text-[8px] font-black uppercase text-muted-foreground tracking-widest mt-1 opacity-60">✦ {companyName}</div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => changeDate(-1)} className="p-2.5 bg-white/5 rounded-xl"><ChevronLeft size={20} /></button>
-          <div className="text-sm font-bold bg-white/5 px-4 py-2 rounded-xl border border-white/5">
+          <button onClick={() => changeDate(-1)} className="p-2.5 bg-muted rounded-xl"><ChevronLeft size={20} /></button>
+          <div className="text-sm font-bold bg-muted px-4 py-2 rounded-xl border border-border">
             {new Date(dateParam).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}
           </div>
-          <button onClick={() => changeDate(1)} className="p-2.5 bg-white/5 rounded-xl"><ChevronRight size={20} /></button>
+          <button onClick={() => changeDate(1)} className="p-2.5 bg-muted rounded-xl"><ChevronRight size={20} /></button>
         </div>
-        <button onClick={logout} className="p-2.5 text-gray-500 bg-white/5 rounded-xl"><LogOut size={18} /></button>
+        <button onClick={logout} className="p-2.5 text-muted-foreground bg-muted rounded-xl"><LogOut size={18} /></button>
       </header>
 
       {/* CONTENT */}
@@ -363,30 +363,30 @@ export default function CheckinApp() {
       )}
 
       {/* STICKY FOOTER */}
-      <footer className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-[440px] bg-[#1a1a1f]/80 backdrop-blur-3xl border border-white/10 p-4 rounded-[40px] shadow-2xl z-50">
+      <footer className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-[440px] bg-card/80 backdrop-blur-3xl border border-border p-4 rounded-[40px] shadow-2xl z-50">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <div className="w-10 h-10 rounded-full bg-gold/10 flex items-center justify-center border border-gold/20 text-gold font-black">
               {guideName?.[0]}
             </div>
             <div className="hidden min-[380px]:block">
-              <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Guide</div>
+              <div className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">Guide</div>
               <div className="text-xs font-black truncate max-w-[80px]">{guideName}</div>
             </div>
           </div>
 
           <div className="flex flex-1 justify-end gap-3">
-            <div className="text-center px-3 py-1 bg-green-500/10 rounded-xl border border-green-500/10">
-              <div className="text-[8px] font-black text-green-500 uppercase tracking-widest">In</div>
-              <div className="text-sm font-black text-white">{stats.done}</div>
+            <div className="text-center px-3 py-1 bg-green-600/10 rounded-xl border border-green-600/10">
+              <div className="text-[8px] font-black text-green-700 uppercase tracking-widest">In</div>
+              <div className="text-sm font-black text-foreground">{stats.done}</div>
             </div>
-            <div className="text-center px-3 py-1 bg-red-500/10 rounded-xl border border-red-500/10">
-              <div className="text-[8px] font-black text-red-500 uppercase tracking-widest">Loss</div>
-              <div className="text-sm font-black text-white">{stats.noShow}</div>
+            <div className="text-center px-3 py-1 bg-red-600/10 rounded-xl border border-red-600/10">
+              <div className="text-[8px] font-black text-red-700 uppercase tracking-widest">Loss</div>
+              <div className="text-sm font-black text-foreground">{stats.noShow}</div>
             </div>
-            <div className="text-center px-3 py-1 bg-white/5 rounded-xl border border-white/5">
-              <div className="text-[8px] font-black text-gray-500 uppercase tracking-widest">Wait</div>
-              <div className="text-sm font-black text-white">{stats.pending}</div>
+            <div className="text-center px-3 py-1 bg-muted rounded-xl border border-border">
+              <div className="text-[8px] font-black text-muted-foreground uppercase tracking-widest">Wait</div>
+              <div className="text-sm font-black text-foreground">{stats.pending}</div>
             </div>
           </div>
         </div>

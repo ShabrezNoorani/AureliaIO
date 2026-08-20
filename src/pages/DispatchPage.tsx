@@ -69,10 +69,10 @@ const paxTotal = (b: Booking) =>
   (Number(b.pax_adult) || 0) + (Number(b.pax_youth) || 0) + (Number(b.pax_child) || 0) + (Number(b.pax_infant) || 0);
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
-  offered: { label: 'Offered', className: 'bg-amber-500/15 text-amber-400' },
-  accepted: { label: 'Accepted', className: 'bg-green-500/15 text-green-400' },
-  declined: { label: 'Declined', className: 'bg-red-500/15 text-red-400' },
-  reassigned: { label: 'Reassigned', className: 'bg-white/10 text-muted-foreground' },
+  offered: { label: 'Offered', className: 'bg-amber-600/15 text-amber-700' },
+  accepted: { label: 'Accepted', className: 'bg-green-600/15 text-green-700' },
+  declined: { label: 'Declined', className: 'bg-red-600/15 text-red-700' },
+  reassigned: { label: 'Reassigned', className: 'bg-muted text-muted-foreground' },
 };
 
 export default function DispatchPage() {
@@ -374,7 +374,7 @@ export default function DispatchPage() {
                   const groupPax = group.bookings.reduce((s, b) => s + paxTotal(b), 0);
 
                   return (
-                    <div key={group.key} className={`aurelia-card p-4 border transition-colors ${isSelected ? 'border-gold/50 bg-gold/5' : 'border-white/5'}`}>
+                    <div key={group.key} className={`aurelia-card p-4 border transition-colors ${isSelected ? 'border-gold/50 bg-gold/5' : 'border-border'}`}>
                       <div className="flex items-start gap-3">
                         <input
                           type="checkbox"
@@ -391,13 +391,13 @@ export default function DispatchPage() {
                               </span>
                             </div>
                             {info.assignedCount === 0 ? (
-                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-white/5 text-muted-foreground shrink-0">Unassigned</span>
+                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0">Unassigned</span>
                             ) : info.assignedCount === group.bookings.length && info.uniqueSessionIds.length === 1 ? (
-                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 shrink-0">
+                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-green-600/15 text-green-700 shrink-0">
                                 In {sessionById.get(info.uniqueSessionIds[0])?.label || 'Session'}
                               </span>
                             ) : (
-                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 shrink-0">
+                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-600/15 text-amber-700 shrink-0">
                                 {info.assignedCount}/{group.bookings.length} assigned
                               </span>
                             )}
@@ -429,11 +429,11 @@ export default function DispatchPage() {
                           </div>
 
                           {isExpanded && (
-                            <div className="mt-3 space-y-2 border-t border-white/5 pt-3">
+                            <div className="mt-3 space-y-2 border-t border-border pt-3">
                               {group.bookings.map(b => {
                                 const sid = bookingRefToSessionId.get(b.booking_ref) || '';
                                 return (
-                                  <div key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-xs bg-white/[0.02] rounded-lg p-2">
+                                  <div key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-xs bg-muted rounded-lg p-2">
                                     <div className="min-w-0 truncate">
                                       <span className="font-bold text-foreground">{b.customer_name}</span>
                                       <span className="text-muted-foreground font-mono ml-2">{b.booking_ref}</span>
@@ -470,11 +470,11 @@ export default function DispatchPage() {
                 <div className="text-sm font-bold">
                   {selectedGroupKeys.size} group{selectedGroupKeys.size !== 1 ? 's' : ''} selected &middot; <span className="text-gold">{selectedTotalPax} total pax</span>
                 </div>
-                <button onClick={() => setSelectedGroupKeys(new Set())} className="text-xs text-muted-foreground hover:text-white">Clear</button>
+                <button onClick={() => setSelectedGroupKeys(new Set())} className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
               </div>
 
               {selectedGroupKeys.size > 1 && (
-                <div className="flex items-start gap-2 text-xs bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-lg p-2.5">
+                <div className="flex items-start gap-2 text-xs bg-amber-600/10 border border-amber-600/20 text-amber-700 rounded-lg p-2.5">
                   <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                   <span>
                     Merging {selectedDistinctTimes.size > 1 ? `${selectedDistinctTimes.size} different times` : 'the same time'}
@@ -516,7 +516,7 @@ export default function DispatchPage() {
                   const isEditingLabel = editingLabelId === session.id;
 
                   return (
-                    <div key={session.id} className="aurelia-card p-5 border border-white/5 space-y-4">
+                    <div key={session.id} className="aurelia-card p-5 border border-border space-y-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           {isEditingLabel ? (
@@ -531,7 +531,7 @@ export default function DispatchPage() {
                                 }}
                                 className="aurelia-input text-sm font-bold flex-1"
                               />
-                              <button onClick={() => handleSaveLabel(session.id)} className="text-green-400 p-1 shrink-0"><Check size={16} /></button>
+                              <button onClick={() => handleSaveLabel(session.id)} className="text-green-700 p-1 shrink-0"><Check size={16} /></button>
                               <button onClick={() => setEditingLabelId(null)} className="text-muted-foreground p-1 shrink-0"><X size={16} /></button>
                             </div>
                           ) : (
@@ -555,7 +555,7 @@ export default function DispatchPage() {
                             <span className="text-gold font-bold">{sPax} pax</span>
                           </div>
                         </div>
-                        <button onClick={() => handleDeleteSession(session)} className="text-muted-foreground hover:text-red-400 p-1.5 shrink-0" title="Delete session">
+                        <button onClick={() => handleDeleteSession(session)} className="text-muted-foreground hover:text-red-700 p-1.5 shrink-0" title="Delete session">
                           <Trash2 size={16} />
                         </button>
                       </div>
@@ -573,7 +573,7 @@ export default function DispatchPage() {
                               ? buildInviteLinks(session, guide, sPax)
                               : { calendarUrl: '', whatsappUrl: null as string | null };
                             return (
-                              <div key={sg.guide_id} className="flex flex-wrap items-center justify-between gap-2 bg-white/[0.02] rounded-lg px-3 py-2">
+                              <div key={sg.guide_id} className="flex flex-wrap items-center justify-between gap-2 bg-muted rounded-lg px-3 py-2">
                                 <div className="flex items-center gap-2 min-w-0 flex-wrap">
                                   <span className="text-sm font-bold text-foreground truncate">{guide?.name || 'Unknown guide'}</span>
                                   <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${badge.className}`}>
@@ -592,18 +592,18 @@ export default function DispatchPage() {
                                   <button
                                     onClick={() => handleRemoveGuide(session.id, sg.guide_id)}
                                     title="Remove guide"
-                                    className="text-muted-foreground hover:text-red-400 p-1"
+                                    className="text-muted-foreground hover:text-red-700 p-1"
                                   >
                                     <X size={13} />
                                   </button>
                                 </div>
                                 {sg.status === 'accepted' && (
-                                  <div className="w-full flex flex-wrap items-center gap-2 pt-1.5 mt-0.5 border-t border-white/5">
+                                  <div className="w-full flex flex-wrap items-center gap-2 pt-1.5 mt-0.5 border-t border-border">
                                     <a
                                       href={calendarUrl}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-white/10 text-muted-foreground hover:text-gold hover:border-gold/30 transition-colors inline-flex items-center gap-1"
+                                      className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-border text-muted-foreground hover:text-gold hover:border-gold/30 transition-colors inline-flex items-center gap-1"
                                     >
                                       <CalendarPlus size={11} /> Add to Calendar
                                     </a>
@@ -612,7 +612,7 @@ export default function DispatchPage() {
                                         href={whatsappUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-green-500/20 text-green-400 hover:bg-green-500/10 transition-colors inline-flex items-center gap-1"
+                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-green-600/20 text-green-700 hover:bg-green-600/10 transition-colors inline-flex items-center gap-1"
                                       >
                                         <MessageCircle size={11} /> Send WhatsApp
                                       </a>
@@ -621,7 +621,7 @@ export default function DispatchPage() {
                                         <button
                                           disabled
                                           title="This guide has no WhatsApp number on file"
-                                          className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-white/10 text-muted-foreground/40 cursor-not-allowed inline-flex items-center gap-1"
+                                          className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-border text-muted-foreground/40 cursor-not-allowed inline-flex items-center gap-1"
                                         >
                                           <MessageCircle size={11} /> Send WhatsApp
                                         </button>
@@ -651,14 +651,14 @@ export default function DispatchPage() {
                         {sBookings.length === 0 ? (
                           <p className="text-xs text-muted-foreground italic">No bookings in this session.</p>
                         ) : sBookings.map(b => (
-                          <div key={b.id} className="flex items-center justify-between gap-2 text-xs bg-white/[0.02] rounded-lg p-2">
+                          <div key={b.id} className="flex items-center justify-between gap-2 text-xs bg-muted rounded-lg p-2">
                             <div className="min-w-0 truncate">
                               <span className="font-bold text-foreground">{b.customer_name}</span>
                               <span className="text-muted-foreground font-mono ml-2">{b.booking_ref}</span>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
                               <span className="text-gold font-bold">{paxTotal(b)}</span>
-                              <button onClick={() => handleMoveBookingToSession(b.booking_ref, null)} title="Remove from session" className="text-muted-foreground hover:text-red-400 p-1">
+                              <button onClick={() => handleMoveBookingToSession(b.booking_ref, null)} title="Remove from session" className="text-muted-foreground hover:text-red-700 p-1">
                                 <X size={13} />
                               </button>
                             </div>

@@ -38,7 +38,7 @@ const WRITE_ONCE_FIELDS = [
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">{label}</label>
+      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">{label}</label>
       {children}
     </div>
   );
@@ -169,14 +169,14 @@ export default function GuideProfile() {
       </div>
 
       {error && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-sm text-red-400">{error}</div>
+        <div className="p-3 rounded-lg bg-red-600/10 border border-red-600/20 text-sm text-red-700">{error}</div>
       )}
       {saved && (
-        <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-sm text-green-400">Profile saved.</div>
+        <div className="p-3 rounded-lg bg-green-600/10 border border-green-600/20 text-sm text-green-700">Profile saved.</div>
       )}
 
       <section className="aurelia-card p-5 space-y-4">
-        <h2 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-white/5 pb-2">Basic Info</h2>
+        <h2 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-border pb-2">Basic Info</h2>
 
         <Field label="Full Name">
           <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="aurelia-input" />
@@ -194,27 +194,27 @@ export default function GuideProfile() {
           <textarea rows={2} value={form.tours_qualified} onChange={e => setForm({ ...form, tours_qualified: e.target.value })} className="aurelia-input resize-none" placeholder="e.g. Louvre, Colosseum" />
         </Field>
 
-        <div className="flex items-center justify-between bg-white/[0.03] p-3 rounded-xl border border-white/5">
+        <div className="flex items-center justify-between bg-muted p-3 rounded-xl border border-border">
           <div>
-            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">Licensed Guide</label>
-            <span className="text-[10px] text-gray-500 block mt-0.5">Do you hold a valid tour guide license?</span>
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Licensed Guide</label>
+            <span className="text-[10px] text-muted-foreground block mt-0.5">Do you hold a valid tour guide license?</span>
           </div>
-          <input type="checkbox" checked={form.licensed} onChange={e => setForm({ ...form, licensed: e.target.checked })} className="w-4 h-4 rounded text-gold bg-black border-white/10 focus:ring-gold" />
+          <input type="checkbox" checked={form.licensed} onChange={e => setForm({ ...form, licensed: e.target.checked })} className="w-4 h-4 rounded text-gold bg-background border-border focus:ring-gold" />
         </div>
 
-        <div className="flex items-center justify-between bg-white/[0.03] p-3 rounded-xl border border-white/5">
+        <div className="flex items-center justify-between bg-muted p-3 rounded-xl border border-border">
           <div>
-            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">Website Consent</label>
-            <span className="text-[10px] text-gray-500 block mt-0.5">OK to feature your name/photo on our website?</span>
+            <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Website Consent</label>
+            <span className="text-[10px] text-muted-foreground block mt-0.5">OK to feature your name/photo on our website?</span>
           </div>
-          <input type="checkbox" checked={form.website_consent} onChange={e => setForm({ ...form, website_consent: e.target.checked })} className="w-4 h-4 rounded text-gold bg-black border-white/10 focus:ring-gold" />
+          <input type="checkbox" checked={form.website_consent} onChange={e => setForm({ ...form, website_consent: e.target.checked })} className="w-4 h-4 rounded text-gold bg-background border-border focus:ring-gold" />
         </div>
       </section>
 
       <section className="aurelia-card p-5 space-y-4">
-        <div className="border-b border-white/5 pb-2">
+        <div className="border-b border-border pb-2">
           <h2 className="text-xs font-bold text-gold uppercase tracking-widest">Banking &amp; Legal</h2>
-          <p className="text-[10px] text-gray-500 mt-1">Each of these can only be set once. Contact your coordinator to correct them afterward.</p>
+          <p className="text-[10px] text-muted-foreground mt-1">Each of these can only be set once. Contact your coordinator to correct them afterward.</p>
         </div>
 
         {WRITE_ONCE_FIELDS.map(({ key, label, placeholder }) => {
@@ -223,7 +223,7 @@ export default function GuideProfile() {
             <Field key={key} label={label}>
               {lockedValue ? (
                 <div>
-                  <div className="aurelia-input bg-white/[0.02] text-muted-foreground flex items-center gap-2 cursor-not-allowed">
+                  <div className="aurelia-input bg-muted text-muted-foreground flex items-center gap-2 cursor-not-allowed">
                     <Lock size={12} className="shrink-0 opacity-60" />
                     <span className="truncate">{lockedValue}</span>
                   </div>
@@ -243,7 +243,7 @@ export default function GuideProfile() {
       </section>
 
       <section className="aurelia-card p-5 space-y-1.5">
-        <h2 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-white/5 pb-2 mb-2">Account</h2>
+        <h2 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-border pb-2 mb-2">Account</h2>
         <ReadOnlyRow label="Guide Number" value={guide.guide_number || '—'} />
         <ReadOnlyRow label="Email" value={guide.email || '—'} />
         <ReadOnlyRow label="Status" value={guide.status || '—'} />

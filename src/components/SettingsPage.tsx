@@ -306,19 +306,19 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="p-4 md:p-8 pb-48 max-w-6xl mx-auto animate-fade-in text-white space-y-12">
-      <div className="flex flex-wrap justify-between items-end gap-6 border-b border-white/5 pb-8">
+    <div className="p-4 md:p-8 pb-48 max-w-6xl mx-auto animate-fade-in text-foreground space-y-12">
+      <div className="flex flex-wrap justify-between items-end gap-6 border-b border-border pb-8">
         <div>
           <h1 className="text-3xl sm:text-5xl font-black tracking-tighter">Settings</h1>
-          <p className="text-gray-400 mt-2 text-lg">Platform architecture and operational controls.</p>
+          <p className="text-muted-foreground mt-2 text-lg">Platform architecture and operational controls.</p>
         </div>
         <div className="flex gap-4">
-          <div className="flex flex-wrap bg-white/5 p-1 rounded-xl border border-white/10">
+          <div className="flex flex-wrap bg-muted p-1 rounded-xl border border-border">
             {Object.keys(THEMES).filter(t => t !== 'ocean').map((t) => (
               <button 
                 key={t}
                 onClick={() => handleThemeChange(t as ThemeName)}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${currentTheme === t ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-gray-500 hover:text-white'}`}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${currentTheme === t ? 'bg-gold text-black shadow-lg shadow-gold/20' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 {THEMES[t as ThemeName].name}
               </button>
@@ -332,12 +332,12 @@ export default function SettingsPage() {
         {/* DATA SOURCE & SYNC SECTION */}
         <section className="space-y-8">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20">
+            <div className="w-12 h-12 rounded-2xl bg-blue-600/10 flex items-center justify-center text-blue-700 border border-blue-600/20">
               <Database size={24} />
             </div>
             <div>
               <h2 className="text-2xl font-black uppercase tracking-tight">📡 Data Source & Sync</h2>
-              <p className="text-sm text-gray-500">Configure how booking data enters your system.</p>
+              <p className="text-sm text-muted-foreground">Configure how booking data enters your system.</p>
             </div>
           </div>
 
@@ -352,7 +352,7 @@ export default function SettingsPage() {
                   { id: 'bokun', label: 'Bokun API', desc: 'Live direct integration' },
                   { id: 'manual', label: 'Manual Only', desc: 'Add bookings one by one' }
                 ].map(s => (
-                  <label key={s.id} className={`flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition-all ${primarySource === s.id ? 'bg-gold/5 border-gold/40 shadow-lg shadow-gold/5' : 'bg-white/[0.02] border-white/5 hover:border-white/10'}`}>
+                  <label key={s.id} className={`flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition-all ${primarySource === s.id ? 'bg-gold/5 border-gold/40 shadow-lg shadow-gold/5' : 'bg-muted border-border hover:border-muted-foreground/30'}`}>
                     <input 
                       type="radio" 
                       name="primarySource" 
@@ -362,16 +362,16 @@ export default function SettingsPage() {
                     />
                     <div>
                       <div className="font-bold text-sm">{s.label}</div>
-                      <div className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">{s.desc}</div>
+                      <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest mt-0.5">{s.desc}</div>
                     </div>
                   </label>
                 ))}
               </div>
               {primarySource === 'bokun' && (
-                <div className="p-4 bg-orange-500/10 rounded-2xl border border-orange-500/20 flex gap-3">
-                  <AlertTriangle className="text-orange-400 shrink-0" size={18} />
-                  <p className="text-[11px] text-orange-200/80 leading-relaxed font-medium">
-                    <span className="font-black text-orange-400">WARNING:</span> Bokun is now primary. 
+                <div className="p-4 bg-orange-600/10 rounded-2xl border border-orange-600/20 flex gap-3">
+                  <AlertTriangle className="text-orange-700 shrink-0" size={18} />
+                  <p className="text-[11px] text-orange-800/80 leading-relaxed font-medium">
+                    <span className="font-black text-orange-700">WARNING:</span> Bokun is now primary.
                     Google Sheets auto-sync is disabled. Manual imports still available.
                   </p>
                 </div>
@@ -381,34 +381,34 @@ export default function SettingsPage() {
             {/* SUB-SECTION 2: GOOGLE SHEETS */}
             <div className="aurelia-card p-8 border-t-[4px] border-t-blue-500 space-y-6">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-black uppercase tracking-widest text-blue-400">2. Google Sheets</h3>
-                {primarySource === 'gsheet' && <span className="text-[9px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full font-black uppercase tracking-widest">Active Source</span>}
+                <h3 className="text-sm font-black uppercase tracking-widest text-blue-700">2. Google Sheets</h3>
+                {primarySource === 'gsheet' && <span className="text-[9px] bg-blue-600/20 text-blue-700 px-2 py-0.5 rounded-full font-black uppercase tracking-widest">Active Source</span>}
               </div>
               
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Master Spreadsheet ID</label>
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Master Spreadsheet ID</label>
                   <div className="flex gap-2">
                     <input className="aurelia-input flex-1 font-mono text-xs" value={sheetId} onChange={e => setSheetId(e.target.value)} placeholder="1EAI0S...JmiOR8" />
-                    <button onClick={() => { handleSaveSyncSettings('gsheet'); }} className="p-2 bg-blue-500/10 hover:bg-blue-500/20 rounded-xl text-blue-400 transition-all border border-blue-500/20"><Save size={18} /></button>
+                    <button onClick={() => { handleSaveSyncSettings('gsheet'); }} className="p-2 bg-blue-600/10 hover:bg-blue-600/20 rounded-xl text-blue-700 transition-all border border-blue-600/20"><Save size={18} /></button>
                   </div>
                 </div>
 
                 <div className="pt-4 space-y-3">
-                  <button onClick={() => handleGsheetSync(false)} disabled={gsheetSyncing} className="w-full flex items-center justify-center gap-2 p-3 bg-white/5 border border-white/10 rounded-xl text-xs font-bold hover:bg-white/10 transition-all">
+                  <button onClick={() => handleGsheetSync(false)} disabled={gsheetSyncing} className="w-full flex items-center justify-center gap-2 p-3 bg-muted border border-border rounded-xl text-xs font-bold hover:bg-muted/70 transition-all">
                     <RefreshCw size={14} className={gsheetSyncing ? 'animate-spin' : ''} /> 🔄 Sync from Google Sheets
                   </button>
-                  <button onClick={() => handleGsheetSync(true)} disabled={gsheetSyncing} className="w-full flex items-center justify-center gap-2 p-3 bg-red-500/5 border border-red-500/10 rounded-xl text-xs font-bold text-red-400/70 hover:bg-red-500/10 transition-all">
+                  <button onClick={() => handleGsheetSync(true)} disabled={gsheetSyncing} className="w-full flex items-center justify-center gap-2 p-3 bg-red-600/5 border border-red-600/10 rounded-xl text-xs font-bold text-red-700/70 hover:bg-red-600/10 transition-all">
                     <AlertTriangle size={14} /> 💪 Force Full Re-sync
                   </button>
-                  {gsheetSyncMsg && <div className="text-center text-[10px] font-bold uppercase text-blue-400">{gsheetSyncMsg}</div>}
+                  {gsheetSyncMsg && <div className="text-center text-[10px] font-bold uppercase text-blue-700">{gsheetSyncMsg}</div>}
                 </div>
 
                 {/* Guide Assignments Sheet */}
-                <div className="pt-4 border-t border-white/5 space-y-3">
+                <div className="pt-4 border-t border-border space-y-3">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Guide Assignments Sheet (optional)</label>
-                    <p className="text-[10px] text-gray-600">Your Tour Assignments Google Sheet ID (separate from master data)</p>
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Guide Assignments Sheet (optional)</label>
+                    <p className="text-[10px] text-muted-foreground">Your Tour Assignments Google Sheet ID (separate from master data)</p>
                     <div className="flex gap-2">
                       <input
                         className="aurelia-input flex-1 font-mono text-xs"
@@ -421,25 +421,25 @@ export default function SettingsPage() {
                   <button
                     onClick={handleSyncAssignments}
                     disabled={assignSyncing}
-                    className="w-full flex items-center justify-center gap-2 p-3 bg-purple-500/10 border border-purple-500/20 rounded-xl text-xs font-bold text-purple-300 hover:bg-purple-500/20 transition-all"
+                    className="w-full flex items-center justify-center gap-2 p-3 bg-purple-600/10 border border-purple-600/20 rounded-xl text-xs font-bold text-purple-700 hover:bg-purple-600/20 transition-all"
                   >
                     <RefreshCw size={14} className={assignSyncing ? 'animate-spin' : ''} /> 🔄 Sync Guide Assignments
                   </button>
-                  {assignSyncMsg && <div className="text-center text-[10px] font-bold uppercase text-purple-400">{assignSyncMsg}</div>}
+                  {assignSyncMsg && <div className="text-center text-[10px] font-bold uppercase text-purple-700">{assignSyncMsg}</div>}
                 </div>
 
-                <div className="pt-4 border-t border-white/5">
+                <div className="pt-4 border-t border-border">
                   <div className="flex items-center justify-between mb-4">
                     <div>
                       <div className="text-xs font-bold">Auto-Sync</div>
-                      <div className="text-[10px] text-gray-500 uppercase">GSheets background sync</div>
+                      <div className="text-[10px] text-muted-foreground uppercase">GSheets background sync</div>
                     </div>
                     {primarySource === 'gsheet' ? (
-                      <button onClick={() => setGsheetAutoSync(!gsheetAutoSync)} className={`w-10 h-6 rounded-full transition-all relative ${gsheetAutoSync ? 'bg-blue-500' : 'bg-white/10'}`}>
+                      <button onClick={() => setGsheetAutoSync(!gsheetAutoSync)} className={`w-10 h-6 rounded-full transition-all relative ${gsheetAutoSync ? 'bg-blue-500' : 'bg-muted'}`}>
                         <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${gsheetAutoSync ? 'left-5' : 'left-1'}`} />
                       </button>
                     ) : (
-                      <span className="text-[9px] text-gray-600 font-bold uppercase">Disabled</span>
+                      <span className="text-[9px] text-muted-foreground font-bold uppercase">Disabled</span>
                     )}
                   </div>
                   {primarySource === 'gsheet' && gsheetAutoSync && (
@@ -451,7 +451,7 @@ export default function SettingsPage() {
                     </select>
                   )}
                   {primarySource !== 'gsheet' && (
-                    <div className="text-[10px] text-gray-600 italic leading-snug">
+                    <div className="text-[10px] text-muted-foreground italic leading-snug">
                       Auto-sync disabled. {primarySource === 'bokun' ? 'Bokun is primary.' : 'Manual mode active.'}
                     </div>
                   )}
@@ -462,21 +462,21 @@ export default function SettingsPage() {
             {/* SUB-SECTION 3: BOKUN API */}
             <div className="aurelia-card p-8 border-t-[4px] border-t-orange-500 space-y-6">
                <div className="flex items-center justify-between">
-                <h3 className="text-sm font-black uppercase tracking-widest text-orange-400">3. Bokun API</h3>
-                {primarySource === 'bokun' && <span className="text-[9px] bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded-full font-black uppercase tracking-widest">Active Source</span>}
+                <h3 className="text-sm font-black uppercase tracking-widest text-orange-700">3. Bokun API</h3>
+                {primarySource === 'bokun' && <span className="text-[9px] bg-orange-600/20 text-orange-700 px-2 py-0.5 rounded-full font-black uppercase tracking-widest">Active Source</span>}
               </div>
 
               <div className="space-y-4">
                 <div className="grid grid-cols-1 gap-3">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Access Key</label>
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Access Key</label>
                     <input type="password" value={bokunAccess} onChange={e => setBokunAccess(e.target.value)} className="aurelia-input font-mono text-xs" placeholder="X-Bokun-AccessKey" />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Secret Key</label>
+                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Secret Key</label>
                     <div className="flex gap-2">
                       <input type={showBokunSecret ? "text" : "password"} value={bokunSecret} onChange={e => setBokunSecret(e.target.value)} className="aurelia-input flex-1 font-mono text-xs" />
-                      <button onClick={() => setShowBokunSecret(!showBokunSecret)} className="p-2 bg-white/5 hover:bg-white/10 rounded-xl text-gray-500 transition-all border border-white/5">
+                      <button onClick={() => setShowBokunSecret(!showBokunSecret)} className="p-2 bg-muted hover:bg-muted/70 rounded-xl text-muted-foreground transition-all border border-border">
                         {showBokunSecret ? <EyeOff size={18} /> : <Eye size={18} />}
                       </button>
                     </div>
@@ -485,39 +485,39 @@ export default function SettingsPage() {
 
                 <div className="flex gap-2">
                   <button onClick={handleSaveBokunKeys} className="flex-1 aurelia-gold-btn py-2.5 text-xs font-black uppercase tracking-widest shdow-lg shadow-orange-500/5">{bokunSaved ? 'Keys Saved' : 'Save Keys'}</button>
-                  <button onClick={handleTestBokun} disabled={testStatus === 'testing'} className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold hover:bg-white/10 transition-all flex items-center gap-2">
+                  <button onClick={handleTestBokun} disabled={testStatus === 'testing'} className="px-4 py-2 bg-muted border border-border rounded-xl text-xs font-bold hover:bg-muted/70 transition-all flex items-center gap-2">
                     {testStatus === 'testing' ? <RefreshCw size={14} className="animate-spin" /> : <ShieldAlert size={14} />} 
                     Test
                   </button>
                 </div>
 
-                {testStatus === 'success' && <div className="text-center text-[10px] font-black text-green-400 uppercase tracking-widest">✅ Connection established</div>}
-                {testStatus === 'error' && <div className="text-center text-[10px] font-bold text-red-500 uppercase tracking-tight">❌ {testError}</div>}
+                {testStatus === 'success' && <div className="text-center text-[10px] font-black text-green-700 uppercase tracking-widest">✅ Connection established</div>}
+                {testStatus === 'error' && <div className="text-center text-[10px] font-bold text-red-700 uppercase tracking-tight">❌ {testError}</div>}
 
-                <div className="pt-4 border-t border-white/5 space-y-3">
-                  <button onClick={() => { handleFetchBokunProducts(); }} className="w-full flex items-center justify-center gap-2 p-3 bg-orange-500/10 border border-orange-500/20 rounded-xl text-xs font-bold text-orange-400 hover:bg-orange-500/20 transition-all">📦 Import Products</button>
-                  <div className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-3">
+                <div className="pt-4 border-t border-border space-y-3">
+                  <button onClick={() => { handleFetchBokunProducts(); }} className="w-full flex items-center justify-center gap-2 p-3 bg-orange-600/10 border border-orange-600/20 rounded-xl text-xs font-bold text-orange-700 hover:bg-orange-600/20 transition-all">📦 Import Products</button>
+                  <div className="p-4 bg-muted rounded-2xl border border-border space-y-3">
                     <div className="grid grid-cols-2 gap-2">
                       <input type="date" value={syncStartDate} onChange={e => setSyncStartDate(e.target.value)} className="aurelia-input text-[10px] h-8" />
                       <input type="date" value={syncEndDate} onChange={e => setSyncEndDate(e.target.value)} className="aurelia-input text-[10px] h-8" />
                     </div>
-                    <button onClick={handleSyncBokun} disabled={bokunSyncing} className="w-full flex items-center justify-center gap-2 p-2.5 bg-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all border border-white/5">🔄 Sync {new Date(syncStartDate).toLocaleDateString([], { month: 'short', day: 'numeric' })} – {new Date(syncEndDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}</button>
-                    {bokunSyncResult && <div className="text-center text-[9px] font-bold uppercase text-orange-400 mt-1">{bokunSyncResult}</div>}
+                    <button onClick={handleSyncBokun} disabled={bokunSyncing} className="w-full flex items-center justify-center gap-2 p-2.5 bg-muted rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-muted/70 transition-all border border-border">🔄 Sync {new Date(syncStartDate).toLocaleDateString([], { month: 'short', day: 'numeric' })} – {new Date(syncEndDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}</button>
+                    {bokunSyncResult && <div className="text-center text-[9px] font-bold uppercase text-orange-700 mt-1">{bokunSyncResult}</div>}
                   </div>
                 </div>
 
-                <div className="pt-4 border-t border-white/5">
+                <div className="pt-4 border-t border-border">
                   <div className="flex items-center justify-between mb-4">
                     <div>
                       <div className="text-xs font-bold">Auto-Sync</div>
-                      <div className="text-[10px] text-gray-500 uppercase">Live Bokun synchronization</div>
+                      <div className="text-[10px] text-muted-foreground uppercase">Live Bokun synchronization</div>
                     </div>
                     {primarySource === 'bokun' ? (
-                      <button onClick={() => setBokunAutoSync(!bokunAutoSync)} className={`w-10 h-6 rounded-full transition-all relative ${bokunAutoSync ? 'bg-orange-500' : 'bg-white/10'}`}>
+                      <button onClick={() => setBokunAutoSync(!bokunAutoSync)} className={`w-10 h-6 rounded-full transition-all relative ${bokunAutoSync ? 'bg-orange-500' : 'bg-muted'}`}>
                         <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${bokunAutoSync ? 'left-5' : 'left-1'}`} />
                       </button>
                     ) : (
-                      <span className="text-[9px] text-gray-600 font-bold uppercase">Disabled</span>
+                      <span className="text-[9px] text-muted-foreground font-bold uppercase">Disabled</span>
                     )}
                   </div>
                   {primarySource === 'bokun' && bokunAutoSync && (
@@ -529,7 +529,7 @@ export default function SettingsPage() {
                     </select>
                   )}
                   {primarySource !== 'bokun' && (
-                    <div className="text-[10px] text-gray-600 italic leading-snug">
+                    <div className="text-[10px] text-muted-foreground italic leading-snug">
                        Auto-sync disabled. {primarySource === 'gsheet' ? 'GSheets is primary.' : 'Manual mode active.'}
                     </div>
                   )}
@@ -538,14 +538,14 @@ export default function SettingsPage() {
             </div>
 
             {/* SUB-SECTION 4: MANUAL ENTRY INFO */}
-            <div className="xl:col-span-3 p-6 bg-white/[0.02] border border-white/5 rounded-[32px] flex items-center justify-between overflow-hidden relative">
+            <div className="xl:col-span-3 p-6 bg-muted border border-border rounded-[32px] flex items-center justify-between overflow-hidden relative">
                <div className="flex items-center gap-5 relative z-10">
-                 <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-gray-500">
+                 <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-muted-foreground">
                     <Percent size={24} />
                  </div>
                  <div>
                    <h3 className="text-lg font-black uppercase tracking-tight">Manual Bookings</h3>
-                   <p className="text-xs text-gray-500 max-w-xl">Manual bookings are always available regardless of your primary source. You can manually override rates, add guide assignments, and manage operational details for any booking.</p>
+                   <p className="text-xs text-muted-foreground max-w-xl">Manual bookings are always available regardless of your primary source. You can manually override rates, add guide assignments, and manage operational details for any booking.</p>
                  </div>
                </div>
                <div className="absolute right-0 top-0 h-full w-1/3 bg-gradient-to-l from-white/[0.03] to-transparent" />
@@ -560,15 +560,15 @@ export default function SettingsPage() {
           <div className="aurelia-card p-4 sm:p-8 border-t-[4px] border-t-green-500 space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center text-green-400">
+                <div className="w-10 h-10 rounded-xl bg-green-600/10 flex items-center justify-center text-green-700">
                   <Share2 size={20} />
                 </div>
                 <div>
                   <h2 className="text-lg font-extrabold uppercase tracking-tight">Guide Check-in</h2>
-                  <p className="text-[10px] text-gray-500 uppercase tracking-widest font-black">Secure External Access</p>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-black">Secure External Access</p>
                 </div>
               </div>
-              <button onClick={() => setShowRegenConfirm(true)} className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-500 transition-all flex items-center gap-2">
+              <button onClick={() => setShowRegenConfirm(true)} className="px-4 py-2 bg-muted border border-border rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-600/10 hover:border-red-600/30 hover:text-red-700 transition-all flex items-center gap-2">
                 <RefreshCw size={12} className={isRegenerating ? 'animate-spin' : ''} />
                 Regenerate
               </button>
@@ -576,20 +576,20 @@ export default function SettingsPage() {
             
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest block">Permanent Master Link</label>
-                <div className="flex gap-2 p-3 bg-black/20 rounded-2xl border border-white/5 items-center group">
-                  <code className="text-[10px] text-gray-400 flex-1 truncate font-mono">{baseUrl}</code>
-                  <button onClick={() => copyToClipboard(baseUrl, 'base')} className="p-2 bg-white/5 hover:bg-green-500/20 rounded-lg text-gray-400 hover:text-green-400 transition-all">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest block">Permanent Master Link</label>
+                <div className="flex gap-2 p-3 bg-muted rounded-2xl border border-border items-center group">
+                  <code className="text-[10px] text-muted-foreground flex-1 truncate font-mono">{baseUrl}</code>
+                  <button onClick={() => copyToClipboard(baseUrl, 'base')} className="p-2 bg-muted hover:bg-green-600/20 rounded-lg text-muted-foreground hover:text-green-700 transition-all">
                     {copiedLink === 'base' ? <Check size={14} /> : <Copy size={14} />}
                   </button>
                 </div>
               </div>
               
-              <div className="p-4 bg-white/5 rounded-2xl border border-white/5 flex items-start gap-3">
-                <div className="mt-0.5 text-green-400/50"><Globe size={16} /></div>
-                <p className="text-[11px] text-gray-500 leading-relaxed font-medium">
+              <div className="p-4 bg-muted rounded-2xl border border-border flex items-start gap-3">
+                <div className="mt-0.5 text-green-700/50"><Globe size={16} /></div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed font-medium">
                   Share this link with your guides. No login required.
-                  <span className="text-gray-400 font-bold ml-1">Regenerate current token to revoke access.</span>
+                  <span className="text-muted-foreground font-bold ml-1">Regenerate current token to revoke access.</span>
                 </p>
               </div>
             </div>
@@ -603,23 +603,23 @@ export default function SettingsPage() {
               </div>
               <div>
                 <h2 className="text-lg font-extrabold uppercase tracking-tight">Company Details</h2>
-                <p className="text-[10px] text-gray-500 uppercase tracking-widest font-black">Identity & Branding</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-black">Identity & Branding</p>
               </div>
             </div>
             
             <div className="space-y-4">
-              <div className="flex items-center gap-4 p-4 bg-white/10 rounded-2xl border border-white/10 border-dashed">
+              <div className="flex items-center gap-4 p-4 bg-muted rounded-2xl border border-border border-dashed">
                 <div className="w-12 h-12 rounded-full bg-gold/20 flex items-center justify-center text-xl font-black text-gold border border-gold/20">
                   {companyName?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase()}
                 </div>
                 <div>
                   <div className="font-bold text-sm tracking-tight">{user?.email}</div>
-                  <div className="text-[10px] text-gray-500 uppercase font-mono mt-0.5 opacity-50">{user?.id}</div>
+                  <div className="text-[10px] text-muted-foreground uppercase font-mono mt-0.5 opacity-50">{user?.id}</div>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Company Display Name</label>
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Company Display Name</label>
                 <div className="flex gap-2">
                   <input className="aurelia-input flex-1" value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="AURELIA Operations" />
                   <button onClick={handleSaveCompany} className="aurelia-gold-btn px-4 flex items-center gap-2"><Save size={16} /> {companySaved ? 'Saved' : 'Save'}</button>
@@ -631,28 +631,28 @@ export default function SettingsPage() {
           {/* OPERATIONAL DEFAULTS */}
           <div className="aurelia-card p-8 border-t-[4px] border-t-fuchsia-500 space-y-6">
              <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-fuchsia-500/10 flex items-center justify-center text-fuchsia-400">
+              <div className="w-10 h-10 rounded-xl bg-fuchsia-600/10 flex items-center justify-center text-fuchsia-700">
                 <Palette size={20} />
               </div>
               <div>
                 <h2 className="text-lg font-extrabold uppercase tracking-tight">Operational Defaults</h2>
-                <p className="text-[10px] text-gray-500 uppercase tracking-widest font-black">Global Calculations</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-black">Global Calculations</p>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
                <div className="space-y-2">
-                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Safety Margin %</label>
+                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Safety Margin %</label>
                  <input type="number" className="aurelia-input" value={margin} onChange={e => setMargin(e.target.value)} />
                </div>
                <div className="space-y-2">
-                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Global Tax %</label>
+                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Global Tax %</label>
                  <input type="number" className="aurelia-input" value={taxRate} onChange={e => setTaxRate(e.target.value)} />
                </div>
             </div>
             
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Base Currency</label>
+              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Base Currency</label>
               <select value={currency} onChange={e => setCurrency(e.target.value)} className="aurelia-input w-full appearance-none">
                 <option value="EUR">EUR (€) Euro</option>
                 <option value="USD">USD ($) US Dollar</option>
@@ -668,23 +668,23 @@ export default function SettingsPage() {
           {/* DANGER ZONE */}
           <div className="aurelia-card p-8 border-t-[4px] border-t-red-600 space-y-6 bg-red-600/[0.02]">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-600/10 flex items-center justify-center text-red-500">
+              <div className="w-10 h-10 rounded-xl bg-red-600/10 flex items-center justify-center text-red-700">
                 <ShieldAlert size={20} />
               </div>
               <div>
-                <h2 className="text-lg font-extrabold uppercase tracking-tight text-red-100">Danger Zone</h2>
-                <p className="text-[10px] text-red-500/60 uppercase tracking-widest font-black italic">Irreversible Actions</p>
+                <h2 className="text-lg font-extrabold uppercase tracking-tight text-red-800">Danger Zone</h2>
+                <p className="text-[10px] text-red-700/60 uppercase tracking-widest font-black italic">Irreversible Actions</p>
               </div>
             </div>
-            
-            <div className="p-4 border border-red-500/20 bg-red-500/5 rounded-2xl">
-               <p className="text-[11px] text-red-200/60 leading-relaxed font-medium">
-                  Deleting operational data will remove all bookings, products, and cost history. 
+
+            <div className="p-4 border border-red-600/20 bg-red-600/5 rounded-2xl">
+               <p className="text-[11px] text-red-700/60 leading-relaxed font-medium">
+                  Deleting operational data will remove all bookings, products, and cost history.
                   This cannot be undone.
                </p>
             </div>
 
-            <button onClick={handleResetData} disabled={isResetting} className="w-full h-12 border border-red-500/30 hover:bg-red-500/10 text-red-500 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-2">
+            <button onClick={handleResetData} disabled={isResetting} className="w-full h-12 border border-red-600/30 hover:bg-red-600/10 text-red-700 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-2">
                <Trash2 size={16} /> {isResetting ? 'Purging Platform...' : 'Reset All Operational Data'}
             </button>
           </div>
@@ -696,15 +696,15 @@ export default function SettingsPage() {
       {/* REGENERATE TOKEN CONFIRMATION */}
       {showRegenConfirm && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl">
-          <div className="bg-[#0f0f12] border border-red-500/20 rounded-[32px] w-full max-w-sm p-8 space-y-6 text-center shadow-2xl">
-            <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 mx-auto"><AlertTriangle size={32} /></div>
+          <div className="bg-card border border-red-600/20 rounded-[32px] w-full max-w-sm p-8 space-y-6 text-center shadow-2xl">
+            <div className="w-16 h-16 rounded-full bg-red-600/10 flex items-center justify-center text-red-700 mx-auto"><AlertTriangle size={32} /></div>
             <div>
-              <h2 className="text-xl font-extrabold text-white tracking-tight">Regenerate Token?</h2>
-              <p className="text-sm text-gray-500 mt-2 leading-relaxed">This will <span className="text-red-500 font-bold italic">immediately invalidate</span> all existing check-in links shared with your guides.</p>
+              <h2 className="text-xl font-extrabold text-foreground tracking-tight">Regenerate Token?</h2>
+              <p className="text-sm text-muted-foreground mt-2 leading-relaxed">This will <span className="text-red-700 font-bold italic">immediately invalidate</span> all existing check-in links shared with your guides.</p>
             </div>
             <div className="flex flex-col gap-3">
-              <button onClick={handleRegenerateToken} disabled={isRegenerating} className="w-full py-4 bg-red-500 hover:bg-red-400 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-red-500/20">{isRegenerating ? 'Working...' : 'Yes, Regenerate'}</button>
-              <button onClick={() => setShowRegenConfirm(false)} className="w-full py-4 bg-white/5 text-gray-500 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all">Go Back</button>
+              <button onClick={handleRegenerateToken} disabled={isRegenerating} className="w-full py-4 bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-red-600/20">{isRegenerating ? 'Working...' : 'Yes, Regenerate'}</button>
+              <button onClick={() => setShowRegenConfirm(false)} className="w-full py-4 bg-muted text-muted-foreground rounded-2xl font-bold text-xs uppercase tracking-widest transition-all">Go Back</button>
             </div>
           </div>
         </div>
@@ -713,30 +713,30 @@ export default function SettingsPage() {
       {/* IMPORT MODAL */}
       {showImportModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl">
-          <div className="bg-[#0f0f12] border border-white/10 rounded-[32px] w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-8 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+          <div className="bg-card border border-border rounded-[32px] w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-border flex items-center justify-between bg-muted">
               <div>
                 <h2 className="text-2xl font-black tracking-tight">Import Products</h2>
-                <p className="text-xs text-gray-500 uppercase tracking-widest mt-1 font-bold">Select items to sync to AURELIA</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1 font-bold">Select items to sync to AURELIA</p>
               </div>
-              <button onClick={() => setShowImportModal(false)} className="p-2 hover:bg-red-500/10 rounded-xl text-gray-500 hover:text-red-500 transition-colors"><X size={24} /></button>
+              <button onClick={() => setShowImportModal(false)} className="p-2 hover:bg-red-600/10 rounded-xl text-muted-foreground hover:text-red-700 transition-colors"><X size={24} /></button>
             </div>
             <div className="flex-1 overflow-y-auto p-8 space-y-3">
               {bokunProducts.map(p => (
-                <div key={p.bokun_product_id} onClick={() => setSelectedProductIds(prev => prev.includes(p.bokun_product_id) ? prev.filter(id => id !== p.bokun_product_id) : [...prev, p.bokun_product_id])} className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between group ${selectedProductIds.includes(p.bokun_product_id) ? 'bg-orange-500/10 border-orange-500/40' : 'bg-white/[0.02] border-white/5 hover:border-white/10'}`}>
+                <div key={p.bokun_product_id} onClick={() => setSelectedProductIds(prev => prev.includes(p.bokun_product_id) ? prev.filter(id => id !== p.bokun_product_id) : [...prev, p.bokun_product_id])} className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between group ${selectedProductIds.includes(p.bokun_product_id) ? 'bg-orange-600/10 border-orange-600/40' : 'bg-muted border-border hover:border-muted-foreground/30'}`}>
                   <div className="flex items-center gap-4">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs transition-all ${selectedProductIds.includes(p.bokun_product_id) ? 'bg-orange-500 text-white' : 'bg-white/5 text-gray-600 group-hover:bg-white/10'}`}>{selectedProductIds.includes(p.bokun_product_id) ? '✓' : ''}</div>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-xs transition-all ${selectedProductIds.includes(p.bokun_product_id) ? 'bg-orange-700 text-white' : 'bg-muted text-muted-foreground group-hover:bg-muted/70'}`}>{selectedProductIds.includes(p.bokun_product_id) ? '✓' : ''}</div>
                     <div>
                       <div className="font-bold text-sm tracking-tight">{p.name}</div>
-                      <div className="text-[10px] font-mono text-gray-500 mt-0.5 opacity-60">{p.code}</div>
+                      <div className="text-[10px] font-mono text-muted-foreground mt-0.5 opacity-60">{p.code}</div>
                     </div>
                   </div>
                 </div>
               ))}
             </div>
-            <div className="p-8 border-t border-white/5 bg-white/[0.02] flex gap-4">
-              <button onClick={() => setShowImportModal(false)} className="flex-1 py-4 rounded-2xl font-bold border border-white/10 hover:bg-white/5 transition-colors">Cancel</button>
-              <button onClick={handleImportSelected} disabled={importing || selectedProductIds.length === 0} className="flex-[2] py-4 bg-orange-500 hover:bg-orange-400 text-white rounded-2xl font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-xl shadow-orange-500/20">{importing ? 'Syncing...' : `Import ${selectedProductIds.length} Selections`}</button>
+            <div className="p-8 border-t border-border bg-muted flex gap-4">
+              <button onClick={() => setShowImportModal(false)} className="flex-1 py-4 rounded-2xl font-bold border border-border hover:bg-muted/70 transition-colors">Cancel</button>
+              <button onClick={handleImportSelected} disabled={importing || selectedProductIds.length === 0} className="flex-[2] py-4 bg-orange-700 hover:bg-orange-800 text-white rounded-2xl font-black text-sm uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-xl shadow-orange-700/20">{importing ? 'Syncing...' : `Import ${selectedProductIds.length} Selections`}</button>
             </div>
           </div>
         </div>

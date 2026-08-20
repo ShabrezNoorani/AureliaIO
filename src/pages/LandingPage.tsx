@@ -1,348 +1,431 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, ChevronDown } from 'lucide-react';
+import {
+  ArrowRight, BookOpen, RefreshCw, Camera, Users, BarChart3, UserCircle2,
+  CheckCircle2, TrendingUp, ArrowLeftRight,
+} from 'lucide-react';
 import Logo from '@/components/Logo';
+
+// Fixed, self-contained palette — deliberately NOT the shared --theme-* tokens. Those follow the
+// authenticated app's light/dark toggle (persisted in localStorage), so a signed-out visitor who
+// previously used the app in dark mode could otherwise land on a dark marketing page. This page's
+// look must never depend on that.
+const INK = '#1C1917';
+const INK_SOFT = '#44403C';
+const INK_MUTED = '#78716C';
+const PAPER = '#F7F6F3';
+const HAIRLINE = '#E5E1D8';
+const GOLD = '#B45309';
+const GOLD_SOFT = '#92400E';
+
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setReduced(mq.matches);
+    const onChange = () => setReduced(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return reduced;
+}
+
+/** Fades + slides a section in the moment it enters the viewport. The only scroll animation in
+    the app — scoped to this file on purpose, since the authenticated app stays calm and static. */
+function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const reducedMotion = usePrefersReducedMotion();
+
+  useEffect(() => {
+    if (reducedMotion) { setVisible(true); return; }
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.unobserve(el);
+        }
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -60px 0px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [reducedMotion]);
+
+  return (
+    <div
+      ref={ref}
+      style={{ transitionDelay: visible ? `${delay}ms` : '0ms' }}
+      className={`transition-all duration-700 ease-out ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'} ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+interface FeatureSectionProps {
+  index: string;
+  title: string;
+  copy: string;
+  reverse?: boolean;
+  visual: ReactNode;
+}
+
+function FeatureSection({ index, title, copy, reverse, visual }: FeatureSectionProps) {
+  return (
+    <Reveal>
+      <div className={`grid md:grid-cols-2 gap-10 md:gap-16 items-center ${reverse ? 'md:[&>*:first-child]:order-2' : ''}`}>
+        <div className={reverse ? 'md:text-right md:items-end md:flex md:flex-col' : ''}>
+          <span className="text-xs font-bold tracking-[0.25em] uppercase" style={{ color: GOLD }}>{index}</span>
+          <h3 className="font-serif text-3xl md:text-[2.25rem] font-semibold tracking-tight mt-3 mb-4" style={{ color: INK }}>
+            {title}
+          </h3>
+          <p className="text-base md:text-lg leading-relaxed max-w-md" style={{ color: INK_SOFT }}>
+            {copy}
+          </p>
+        </div>
+        <div>{visual}</div>
+      </div>
+    </Reveal>
+  );
+}
+
+/** Small "mac window" chrome dots — used sparingly to frame the abstract product mockups below. */
+function WindowChrome() {
+  return (
+    <div className="flex items-center gap-1.5 mb-4">
+      <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#F5C6A5' }} />
+      <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#E8DFC8' }} />
+      <span className="w-2.5 h-2.5 rounded-full" style={{ background: '#D8E8D0' }} />
+    </div>
+  );
+}
+
+function MockCard({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return (
+    <div
+      className={`rounded-3xl bg-white p-6 md:p-7 ${className}`}
+      style={{ border: `1px solid ${HAIRLINE}`, boxShadow: '0 20px 60px -20px rgba(28,25,23,0.18), 0 4px 16px -4px rgba(28,25,23,0.06)' }}
+    >
+      {children}
+    </div>
+  );
+}
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white font-sans">
+    <div className="min-h-screen font-sans overflow-x-hidden" style={{ background: PAPER, color: INK }}>
       {/* ─── NAVBAR ─── */}
-      <nav className="fixed top-0 w-full z-50 backdrop-blur-md bg-[#0a0a0f]/80 border-b border-white/5 transition-all">
+      <nav className="fixed top-0 w-full z-50 backdrop-blur-md border-b" style={{ background: `${PAPER}CC`, borderColor: HAIRLINE }}>
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <Link to="/">
-            <Logo size="md" />
+            <Logo size="md" showSubtitle={false} wordmarkClassName="text-[#B45309]" />
           </Link>
-          <div className="flex items-center gap-2 sm:gap-3">
-            <Link
-              to="/login"
-              className="aurelia-ghost-btn text-sm px-4 py-2 sm:px-5 sm:py-2.5 border border-white/10 hover:border-white/20"
-            >
-              Log in
-            </Link>
-            <Link
-              to="/signup"
-              className="aurelia-gold-btn text-sm px-4 py-2 sm:px-5 sm:py-2.5 inline-flex items-center gap-2"
-            >
-              Start Free Trial
-            </Link>
-          </div>
+          <Link
+            to="/login"
+            className="text-sm font-bold px-5 py-2.5 rounded-xl text-white transition-colors shadow-sm"
+            style={{ background: GOLD }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = GOLD_SOFT)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = GOLD)}
+          >
+            Log in
+          </Link>
         </div>
       </nav>
 
-      {/* ─── SECTION 1: HERO ─── */}
-      <section className="pt-40 pb-20 px-6 text-center relative overflow-hidden">
-        {/* Subtle radial glow */}
-        <div className="absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[600px] bg-[#f5a623]/5 rounded-full blur-[120px] pointer-events-none" />
+      {/* ─── HERO ─── */}
+      <section className="relative pt-40 pb-24 md:pt-48 md:pb-32 px-6 overflow-hidden">
+        {/* Gentle drifting glow — the only continuous animation in the app, and only ever here. */}
+        <div
+          aria-hidden
+          className="absolute -top-24 -left-24 w-[420px] h-[420px] rounded-full blur-[110px] pointer-events-none motion-reduce:animate-none animate-blob-drift-a"
+          style={{ background: `${GOLD}26` }}
+        />
+        <div
+          aria-hidden
+          className="absolute top-24 -right-24 w-[380px] h-[380px] rounded-full blur-[110px] pointer-events-none motion-reduce:animate-none animate-blob-drift-b"
+          style={{ background: '#D6C9A833' }}
+        />
 
-        <div className="relative z-10 max-w-4xl mx-auto flex flex-col items-center">
-          <div className="mb-8 inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[#f5a623]/30 bg-[#f5a623]/10 text-xs font-bold text-[#f5a623] tracking-widest uppercase shadow-[0_0_15px_rgba(245,166,35,0.1)]">
-            ✦ Now live · Used by tour operators in Paris
+        <div className="relative z-10 max-w-6xl mx-auto grid md:grid-cols-[1.05fr_0.95fr] gap-16 items-center">
+          <div>
+            <div
+              className="mb-7 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold tracking-widest uppercase"
+              style={{ border: `1px solid ${GOLD}40`, background: `${GOLD}14`, color: GOLD_SOFT }}
+            >
+              Operations &amp; pricing, in one place
+            </div>
+
+            <h1 className="font-serif text-[2.75rem] leading-[1.08] md:text-6xl md:leading-[1.06] font-semibold tracking-tight mb-6" style={{ color: INK }}>
+              The calm way to run<br />
+              a tour company<span style={{ color: GOLD }}>.</span>
+            </h1>
+
+            <p className="text-lg leading-relaxed max-w-lg mb-10" style={{ color: INK_SOFT }}>
+              AURELIA is the operations and pricing platform built for tour operators — bookings, guides
+              and real profit, all in one calm, live view.
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <Link
+                to="/login"
+                className="text-base font-bold px-7 py-3.5 rounded-xl text-white inline-flex items-center gap-2 shadow-lg transition-transform hover:-translate-y-0.5"
+                style={{ background: GOLD, boxShadow: `0 12px 30px -8px ${GOLD}55` }}
+              >
+                Log in <ArrowRight size={18} />
+              </Link>
+              <Link
+                to="/login"
+                className="text-base font-semibold px-7 py-3.5 rounded-xl inline-flex items-center gap-2 transition-colors"
+                style={{ border: `1px solid ${HAIRLINE}`, color: INK_SOFT }}
+              >
+                For guides — use your invite link
+              </Link>
+            </div>
           </div>
-          
-          {/* Headline */}
-          <h1 className="text-5xl md:text-[68px] leading-[1.05] font-extrabold tracking-tight mb-6">
-            The Operating System<br />
-            for Tour Companies<br />
-            <span className="text-[#f5a623] italic text-[1.1em] font-black inline-block mt-2">Instantly.</span>
-          </h1>
 
-          {/* Subheadline */}
-          <p className="text-gray-400 text-lg max-w-[600px] mx-auto leading-relaxed mb-10">
-            AURELIA connects your OTAs, bookings and costs into one intelligent platform — so you always know your real profit, in real time.
+          {/* Hero visual — an abstract glimpse of the ledger, tilted for depth */}
+          <div className="relative hidden md:block">
+            <div className="rotate-2 hover:rotate-1 transition-transform duration-500">
+              <MockCard>
+                <WindowChrome />
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Today's Ledger</span>
+                  <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: '#15803d' }}>
+                    <TrendingUp size={13} /> +18%
+                  </span>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {[
+                    { name: 'Viator · City Tour', pax: '4 pax', amt: '€212' },
+                    { name: 'GetYourGuide · Sunset', pax: '2 pax', amt: '€96' },
+                    { name: 'Direct · Food Walk', pax: '6 pax', amt: '€284' },
+                  ].map((row) => (
+                    <div key={row.name} className="flex items-center justify-between py-2.5 border-b" style={{ borderColor: HAIRLINE }}>
+                      <div>
+                        <p className="text-sm font-bold" style={{ color: INK }}>{row.name}</p>
+                        <p className="text-xs" style={{ color: INK_MUTED }}>{row.pax}</p>
+                      </div>
+                      <span className="text-sm font-bold tabular-nums" style={{ color: INK_SOFT }}>{row.amt}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-5 rounded-2xl px-4 py-3.5 flex items-center justify-between" style={{ background: `${GOLD}12` }}>
+                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: GOLD_SOFT }}>Net Profit Today</span>
+                  <span className="text-2xl font-black tabular-nums" style={{ color: GOLD_SOFT }}>€1,284</span>
+                </div>
+              </MockCard>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── FEATURE SECTIONS ─── */}
+      <div className="max-w-6xl mx-auto px-6 py-4 md:py-8 space-y-28 md:space-y-40">
+
+        <FeatureSection
+          index="01 — LEDGER"
+          title="Know your real profit, not just revenue."
+          copy="Every booking tracked automatically. Commission, ticket costs, guide fees and overhead are all netted out — so the number on screen is the number that actually matters."
+          visual={
+            <MockCard>
+              <div className="flex items-center gap-2 mb-5">
+                <BookOpen size={16} style={{ color: GOLD }} />
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Financial Ledger</span>
+              </div>
+              <div className="space-y-2.5">
+                {[
+                  { label: 'Revenue', val: '€6,140', tone: INK },
+                  { label: 'Commission & costs', val: '−€2,310', tone: INK_MUTED },
+                  { label: 'Guide fees', val: '−€890', tone: INK_MUTED },
+                ].map((r) => (
+                  <div key={r.label} className="flex items-center justify-between text-sm">
+                    <span style={{ color: INK_SOFT }}>{r.label}</span>
+                    <span className="font-bold tabular-nums" style={{ color: r.tone }}>{r.val}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5 pt-4 flex items-center justify-between" style={{ borderTop: `1px solid ${HAIRLINE}` }}>
+                <span className="text-sm font-bold" style={{ color: INK }}>True Net Profit</span>
+                <span className="text-xl font-black tabular-nums" style={{ color: '#15803d' }}>€2,940</span>
+              </div>
+            </MockCard>
+          }
+        />
+
+        <FeatureSection
+          index="02 — SYNC"
+          title="Keep your spreadsheet. We'll do the rest."
+          reverse
+          copy="Point AURELIA at your existing Google Sheet and bookings flow in automatically — no re-entry, no exports, always up to date."
+          visual={
+            <MockCard>
+              <div className="flex items-center justify-center gap-6 py-6">
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: '#E8F3E8' }}>
+                    <span className="text-2xl">📄</span>
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Sheets</span>
+                </div>
+                <ArrowLeftRight size={22} className="motion-reduce:animate-none animate-pulse" style={{ color: GOLD }} />
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: `${GOLD}14` }}>
+                    <RefreshCw size={22} style={{ color: GOLD }} />
+                  </div>
+                  <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Aurelia</span>
+                </div>
+              </div>
+              <p className="text-center text-sm font-semibold mt-2" style={{ color: INK_SOFT }}>Synced 4 minutes ago · 214 bookings</p>
+            </MockCard>
+          }
+        />
+
+        <FeatureSection
+          index="03 — CHECK-IN"
+          title="Check guests in from a phone, in seconds."
+          copy="Guides tap through arrivals on the day of the tour, snap a ticket photo when needed, and every check-in lands straight in your ledger — live."
+          visual={
+            <MockCard className="max-w-xs mx-auto md:mx-0">
+              <WindowChrome />
+              {[
+                { name: 'Marta Lindqvist', pax: '2A 1C', done: true },
+                { name: 'Diego Fernández', pax: '4A', done: true },
+                { name: 'Yuki Tanaka', pax: '2A', done: false },
+              ].map((g) => (
+                <div key={g.name} className="flex items-center gap-3 py-2.5 border-b last:border-0" style={{ borderColor: HAIRLINE }}>
+                  <CheckCircle2 size={16} style={{ color: g.done ? '#15803d' : HAIRLINE }} />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-bold truncate ${g.done ? 'line-through' : ''}`} style={{ color: g.done ? INK_MUTED : INK }}>{g.name}</p>
+                    <p className="text-xs" style={{ color: INK_MUTED }}>{g.pax}</p>
+                  </div>
+                  {!g.done && <Camera size={15} style={{ color: GOLD }} />}
+                </div>
+              ))}
+            </MockCard>
+          }
+        />
+
+        <FeatureSection
+          index="04 — DISPATCH"
+          title="Build the day, then let it balance itself."
+          reverse
+          copy="Turn today's bookings into tour sessions, assign guides, and auto-balance guests across them as check-ins come in — nobody overloaded, nobody idle."
+          visual={
+            <MockCard>
+              <div className="flex items-center gap-2 mb-5">
+                <Users size={16} style={{ color: GOLD }} />
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Guide Balancing</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2.5">
+                {[
+                  { guide: 'Elena', pax: 8 },
+                  { guide: 'Marco', pax: 7 },
+                  { guide: 'Aoife', pax: 8 },
+                ].map((c) => (
+                  <div key={c.guide} className="rounded-xl p-3 text-center" style={{ background: PAPER, border: `1px solid ${HAIRLINE}` }}>
+                    <p className="text-xs font-bold" style={{ color: INK }}>{c.guide}</p>
+                    <p className="text-lg font-black mt-1" style={{ color: GOLD_SOFT }}>{c.pax}</p>
+                    <p className="text-[9px] uppercase tracking-widest" style={{ color: INK_MUTED }}>pax</p>
+                  </div>
+                ))}
+              </div>
+            </MockCard>
+          }
+        />
+
+        <FeatureSection
+          index="05 — ANALYTICS"
+          title="See tomorrow's numbers as clearly as today's."
+          copy="Board-ready analytics, broken down day by day, by channel, by product — spot trends and cancellations before they become a problem."
+          visual={
+            <MockCard>
+              <div className="flex items-center gap-2 mb-6">
+                <BarChart3 size={16} style={{ color: GOLD }} />
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Day-by-Day P&amp;L</span>
+              </div>
+              <div className="flex items-end gap-2.5 h-28">
+                {[38, 52, 44, 61, 49, 72, 58].map((h, i) => (
+                  <div key={i} className="flex-1 rounded-t-md" style={{ height: `${h}%`, background: i === 5 ? GOLD : `${GOLD}30` }} />
+                ))}
+              </div>
+              <div className="flex justify-between mt-2 text-[10px] font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>
+                <span>Mon</span><span>Sun</span>
+              </div>
+            </MockCard>
+          }
+        />
+
+        <FeatureSection
+          index="06 — TEAM"
+          title="Every guide, their own view."
+          reverse
+          copy="Each guide sees only their tours, their guests, their pay — while you keep a complete, company-wide picture across the whole team."
+          visual={
+            <MockCard>
+              <div className="flex items-center gap-2 mb-5">
+                <UserCircle2 size={16} style={{ color: GOLD }} />
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Your Team</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {['EL', 'MC', 'AF', 'YT', 'DR', '+8'].map((initials) => (
+                  <div
+                    key={initials}
+                    className="w-11 h-11 rounded-full flex items-center justify-center text-xs font-black"
+                    style={{ background: initials === '+8' ? PAPER : `${GOLD}18`, color: initials === '+8' ? INK_MUTED : GOLD_SOFT, border: `1px solid ${HAIRLINE}` }}
+                  >
+                    {initials}
+                  </div>
+                ))}
+              </div>
+              <p className="text-sm mt-5" style={{ color: INK_SOFT }}>13 guides active this month, each with a private dashboard.</p>
+            </MockCard>
+          }
+        />
+
+      </div>
+
+      {/* ─── CLOSING CTA ─── */}
+      <Reveal className="px-6 py-28 md:py-36">
+        <div className="max-w-3xl mx-auto text-center">
+          <h2 className="font-serif text-3xl md:text-5xl font-semibold tracking-tight mb-5" style={{ color: INK }}>
+            Run your tours with clarity.
+          </h2>
+          <p className="text-lg mb-10" style={{ color: INK_SOFT }}>
+            Log in to see where your business really stands, today.
           </p>
-
-          {/* CTA */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
-              to="/signup"
-              className="aurelia-gold-btn text-lg px-8 py-4 rounded-xl inline-flex items-center justify-center gap-2 font-black shadow-lg shadow-[#f5a623]/20"
+              to="/login"
+              className="text-base font-bold px-8 py-4 rounded-xl text-white inline-flex items-center gap-2 shadow-lg transition-transform hover:-translate-y-0.5"
+              style={{ background: GOLD, boxShadow: `0 12px 30px -8px ${GOLD}55` }}
             >
-              Start Free Trial <ArrowRight size={20} />
+              Log in <ArrowRight size={18} />
             </Link>
-            <a
-              href="#features"
-              className="px-8 py-4 text-base font-semibold text-gray-400 hover:text-white border border-white/10 rounded-xl hover:bg-white/5 hover:border-white/20 transition-all inline-flex items-center justify-center gap-2"
-            >
-              See a live demo <ChevronDown size={18} />
-            </a>
-          </div>
-
-          <p className="text-sm text-gray-500 mt-8">
-            Guide? <Link to="/login" className="text-[#f5a623] hover:underline font-medium">Use the link your coordinator sent you.</Link>
-          </p>
-        </div>
-      </section>
-
-      {/* ─── STATS ROW ─── */}
-      <section className="max-w-4xl mx-auto px-6 pb-24 relative z-10">
-        <div className="flex flex-col md:flex-row items-center justify-center gap-4 md:gap-10 text-gray-500 font-medium text-sm">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-[#f5a623]" />
-            120+ bookings tracked
-          </div>
-          <div className="hidden md:block w-1 h-1 rounded-full bg-gray-800" />
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-[#f5a623]" />
-            €4,200+ profit calculated
-          </div>
-          <div className="hidden md:block w-1 h-1 rounded-full bg-gray-800" />
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-[#f5a623]" />
-            3 OTAs connected
-          </div>
-        </div>
-      </section>
-
-      {/* ─── SECTION 2: FEATURES GRID ─── */}
-      <section id="features" className="max-w-6xl mx-auto px-6 pb-32">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          
-          {/* CARD 1 - LIVE */}
-          <div className="relative rounded-2xl bg-[#0d0d14] border border-[#f5a623] p-8 transition-transform hover:-translate-y-1 shadow-[0_0_20px_rgba(245,166,35,0.05)]">
-            <div className="text-4xl mb-6">💰</div>
-            <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Pricing Simulator</h3>
-            <p className="text-[15px] text-gray-400 leading-relaxed font-medium">
-              Set your prices once per OTA. Simulate any group size — adults, youth, children — and see exact profit across every channel instantly.
-            </p>
-          </div>
-
-          {/* CARD 2 - LIVE */}
-          <div className="relative rounded-2xl bg-[#0d0d14] border border-[#f5a623] p-8 transition-transform hover:-translate-y-1 shadow-[0_0_20px_rgba(245,166,35,0.05)]">
-            <div className="text-4xl mb-6">📒</div>
-            <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Financial Ledger</h3>
-            <p className="text-[15px] text-gray-400 leading-relaxed font-medium">
-              Every booking tracked. Sync automatically from Google Sheets. Revenue, commission, ticket costs, guide fees — all in one view.
-            </p>
-          </div>
-
-          {/* CARD 3 - LIVE */}
-          <div className="relative rounded-2xl bg-[#0d0d14] border border-[#f5a623] p-8 transition-transform hover:-translate-y-1 shadow-[0_0_20px_rgba(245,166,35,0.05)]">
-            <div className="text-4xl mb-6">📊</div>
-            <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Admin Cost Tracking</h3>
-            <p className="text-[15px] text-gray-400 leading-relaxed font-medium">
-              Track salaries, rent, marketing and tools by month. See your true company net profit — not just what your tours make.
-            </p>
-          </div>
-
-          {/* CARD 4 - LIVE */}
-          <div className="relative rounded-2xl bg-[#0d0d14] border border-[#f5a623] p-8 transition-transform hover:-translate-y-1 shadow-[0_0_20px_rgba(245,166,35,0.05)]">
-            <div className="text-4xl mb-6">📈</div>
-            <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Executive Dashboard</h3>
-            <p className="text-[15px] text-gray-400 leading-relaxed font-medium">
-              Board-ready analytics. Revenue trends, channel breakdowns, cancellation intelligence and smart alerts — filtered by travel date or booking date.
-            </p>
-          </div>
-
-          {/* CARD 5 - LIVE */}
-          <div className="relative rounded-2xl bg-[#0d0d14] border border-[#f5a623] p-8 transition-transform hover:-translate-y-1 shadow-[0_0_20px_rgba(245,166,35,0.05)]">
-            <div className="text-4xl mb-6">👥</div>
-            <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Guide Management</h3>
-            <p className="text-[15px] text-gray-400 leading-relaxed font-medium">
-              Import your whole team from a spreadsheet, set per-tour pay rates, and send each guide a one-time link to activate their own secure account.
-            </p>
-          </div>
-
-          {/* CARD 6 - LIVE */}
-          <div className="relative rounded-2xl bg-[#0d0d14] border border-[#f5a623] p-8 transition-transform hover:-translate-y-1 shadow-[0_0_20px_rgba(245,166,35,0.05)]">
-            <div className="text-4xl mb-6">✅</div>
-            <h3 className="text-xl font-bold text-white mb-3 tracking-tight">Same-Day Check-in</h3>
-            <p className="text-[15px] text-gray-400 leading-relaxed font-medium">
-              Guides check in guests from their phone on the day of the tour — mark arrivals, count pax, note no-shows, synced straight to the ledger.
-            </p>
-          </div>
-
-          {/* CARD 7 - COMING SOON */}
-          <div className="relative rounded-2xl bg-[#0a0a0f] border border-white/10 p-8 opacity-70 hover:opacity-100 transition-all duration-300">
-            <div className="absolute top-6 right-6 bg-white/5 text-gray-400 px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider border border-white/10">Coming Soon</div>
-            <div className="text-4xl mb-6 grayscale">🗺️</div>
-            <h3 className="text-xl font-bold text-gray-300 mb-3 tracking-tight">Marketplace Coverage</h3>
-            <p className="text-[15px] text-gray-500 leading-relaxed font-medium">
-              See which products are live on which OTAs. Find gaps. Never miss a revenue opportunity.
-            </p>
-          </div>
-
-        </div>
-      </section>
-
-      {/* ─── SECTION 3: HOW IT WORKS ─── */}
-      <section className="bg-[#13131a] border-y border-white/5 py-32 px-6 relative overflow-hidden">
-        {/* Decorative Grid */}
-        <div className="absolute inset-0 z-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+PHBhdGggZD0iTTAgMGg0MHY0MEgweiIgZmlsbD0ibm9uZSIvPjxwYXRoIGQ9Ik0wIDAuNWg0ME0wLjUgMHY0MCIgc3Ryb2tlPSJyZ2JhKDI1NSwyNTUsMjU1LDAuMDMpIiBzdHJva2Utd2lkdGg9IjEiLz48L3N2Zz4=')] [mask-image:linear-gradient(to_bottom,transparent,black,transparent)] pointer-events-none" />
-
-        <div className="max-w-5xl mx-auto relative z-10">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-12 text-center">
-            {[
-              { 
-                step: '1', 
-                title: 'Connect your data', 
-                desc: 'Link your Google Sheet or upload a CSV. Your bookings import in seconds.' 
-              },
-              { 
-                step: '2', 
-                title: 'Set up your products', 
-                desc: 'Add your tours, options and pricing per OTA channel. Takes 10 minutes.' 
-              },
-              { 
-                step: '3', 
-                title: 'Know your numbers', 
-                desc: 'Open AURELIA every morning to see exactly where your business stands.' 
-              },
-            ].map((item, i) => (
-              <div key={i} className="flex flex-col items-center group">
-                <div className="w-16 h-16 rounded-2xl bg-[#0a0a0f] text-[#f5a623] text-xl font-black flex items-center justify-center mb-6 shadow-[0_0_20px_rgba(245,166,35,0.15)] border border-[#f5a623]/30 group-hover:scale-110 group-hover:bg-[#f5a623]/10 transition-all duration-300">
-                  {item.step}
-                </div>
-                <h3 className="text-xl font-bold mb-3">{item.title}</h3>
-                <p className="text-gray-400 font-medium leading-relaxed max-w-[280px]">
-                  {item.desc}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ─── SECTION 4: ROADMAP TIMELINE ─── */}
-      <section className="bg-[#0a0a0f] py-32 px-6">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl font-extrabold mb-4">What's Coming to AURELIA</h2>
-            <p className="text-gray-500 font-medium">Our commitment to building the ultimate tour operating system.</p>
-          </div>
-          
-          <div className="relative pl-6 md:pl-0 border-l-2 md:border-l-0 border-white/10 md:grid md:grid-cols-[1fr_2px_1fr] md:gap-x-12">
-            {/* Center line for desktop */}
-            <div className="hidden md:block absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-[2px] bg-white/10" />
-
-            {[
-              { time: 'Q1 2025', title: 'Pricing Simulator', desc: 'Multi-OTA pricing with age-based group simulation', status: 'done' },
-              { time: 'Q2 2025', title: 'Financial Ledger + Google Sheets Sync', desc: 'Complete booking tracking with automatic import', status: 'done' },
-              { time: 'Q3 2025', title: 'Executive Dashboard + Analytics', desc: 'Board-ready dashboards with travel date and booking date analysis', status: 'done' },
-              { time: 'Q4 2025', title: 'Guide Management + Same-Day Check-in', desc: 'CSV guide import, self-serve account activation, and mobile check-in synced to the ledger', status: 'done' },
-              { time: 'Q1 2026', title: 'Marketplace Coverage Matrix', desc: 'Cross-OTA product visibility tracker', status: 'progress' },
-              { time: 'Q2 2026', title: 'AI Pricing Intelligence', desc: 'Automated pricing recommendations based on your historical data', status: 'upcoming' },
-            ].map((item, i) => (
-              <div key={i} className={`relative mb-12 ${i % 2 === 0 ? 'md:text-right md:pr-12' : 'md:text-left md:col-start-3 md:pl-12'} md:mb-16`}>
-                
-                {/* Dot */}
-                <div className={`absolute top-1 -left-[32px] md:top-1 ${i % 2 === 0 ? 'md:-right-[55px] md:left-auto' : 'md:-left-[55px]'} w-4 h-4 rounded-full border-[3px] border-[#0a0a0f] z-10 ${
-                  item.status === 'done' ? 'bg-[#f5a623]' : 
-                  item.status === 'progress' ? 'bg-[#f5a623] animate-pulse shadow-[0_0_12px_rgba(245,166,35,0.6)]' : 
-                  'bg-gray-700'
-                }`} />
-                
-                <div className={`text-xs font-black tracking-widest uppercase mb-2 ${item.status === 'upcoming' ? 'text-gray-600' : 'text-[#f5a623]'}`}>
-                  {item.time}
-                </div>
-                <h4 className={`text-lg font-bold mb-2 ${item.status === 'upcoming' ? 'text-gray-400' : 'text-white'}`}>
-                  {item.title}
-                </h4>
-                <p className={`text-sm leading-relaxed ${item.status === 'upcoming' ? 'text-gray-600' : 'text-gray-400'}`}>
-                  {item.desc}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ─── SECTION 5: BLOG (Preserved Exactly As Requested) ─── */}
-      <section className="bg-[#13131a] max-w-none px-6 py-28 border-y border-white/5">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-14">
-            <h2 className="text-2xl font-bold mb-4">Tour Operator Insights</h2>
-            <p className="text-gray-500">Strategies to increase your margin and dominate the market.</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-            {[
-              {
-                cat: 'Pricing', read: '5 min read',
-                title: 'How to Calculate Real Profit on Viator (Most Operators Get This Wrong)'
-              },
-              {
-                cat: 'Finance', read: '8 min read',
-                title: 'The True Cost of Running a Tour: A Complete Guide'
-              },
-              {
-                cat: 'OTAs', read: '6 min read',
-                title: 'Viator vs GYG vs Airbnb: Commission Comparison 2025'
-              }
-            ].map((blog, i) => (
-              <div key={i} className="bg-[#0a0a0f] border border-white/5 rounded-xl p-6 hover:border-[#f5a623]/30 transition-colors flex flex-col">
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#f5a623] bg-[#f5a623]/10 px-2 py-1 rounded">{blog.cat}</span>
-                  <span className="text-xs text-gray-500 font-medium">{blog.read}</span>
-                </div>
-                <h3 className="text-lg font-bold text-white mb-6 leading-snug flex-1">
-                  {blog.title}
-                </h3>
-                <Link to="/blog" className="text-[#f5a623] text-sm font-bold flex items-center gap-1 hover:gap-2 transition-all">
-                  Read Article <ArrowRight size={14} />
-                </Link>
-              </div>
-            ))}
-          </div>
-
-          <div className="text-center">
-            <Link to="/blog" className="aurelia-ghost-btn border border-white/10 hover:border-white/30 inline-flex items-center gap-2">
-              View All Articles <ArrowRight size={16} />
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* ─── SECTION 6: FINAL CTA (NEW) ─── */}
-      <section className="py-24 px-6 relative z-10">
-        <div className="max-w-5xl mx-auto bg-[#13131a] rounded-3xl border border-[#f5a623]/40 p-12 md:p-16 flex flex-col md:flex-row items-center justify-between gap-10 shadow-[0_0_50px_rgba(245,166,35,0.05)] overflow-hidden relative">
-          
-          <div className="absolute top-0 right-0 w-64 h-64 bg-[#f5a623]/10 rounded-full blur-[80px] -mr-32 -mt-32 pointer-events-none" />
-
-          <div className="md:w-1/2 relative z-10 text-center md:text-left">
-            <h2 className="text-3xl md:text-4xl font-extrabold mb-4 tracking-tight leading-tight">
-              Ready to know your real profit?
-            </h2>
-            <p className="text-gray-400 text-lg font-medium pr-0 md:pr-10">
-              Join tour operators who stopped guessing and started knowing.
-            </p>
-          </div>
-          
-          <div className="md:w-1/2 flex flex-col items-center md:items-end relative z-10">
             <Link
-              to="/signup"
-              className="aurelia-gold-btn text-lg px-8 py-4 rounded-xl inline-flex items-center justify-center gap-2 font-black shadow-lg shadow-[#f5a623]/25 w-full md:w-auto"
+              to="/login"
+              className="text-base font-semibold px-8 py-4 rounded-xl transition-colors"
+              style={{ border: `1px solid ${HAIRLINE}`, color: INK_SOFT }}
             >
-              Start Free Trial <ArrowRight size={20} />
+              For guides — use your invite link
             </Link>
-            <p className="text-sm font-semibold text-gray-500 mt-4 text-center md:text-right">
-              14 days free · No credit card · Cancel anytime
-            </p>
           </div>
-
         </div>
-      </section>
+      </Reveal>
 
-      {/* ─── SECTION 7: FOOTER ─── */}
-      <footer className="border-t border-white/5 bg-[#0a0a0f] py-12 px-6">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-8">
-          <div className="flex flex-col items-center md:items-start gap-2">
-            <Logo size="sm" showSubtitle={false} />
-            <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mt-1">
-              Pricing Intelligence for Tour Operators
-            </p>
-          </div>
-          
-          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-bold text-gray-400">
-            <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <Link to="/app" className="hover:text-white transition-colors">Dashboard</Link>
-            <Link to="/blog" className="hover:text-white transition-colors">Blog</Link>
-            <Link to="/pricing" className="hover:text-white transition-colors">Pricing</Link>
-            <a href="mailto:hello@aureliaio.com" className="hover:text-white transition-colors">Contact</a>
+      {/* ─── FOOTER ─── */}
+      <footer className="py-12 px-6" style={{ borderTop: `1px solid ${HAIRLINE}` }}>
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
+          <Logo size="sm" showSubtitle={false} wordmarkClassName="text-[#B45309]" />
+
+          <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-semibold" style={{ color: INK_SOFT }}>
+            <Link to="/blog" className="transition-colors hover:opacity-70">Blog</Link>
+            <Link to="/pricing" className="transition-colors hover:opacity-70">Pricing</Link>
+            <a href="mailto:hello@aureliaio.com" className="transition-colors hover:opacity-70">Contact</a>
           </div>
 
-          <div className="flex flex-col items-center md:items-end text-xs text-gray-600 font-bold">
-            <p className="mb-1">© 2025 AURELIA</p>
-            <p>Built for tour operators who mean business.</p>
-          </div>
+          <p className="text-xs font-medium" style={{ color: INK_MUTED }}>© 2026 AURELIA</p>
         </div>
       </footer>
     </div>

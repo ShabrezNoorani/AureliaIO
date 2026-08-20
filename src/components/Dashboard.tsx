@@ -168,7 +168,7 @@ export default function Dashboard({ data, onEditOption, updateBucketCount, updat
       </div>
 
       {/* Global Simulate Bar */}
-      <div className="aurelia-card p-6 mb-8 border-l-[3px] border-l-gold sticky top-0 z-50 bg-[#0a0a0f]/95 backdrop-blur-sm shadow-[0_2px_8px_rgba(0,0,0,0.3)] pt-4 pb-4">
+      <div className="aurelia-card p-6 mb-8 border-l-[3px] border-l-gold sticky top-0 z-50 bg-background/95 backdrop-blur-sm shadow-[0_2px_8px_rgba(0,0,0,0.3)] pt-4 pb-4">
         <div className="flex items-center justify-between mb-5">
           <p className="text-[10px] font-extrabold uppercase tracking-[0.15em] text-gold">
             Simulate Group Composition

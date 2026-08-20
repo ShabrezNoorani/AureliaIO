@@ -408,12 +408,12 @@ export default function GuideCheckin() {
   const sessionsWithBookings = sessions.filter(s => (sessionBookingsMap.get(s.id) || []).length > 0);
 
   return (
-    <div className="min-h-screen bg-[#060608] text-white">
+    <div className="min-h-screen bg-background text-foreground">
       <div className="p-4 space-y-8 animate-fade-in max-w-[480px] mx-auto">
         <div className="pt-2 flex items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-black tracking-tight mb-1">Today's Check-in</h1>
-            <div className="flex items-center gap-2 text-gray-400 text-sm font-medium">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm font-medium">
               <CalendarIcon size={14} className="text-gold" />
               <span>{todayStr}</span>
             </div>
@@ -422,7 +422,7 @@ export default function GuideCheckin() {
             onClick={handleManualRefresh}
             disabled={refreshing}
             title="Refresh"
-            className="p-2.5 bg-white/5 border border-white/10 rounded-xl text-gray-400 hover:text-gold hover:bg-white/10 transition-all disabled:opacity-50 shrink-0"
+            className="p-2.5 bg-muted border border-border rounded-xl text-muted-foreground hover:text-gold hover:bg-muted/70 transition-all disabled:opacity-50 shrink-0"
           >
             <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
@@ -477,7 +477,7 @@ export default function GuideCheckin() {
 
                 {teamGuides.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-purple-400 mb-2 px-1">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-purple-700 mb-2 px-1">
                       Team Allocation
                     </p>
                     <AllocationBoard

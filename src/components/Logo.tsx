@@ -2,9 +2,17 @@ interface LogoProps {
   size?: 'sm' | 'md' | 'lg';
   showSubtitle?: boolean;
   className?: string;
+  /** Use inside the authenticated app shell (light background) — the pre-login pages stay dark
+      and keep the original fixed brand hex, so their appearance is untouched by this retheme. */
+  light?: boolean;
+  /** Explicit wordmark/subtitle color classes, taking precedence over `light`. For surfaces (like
+      the public landing page) that must render a fixed palette independent of the shared theme
+      tokens, which can carry a signed-out visitor's stale dark-mode preference from localStorage. */
+  wordmarkClassName?: string;
+  subtitleClassName?: string;
 }
 
-export default function Logo({ size = 'md', showSubtitle = true, className = '' }: LogoProps) {
+export default function Logo({ size = 'md', showSubtitle = true, className = '', light = false, wordmarkClassName, subtitleClassName }: LogoProps) {
   const sizes = {
     sm: { icon: 24, text: 'text-base', sub: 'text-[7px]', gap: 'gap-2' },
     md: { icon: 30, text: 'text-xl', sub: 'text-[9px]', gap: 'gap-2.5' },
@@ -45,11 +53,11 @@ export default function Logo({ size = 'md', showSubtitle = true, className = '' 
       </svg>
       {/* Text */}
       <div className="flex flex-col justify-center">
-        <h1 className={`${s.text} font-black tracking-wider text-[#f5a623] uppercase leading-none`}>
+        <h1 className={`${s.text} font-black tracking-wider ${wordmarkClassName ?? (light ? 'text-gold' : 'text-[#f5a623]')} uppercase leading-none`}>
           Aurelia
         </h1>
         {showSubtitle && (
-          <p className={`${s.sub} font-bold tracking-[0.25em] text-[#4a4a6a] mt-1 uppercase leading-none`}>
+          <p className={`${s.sub} font-bold tracking-[0.25em] ${subtitleClassName ?? (light ? 'text-muted-foreground' : 'text-[#4a4a6a]')} mt-1 uppercase leading-none`}>
             Pricing Intelligence
           </p>
         )}

@@ -547,10 +547,10 @@ export default function GuidesPage() {
     <div className="animate-fade-in md:p-8">
         <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-8 animate-fade-in">
 
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/5 pb-6">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-6">
             <div>
               <h1 className="text-3xl font-extrabold tracking-tight">Guides</h1>
-              <p className="text-gray-400 text-sm mt-1">Manage your team and payment rates</p>
+              <p className="text-muted-foreground text-sm mt-1">Manage your team and payment rates</p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <input 
@@ -562,7 +562,7 @@ export default function GuidesPage() {
               />
               <button 
                 onClick={() => document.getElementById('csv-file-input')?.click()}
-                className="aurelia-ghost-btn border border-white/10 hover:bg-white/5 px-5 py-2.5 flex items-center gap-2 font-bold rounded-xl text-gray-300 hover:text-white"
+                className="aurelia-ghost-btn border border-border hover:bg-muted px-5 py-2.5 flex items-center gap-2 font-bold rounded-xl text-foreground/80 hover:text-foreground"
               >
                 <Upload size={18} /> Import from CSV
               </button>
@@ -580,16 +580,16 @@ export default function GuidesPage() {
               <div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin" />
             </div>
           ) : guides.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-20 text-center border border-dashed border-white/10 rounded-2xl bg-white/[0.02]">
+            <div className="flex flex-col items-center justify-center p-20 text-center border border-dashed border-border rounded-2xl bg-muted">
               <div className="text-7xl mb-6">👤</div>
               <h3 className="text-2xl font-extrabold mb-2">No guides yet</h3>
-              <p className="text-gray-400 mb-8 max-w-sm">
+              <p className="text-muted-foreground mb-8 max-w-sm">
                 Add your first guide to track tours and earnings
               </p>
               <div className="flex gap-4">
                 <button 
                   onClick={() => document.getElementById('csv-file-input')?.click()}
-                  className="aurelia-ghost-btn border border-white/10 hover:bg-white/5 px-6 py-3 font-bold flex items-center gap-2 rounded-xl"
+                  className="aurelia-ghost-btn border border-border hover:bg-muted px-6 py-3 font-bold flex items-center gap-2 rounded-xl"
                 >
                   <Upload size={18} /> Import CSV
                 </button>
@@ -602,9 +602,9 @@ export default function GuidesPage() {
               </div>
             </div>
           ) : (
-            <div className="aurelia-card border border-white/5 overflow-x-auto">
+            <div className="aurelia-card border border-border overflow-x-auto">
               <table className="w-full text-left text-sm min-w-[900px]">
-                <thead className="bg-white/5 text-xs text-gray-400 uppercase tracking-widest font-bold">
+                <thead className="bg-muted text-xs text-muted-foreground uppercase tracking-widest font-bold">
                   <tr>
                     <th className="px-6 py-4">Guide #</th>
                     <th className="px-6 py-4">Name</th>
@@ -617,14 +617,14 @@ export default function GuidesPage() {
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {guides.map(g => (
-                    <tr key={g.id} className="hover:bg-white/[0.02] transition-colors group">
+                    <tr key={g.id} className="hover:bg-muted transition-colors group">
                       <td className="px-6 py-4 font-mono font-bold text-gold">{g.guide_number}</td>
                       <td className="px-6 py-4">
                         <div className="font-bold flex items-center gap-2">
                           {g.name}
                           {g.licensed && <span className="bg-gold/20 text-gold text-[9px] font-extrabold px-1.5 py-0.5 rounded uppercase tracking-wider">Licensed</span>}
                         </div>
-                        <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+                        <div className="text-[10px] text-muted-foreground font-mono mt-0.5">
                           {g.option_rates && g.option_rates.length > 0 ? (
                             <>
                               {g.option_rates.slice(0, 3).map((r, idx) => (
@@ -641,24 +641,24 @@ export default function GuidesPage() {
                           <span className="flex items-center gap-1 text-[10px] font-bold text-gold">
                             <Star size={10} className="fill-gold" />
                             {(ratingSummaryByGuide.get(g.id)?.count || 0) > 0 ? ratingSummaryByGuide.get(g.id)!.avg.toFixed(1) : '—'}
-                            <span className="text-gray-500 font-normal">({ratingSummaryByGuide.get(g.id)?.count || 0})</span>
+                            <span className="text-muted-foreground font-normal">({ratingSummaryByGuide.get(g.id)?.count || 0})</span>
                           </span>
                           <button
                             onClick={() => setReviewsGuide(g)}
-                            className="text-[10px] font-bold text-gray-400 hover:text-gold underline-offset-2 hover:underline"
+                            className="text-[10px] font-bold text-muted-foreground hover:text-gold underline-offset-2 hover:underline"
                           >
                             Reviews
                           </button>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-gray-400">
+                      <td className="px-6 py-4 text-muted-foreground">
                         <div>{g.whatsapp || g.phone || '—'}</div>
-                        {g.email && <div className="text-xs text-gray-500 font-mono">{g.email}</div>}
+                        {g.email && <div className="text-xs text-muted-foreground font-mono">{g.email}</div>}
                       </td>
                       <td className="px-6 py-4 font-mono">€{g.base_rate}</td>
                       <td className="px-6 py-4">
                         <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                          g.status === 'active' ? 'bg-green-500/10 text-green-500' : 'bg-gray-500/10 text-gray-500'
+                          g.status === 'active' ? 'bg-green-600/10 text-green-700' : 'bg-muted text-muted-foreground'
                         }`}>
                           {g.status}
                         </span>
@@ -666,21 +666,21 @@ export default function GuidesPage() {
                       <td className="px-6 py-4">
                         {g.claimed_at ? (
                           <div>
-                            <span className="text-[10px] font-bold uppercase text-green-500">Account active</span>
-                            <div className="text-[10px] text-gray-500 mt-0.5">{new Date(g.claimed_at).toLocaleDateString()}</div>
+                            <span className="text-[10px] font-bold uppercase text-green-700">Account active</span>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(g.claimed_at).toLocaleDateString()}</div>
                           </div>
                         ) : g.claim_token ? (
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold uppercase text-yellow-500">Link pending</span>
+                            <span className="text-[10px] font-bold uppercase text-yellow-700">Link pending</span>
                             <button
                               onClick={() => handleCopyClaimLink(g.claim_token!)}
-                              className="text-[10px] font-bold px-2 py-1 rounded border border-white/10 text-gray-300 hover:bg-white/5 flex items-center gap-1"
+                              className="text-[10px] font-bold px-2 py-1 rounded border border-border text-foreground/80 hover:bg-muted flex items-center gap-1"
                             >
                               <Copy size={11} /> Copy
                             </button>
                             <button
                               onClick={() => handleGenerateClaimLink(g)}
-                              className="text-[10px] font-bold px-2 py-1 rounded border border-white/10 text-gray-300 hover:bg-white/5 flex items-center gap-1"
+                              className="text-[10px] font-bold px-2 py-1 rounded border border-border text-foreground/80 hover:bg-muted flex items-center gap-1"
                             >
                               <RefreshCw size={11} /> Regenerate
                             </button>
@@ -696,10 +696,10 @@ export default function GuidesPage() {
                       </td>
                       <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => openPanel(g)} className="p-2 hover:bg-white/5 rounded text-gray-400 hover:text-white transition-colors">
+                          <button onClick={() => openPanel(g)} className="p-2 hover:bg-muted rounded text-muted-foreground hover:text-foreground transition-colors">
                             <PenSquare size={16} />
                           </button>
-                          <button onClick={() => handleDelete(g.id)} className="p-2 hover:bg-red-500/10 rounded text-gray-400 hover:text-red-500 transition-colors">
+                          <button onClick={() => handleDelete(g.id)} className="p-2 hover:bg-red-600/10 rounded text-muted-foreground hover:text-red-700 transition-colors">
                             <Trash2 size={16} />
                           </button>
                         </div>
@@ -716,13 +716,13 @@ export default function GuidesPage() {
         {panelOpen && (
           <>
             <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]" onClick={() => setPanelOpen(false)} />
-            <div className="fixed inset-y-0 right-0 w-full md:w-[500px] bg-[#0f0f12] border-l border-white/10 z-[101] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
-              <div className="p-6 border-b border-white/5 flex items-center justify-between bg-[#0a0a0d]">
+            <div className="fixed inset-y-0 right-0 w-full md:w-[500px] bg-card border-l border-border z-[101] shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+              <div className="p-6 border-b border-border flex items-center justify-between bg-muted">
                 <div>
-                  <h2 className="text-xl font-extrabold text-white">{editingGuide ? 'Edit Guide' : 'Add Guide'}</h2>
-                  <p className="text-xs text-gray-500 mt-1">Configure profile, contracts, and banking details</p>
+                  <h2 className="text-xl font-extrabold text-foreground">{editingGuide ? 'Edit Guide' : 'Add Guide'}</h2>
+                  <p className="text-xs text-muted-foreground mt-1">Configure profile, contracts, and banking details</p>
                 </div>
-                <button onClick={() => setPanelOpen(false)} className="text-gray-500 hover:text-white transition-colors">
+                <button onClick={() => setPanelOpen(false)} className="text-muted-foreground hover:text-foreground transition-colors">
                   <X size={24} />
                 </button>
               </div>
@@ -731,11 +731,11 @@ export default function GuidesPage() {
                 
                 {/* SECTION 1: BASIC INFO */}
                 <div className="space-y-4">
-                  <h3 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-white/5 pb-2">Basic Info</h3>
+                  <h3 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-border pb-2">Basic Info</h3>
                   
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Guide Number</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Guide Number</label>
                       <input 
                         type="text" 
                         value={form.guideNumber}
@@ -745,11 +745,11 @@ export default function GuidesPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Status</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Status</label>
                       <select 
                         value={form.status}
                         onChange={e => setForm({...form, status: e.target.value})}
-                        className="aurelia-input appearance-none bg-[#1a1a1f] w-full"
+                        className="aurelia-input appearance-none bg-muted w-full"
                       >
                         <option value="active">Active</option>
                         <option value="inactive">Inactive</option>
@@ -758,7 +758,7 @@ export default function GuidesPage() {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">Full Name (Required)</label>
+                    <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Full Name (Required)</label>
                     <input 
                       type="text" 
                       value={form.name}
@@ -770,7 +770,7 @@ export default function GuidesPage() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Email</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Email</label>
                       <input 
                         type="email" 
                         value={form.email}
@@ -780,7 +780,7 @@ export default function GuidesPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">WhatsApp Number</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">WhatsApp Number</label>
                       <input 
                         type="text" 
                         value={form.whatsapp}
@@ -793,7 +793,7 @@ export default function GuidesPage() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Languages</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Languages</label>
                       <input 
                         type="text" 
                         value={form.languages}
@@ -803,7 +803,7 @@ export default function GuidesPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Base Rate €</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Base Rate €</label>
                       <input 
                         type="number" 
                         value={form.baseRate}
@@ -813,21 +813,21 @@ export default function GuidesPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between bg-white/[0.03] p-3 rounded-xl border border-white/5">
+                  <div className="flex items-center justify-between bg-muted p-3 rounded-xl border border-border">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">Licensed Guide</label>
-                      <span className="text-[10px] text-gray-500 block mt-0.5">Does this guide hold a valid tour guide license?</span>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Licensed Guide</label>
+                      <span className="text-[10px] text-muted-foreground block mt-0.5">Does this guide hold a valid tour guide license?</span>
                     </div>
                     <input 
                       type="checkbox" 
                       checked={form.licensed}
                       onChange={e => setForm({...form, licensed: e.target.checked})}
-                      className="w-4 h-4 rounded text-gold bg-black border-white/10 focus:ring-gold"
+                      className="w-4 h-4 rounded text-gold bg-muted border-border focus:ring-gold"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Tours Qualified</label>
+                    <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Tours Qualified</label>
                     <textarea 
                       rows={2}
                       value={form.toursQualified}
@@ -838,7 +838,7 @@ export default function GuidesPage() {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Notes</label>
+                    <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Notes</label>
                     <textarea 
                       rows={2}
                       value={form.notes}
@@ -850,25 +850,25 @@ export default function GuidesPage() {
                 </div>
 
                 {/* SECTION 2: CONTRACT */}
-                <div className="space-y-4 pt-4 border-t border-white/5">
-                  <h3 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-white/5 pb-2">Contract</h3>
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h3 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-border pb-2">Contract</h3>
                   
-                  <div className="flex items-center justify-between bg-white/[0.03] p-3 rounded-xl border border-white/5">
+                  <div className="flex items-center justify-between bg-muted p-3 rounded-xl border border-border">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">Contract Signed</label>
-                      <span className="text-[10px] text-gray-500 block mt-0.5">Is a signed contractor agreement on file?</span>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Contract Signed</label>
+                      <span className="text-[10px] text-muted-foreground block mt-0.5">Is a signed contractor agreement on file?</span>
                     </div>
                     <input 
                       type="checkbox" 
                       checked={form.contracted}
                       onChange={e => setForm({...form, contracted: e.target.checked})}
-                      className="w-4 h-4 rounded text-gold bg-black border-white/10 focus:ring-gold"
+                      className="w-4 h-4 rounded text-gold bg-muted border-border focus:ring-gold"
                     />
                   </div>
 
                   {form.contracted && (
                     <div className="animate-fade-in">
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Contract Date</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Contract Date</label>
                       <input 
                         type="date" 
                         value={form.contractDate}
@@ -880,11 +880,11 @@ export default function GuidesPage() {
                 </div>
 
                 {/* SECTION 3: BANKING */}
-                <div className="space-y-4 pt-4 border-t border-white/5">
-                  <h3 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-white/5 pb-2">Banking (for invoices)</h3>
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h3 className="text-xs font-bold text-gold uppercase tracking-widest border-b border-border pb-2">Banking (for invoices)</h3>
                   
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Account Holder Name</label>
+                    <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Account Holder Name</label>
                     <input 
                       type="text" 
                       value={form.accountHolder}
@@ -895,7 +895,7 @@ export default function GuidesPage() {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">IBAN</label>
+                    <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">IBAN</label>
                     <input 
                       type="text" 
                       value={form.iban}
@@ -907,7 +907,7 @@ export default function GuidesPage() {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Swift/BIC Code</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Swift/BIC Code</label>
                       <input 
                         type="text" 
                         value={form.swiftCode}
@@ -917,7 +917,7 @@ export default function GuidesPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Bank Name</label>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Bank Name</label>
                       <input 
                         type="text" 
                         value={form.bankName}
@@ -929,7 +929,7 @@ export default function GuidesPage() {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5">Bank Address</label>
+                    <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Bank Address</label>
                     <input 
                       type="text" 
                       value={form.bankAddress}
@@ -941,7 +941,7 @@ export default function GuidesPage() {
                 </div>
 
                 {/* SECTION 4: RATES */}
-                <div className="pt-4 border-t border-white/5">
+                <div className="pt-4 border-t border-border">
                   <div className="flex flex-col mb-4">
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-[10px] font-bold text-gold uppercase tracking-widest">Rates Per Tour Option</label>
@@ -952,14 +952,14 @@ export default function GuidesPage() {
                         <Plus size={10} /> Add Rate
                       </button>
                     </div>
-                    <p className="text-[9px] text-gray-600 leading-tight uppercase tracking-wider">
+                    <p className="text-[9px] text-muted-foreground leading-tight uppercase tracking-wider">
                       Set specific pay rates per tour option. Leave empty to use base rate.
                     </p>
                   </div>
                   
                   <div className="space-y-3">
                     {form.optionRates.map((r, i) => (
-                      <div key={i} className="bg-white/5 p-3 rounded-xl border border-white/5 space-y-2">
+                      <div key={i} className="bg-muted p-3 rounded-xl border border-border space-y-2">
                         <div className="flex gap-2">
                           <input 
                             className="aurelia-input text-xs w-20" 
@@ -984,7 +984,7 @@ export default function GuidesPage() {
                           />
                           <button 
                             onClick={() => setForm({...form, optionRates: form.optionRates.filter((_, idx) => idx !== i)})}
-                            className="ml-auto text-gray-600 hover:text-red-400 p-1"
+                            className="ml-auto text-muted-foreground hover:text-red-700 p-1"
                           >
                             <X size={14} />
                           </button>
@@ -1008,16 +1008,16 @@ export default function GuidesPage() {
                     </datalist>
 
                     {form.optionRates.length === 0 && (
-                      <p className="text-[10px] text-gray-600 italic text-center py-2">No option-specific rates set.</p>
+                      <p className="text-[10px] text-muted-foreground italic text-center py-2">No option-specific rates set.</p>
                     )}
                   </div>
                 </div>
               </div>
 
-              <div className="p-6 border-t border-white/5 bg-[#0a0a0d] flex items-center gap-3">
+              <div className="p-6 border-t border-border bg-muted flex items-center gap-3">
                 <button 
                   onClick={() => setPanelOpen(false)}
-                  className="flex-1 px-4 py-3 rounded-xl border border-white/10 font-bold hover:bg-white/5 transition-colors text-white text-xs uppercase tracking-widest"
+                  className="flex-1 px-4 py-3 rounded-xl border border-border font-bold hover:bg-muted transition-colors text-foreground text-xs uppercase tracking-widest"
                 >
                   Cancel
                 </button>
@@ -1079,27 +1079,27 @@ function GuideReviewsModal({ guide, ratings, onClose, onVerify, onDelete, onAdd 
   return (
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl" onClick={onClose}>
       <div
-        className="bg-[#0f0f12] border border-white/10 rounded-[24px] w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+        className="bg-card border border-border rounded-[24px] w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
-        <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+        <div className="p-6 border-b border-border flex items-center justify-between bg-muted">
           <div>
             <h2 className="text-xl font-black">{guide.name}'s Reviews</h2>
-            <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
               <Star size={12} className="fill-gold text-gold" />
               {verifiedQty > 0 ? verifiedAvg.toFixed(1) : '—'} · {verifiedQty} verified review{verifiedQty !== 1 ? 's' : ''}
             </p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-xl text-gray-500 hover:text-white transition-colors">
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl text-muted-foreground hover:text-foreground transition-colors">
             <X size={20} />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6 aurelia-scrollbar">
-          <div className="bg-white/[0.03] p-4 rounded-2xl border border-white/5 space-y-3">
+          <div className="bg-muted p-4 rounded-2xl border border-border space-y-3">
             <h3 className="text-[10px] font-bold text-gold uppercase tracking-widest">Add a Rating</h3>
             <div className="grid grid-cols-2 gap-3">
-              <select value={stars} onChange={e => setStars(Number(e.target.value))} className="aurelia-input bg-[#1a1a1f] appearance-none">
+              <select value={stars} onChange={e => setStars(Number(e.target.value))} className="aurelia-input bg-muted appearance-none">
                 {[5, 4, 3, 2, 1].map(n => <option key={n} value={n}>{n} star{n !== 1 ? 's' : ''}</option>)}
               </select>
               <input
@@ -1120,9 +1120,9 @@ function GuideReviewsModal({ guide, ratings, onClose, onVerify, onDelete, onAdd 
 
           <div className="space-y-2">
             {ratings.length === 0 ? (
-              <p className="text-sm text-gray-500 text-center py-6">No ratings yet.</p>
+              <p className="text-sm text-muted-foreground text-center py-6">No ratings yet.</p>
             ) : ratings.map(r => (
-              <div key={r.id} className="flex flex-wrap items-center justify-between gap-3 bg-white/[0.02] rounded-xl p-3">
+              <div key={r.id} className="flex flex-wrap items-center justify-between gap-3 bg-muted rounded-xl p-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="flex items-center gap-0.5 text-gold shrink-0">
                     {Array.from({ length: 5 }).map((_, i) => (
@@ -1130,24 +1130,24 @@ function GuideReviewsModal({ guide, ratings, onClose, onVerify, onDelete, onAdd 
                     ))}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-xs font-bold text-white truncate">
+                    <p className="text-xs font-bold text-foreground truncate">
                       {r.quantity > 1 ? `×${r.quantity} · ` : ''}{r.source || 'General'}
                     </p>
-                    {r.note && <p className="text-[10px] text-gray-500 truncate max-w-[220px]">{r.note}</p>}
+                    {r.note && <p className="text-[10px] text-muted-foreground truncate max-w-[220px]">{r.note}</p>}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {r.verified ? (
-                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-green-500/15 text-green-400">Verified</span>
+                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-green-600/15 text-green-700">Verified</span>
                   ) : (
                     <button
                       onClick={() => onVerify(r.id)}
-                      className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 transition-colors"
+                      className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-amber-600/15 text-amber-700 hover:bg-amber-600/25 transition-colors"
                     >
                       Verify
                     </button>
                   )}
-                  <button onClick={() => onDelete(r.id)} className="text-gray-500 hover:text-red-400 p-1">
+                  <button onClick={() => onDelete(r.id)} className="text-muted-foreground hover:text-red-700 p-1">
                     <Trash2 size={13} />
                   </button>
                 </div>

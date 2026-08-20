@@ -479,12 +479,12 @@ export default function TodayToursPage() {
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight mb-2">Today's Tours</h1>
             <div className="flex items-center gap-2 text-muted-foreground font-medium">
-              <CalendarIcon size={16} className="text-[#f5a623]" />
+              <CalendarIcon size={16} className="text-gold" />
               <span>{todayStr}</span>
             </div>
           </div>
           <div className="text-right flex flex-col items-end gap-3">
-            <div className="flex items-center justify-end gap-2 text-2xl font-mono font-bold text-[#f5a623] drop-shadow-md mb-2">
+            <div className="flex items-center justify-end gap-2 text-2xl font-mono font-bold text-gold drop-shadow-md mb-2">
               <Clock size={20} />
               <span>{timeStr}</span>
             </div>
@@ -492,7 +492,7 @@ export default function TodayToursPage() {
               onClick={handleManualRefresh}
               disabled={refreshing}
               title="Refresh"
-              className="flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold disabled:opacity-50"
+              className="flex items-center gap-2 px-3 py-2 bg-muted border border-border rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-muted/70 transition-all text-muted-foreground hover:text-gold disabled:opacity-50"
             >
               <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
             </button>
@@ -501,26 +501,26 @@ export default function TodayToursPage() {
 
         {/* SUMMARY BAR */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="aurelia-card p-4 border-l-[3px] border-l-[#f5a623]">
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Sessions</p>
+          <div className="aurelia-card p-4 border-l-[3px] border-l-gold">
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Sessions</p>
             <p className="text-2xl font-extrabold">{sessions.length}</p>
           </div>
           <div className="aurelia-card p-4 border-l-[3px] border-l-blue-500">
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Pax Expected</p>
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Pax Expected</p>
             <p className="text-2xl font-extrabold">{totalPaxExpected}</p>
           </div>
           <div className="aurelia-card p-4 border-l-[3px] border-l-green-500">
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Pax Checked In</p>
-            <p className="text-2xl font-extrabold text-green-400">{totalPaxChecked}</p>
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Pax Checked In</p>
+            <p className="text-2xl font-extrabold text-green-700">{totalPaxChecked}</p>
           </div>
           <div className="aurelia-card p-4 border-l-[3px] border-l-purple-500">
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Guides Assigned</p>
-            <p className="text-2xl font-extrabold text-purple-400">{totalGuidesAssigned}</p>
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Guides Assigned</p>
+            <p className="text-2xl font-extrabold text-purple-700">{totalGuidesAssigned}</p>
           </div>
         </div>
 
         {unsessionedBookings.length > 0 && (
-          <div className="flex items-start gap-3 text-sm bg-amber-500/10 border border-amber-500/20 text-amber-300 rounded-xl p-4">
+          <div className="flex items-start gap-3 text-sm bg-amber-600/10 border border-amber-600/20 text-amber-700 rounded-xl p-4">
             <AlertTriangle size={16} className="shrink-0 mt-0.5" />
             <span>
               {unsessionedBookings.length} booking{unsessionedBookings.length !== 1 ? 's' : ''} today {unsessionedBookings.length !== 1 ? "aren't" : "isn't"} in a session yet
@@ -618,24 +618,24 @@ function SessionBoard({
   const filteredPax = filteredGuests.reduce((s, g) => s + g.pax, 0);
 
   return (
-    <div className="aurelia-card overflow-hidden border border-white/5">
-      <div className="bg-[#0f0f17] border-b border-white/5 px-4 md:px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="aurelia-card overflow-hidden border border-border">
+      <div className="bg-muted border-b border-border px-4 md:px-5 py-4 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h3 className="font-extrabold text-lg truncate">{session.label || 'Untitled Session'}</h3>
-          <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1.5">
+          <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
             <Clock size={12} /> {session.start_time || '—'}
           </p>
         </div>
-        <div className="flex bg-white/5 p-1 rounded-xl shrink-0">
+        <div className="flex bg-background p-1 rounded-xl shrink-0">
           <button
             onClick={() => setTab('checkin')}
-            className={`px-3 md:px-4 py-2 text-[11px] md:text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${tab === 'checkin' ? 'bg-gold text-black' : 'text-gray-400'}`}
+            className={`px-3 md:px-4 py-2 text-[11px] md:text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${tab === 'checkin' ? 'bg-gold text-black' : 'text-muted-foreground'}`}
           >
             Check-in
           </button>
           <button
             onClick={() => setTab('allocation')}
-            className={`px-3 md:px-4 py-2 text-[11px] md:text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${tab === 'allocation' ? 'bg-gold text-black' : 'text-gray-400'}`}
+            className={`px-3 md:px-4 py-2 text-[11px] md:text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${tab === 'allocation' ? 'bg-gold text-black' : 'text-muted-foreground'}`}
           >
             Allocation
           </button>
@@ -646,27 +646,27 @@ function SessionBoard({
         {tab === 'checkin' ? (
           <div className="space-y-4">
             <div className="relative">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none" />
+              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Search guests…"
-                className="w-full bg-white/5 border border-white/10 rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-white placeholder:text-gray-500 focus:border-gold/50 outline-none"
+                className="w-full bg-muted border border-border rounded-2xl pl-11 pr-4 py-3 text-sm font-bold text-foreground placeholder:text-muted-foreground focus:border-gold/50 outline-none"
               />
             </div>
 
             <div>
-              <div className="flex items-center justify-between text-xs font-bold text-gray-400 mb-1.5">
+              <div className="flex items-center justify-between text-xs font-bold text-muted-foreground mb-1.5">
                 <span>{checkedInCount} / {totalGuests} checked in</span>
                 <span className="text-gold">{pct}%</span>
               </div>
-              <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
                 <div className="h-full bg-gold transition-all duration-300" style={{ width: `${pct}%` }} />
               </div>
             </div>
 
             {filteredGuests.length === 0 ? (
-              <p className="text-sm text-gray-500 text-center py-8">
+              <p className="text-sm text-muted-foreground text-center py-8">
                 {guests.length === 0 ? 'No guests in this session.' : 'No guests match your search.'}
               </p>
             ) : (
