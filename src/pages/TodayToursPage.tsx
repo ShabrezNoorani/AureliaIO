@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, Share2, Check, Search, AlertTriangle } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, Share2, Check, Search, AlertTriangle, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
@@ -41,6 +41,12 @@ export default function TodayToursPage() {
   const [showConfirm, setShowConfirm] = useState<any | null>(null);
   const [copied, setCopied] = useState(false);
   const [balancingSessionId, setBalancingSessionId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Guards every setState below against firing after this page has unmounted (relevant now that
+  // several async refreshes can be in flight at once: initial load, realtime-triggered refreshes,
+  // and per-action refreshes).
+  const mountedRef = useRef(true);
 
   const loadData = async () => {
     if (!user) return;
@@ -53,6 +59,7 @@ export default function TodayToursPage() {
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
       supabase.from('tour_sessions').select('id, label, start_time, tour_date').eq('user_id', user.id).eq('tour_date', today).order('start_time', { ascending: true }),
     ]);
+    if (!mountedRef.current) return;
 
     setBookings(bRes.data || []);
     setGuides(gRes.data || []);
@@ -67,6 +74,7 @@ export default function TodayToursPage() {
         supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
         supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status').eq('user_id', user.id).in('session_id', sessionIds),
       ]);
+      if (!mountedRef.current) return;
       setSessionBookings(sbRes.data || []);
       setSessionGuides(sgRes.data || []);
     } else {
@@ -77,10 +85,82 @@ export default function TodayToursPage() {
     setLoading(false);
   };
 
+  // Lightweight, silent refreshes of just one table's worth of state — used both after this
+  // client's own writes and as the target of the realtime subscriptions below. None of these
+  // touch `loading`, so they never trigger the full-page spinner; only the very first mount does.
+  const refreshCheckins = async () => {
+    if (!user) return;
+    const { data } = await supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', todayStrDate);
+    if (!mountedRef.current) return;
+    setCheckins(data || []);
+  };
+
+  const refreshSessionBookings = async () => {
+    if (!user) return;
+    const sessionIds = sessions.map((s: any) => s.id);
+    if (sessionIds.length === 0) {
+      setSessionBookings([]);
+      return;
+    }
+    const { data } = await supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds);
+    if (!mountedRef.current) return;
+    setSessionBookings(data || []);
+  };
+
+  // session_guides isn't realtime-subscribed (out of this task's scope) — just a targeted
+  // refetch after a lock toggle instead of a full page reload.
+  const refreshSessionGuides = async () => {
+    if (!user) return;
+    const sessionIds = sessions.map((s: any) => s.id);
+    if (sessionIds.length === 0) {
+      setSessionGuides([]);
+      return;
+    }
+    const { data } = await supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status').eq('user_id', user.id).in('session_id', sessionIds);
+    if (!mountedRef.current) return;
+    setSessionGuides(data || []);
+  };
+
+  // Keeps the long-lived realtime subscription (set up once per user, below) always calling the
+  // LATEST version of these refreshers — they close over `sessions`/`todayStrDate`, which change
+  // far more often than the subscription itself needs to re-establish.
+  const refreshCheckinsRef = useRef(refreshCheckins);
+  refreshCheckinsRef.current = refreshCheckins;
+  const refreshSessionBookingsRef = useRef(refreshSessionBookings);
+  refreshSessionBookingsRef.current = refreshSessionBookings;
+
+  const handleManualRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+    if (mountedRef.current) setRefreshing(false);
+  };
+
   useEffect(() => {
+    mountedRef.current = true;
     loadData();
-    const interval = setInterval(() => loadData(), 60000); // refresh every 60s
-    return () => clearInterval(interval);
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [user]);
+
+  // Realtime replaces the old interval poll: instead of reloading the whole page every 60s (which
+  // visibly refreshed the screen and could interrupt a guide mid-check-in), quietly refresh just
+  // the affected slice of state whenever a checkins or session_bookings row actually changes —
+  // whether that change came from this owner, a guide, or another browser tab.
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`today-tours-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'checkins', filter: `user_id=eq.${user.id}` },
+        () => { refreshCheckinsRef.current(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_bookings', filter: `user_id=eq.${user.id}` },
+        () => { refreshSessionBookingsRef.current(); })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   // Live clock
@@ -197,7 +277,7 @@ export default function TodayToursPage() {
 
     const existing = await findCheckinRow(b.booking_ref);
     if (existing?.status === 'checked_in' || existing?.status === 'no_show') {
-      loadData();
+      await refreshCheckins();
       return;
     }
 
@@ -260,7 +340,8 @@ export default function TodayToursPage() {
       }
     }
 
-    loadData();
+    await refreshCheckins();
+    await refreshSessionBookings();
   };
 
   const handleConfirmCheckin = (photoBase64: string | null) => {
@@ -289,7 +370,7 @@ export default function TodayToursPage() {
       });
     }
 
-    loadData();
+    await refreshCheckins();
   };
 
   // Reverts a wrongly checked-in guest: deletes their checkins row for today, puts the booking
@@ -321,7 +402,8 @@ export default function TodayToursPage() {
       description: `${b.booking_ref} check-in reset by owner`
     });
 
-    loadData();
+    await refreshCheckins();
+    await refreshSessionBookings();
   };
 
   // Owner-only: move a single checked-in guest to a different guide (or unassign to holding).
@@ -331,7 +413,7 @@ export default function TodayToursPage() {
       .update({ allotted_guide_id: newGuideId })
       .eq('user_id', user.id)
       .eq('booking_ref', bookingRef);
-    loadData();
+    await refreshSessionBookings();
   };
 
   // Owner-only: lock/unlock a guide on a session — locked guides and their guests are excluded
@@ -343,7 +425,7 @@ export default function TodayToursPage() {
       .eq('user_id', user.id)
       .eq('session_id', sessionId)
       .eq('guide_id', guideId);
-    loadData();
+    await refreshSessionGuides();
   };
 
   // Owner-only: run the Balance algorithm for one session and persist the resulting moves.
@@ -383,7 +465,7 @@ export default function TodayToursPage() {
         .join(' · ');
       toast.success(`Balanced ${result.moves.length} guest${result.moves.length !== 1 ? 's' : ''} — ${summary}`);
 
-      await loadData();
+      await refreshSessionBookings();
     } finally {
       setBalancingSessionId(null);
     }
@@ -415,13 +497,23 @@ export default function TodayToursPage() {
               <Clock size={20} />
               <span>{timeStr}</span>
             </div>
-            <button
-              onClick={copyCheckinLink}
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold"
-            >
-              {copied ? <Check size={14} className="text-green-500" /> : <Share2 size={14} />}
-              {copied ? 'Link Copied!' : 'Copy Check-in Link'}
-            </button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                onClick={handleManualRefresh}
+                disabled={refreshing}
+                title="Refresh"
+                className="flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+              </button>
+              <button
+                onClick={copyCheckinLink}
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-white/10 transition-all text-gray-400 hover:text-gold"
+              >
+                {copied ? <Check size={14} className="text-green-500" /> : <Share2 size={14} />}
+                {copied ? 'Link Copied!' : 'Copy Check-in Link'}
+              </button>
+            </div>
           </div>
         </div>
 

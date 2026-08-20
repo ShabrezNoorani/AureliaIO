@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle2, XCircle, Phone, Calendar, Tag, Users, Pencil, Check, X } from 'lucide-react';
+import { CheckCircle2, XCircle, Phone, MessageCircle, Calendar, Tag, Users, Pencil, Check, X } from 'lucide-react';
 
 export interface GuestCardBooking {
   id: string;
@@ -9,6 +9,8 @@ export interface GuestCardBooking {
   travel_date: string;
   product_name?: string | null;
   product_code?: string | null;
+  /** The specific tour option the guest booked — real column: bookings.option_name. */
+  option_name?: string | null;
   channel?: string | null;
   pax_adult?: number | null;
   pax_youth?: number | null;
@@ -146,9 +148,25 @@ export default function GuestCard({
       </div>
 
       <div className="grid grid-cols-2 gap-y-4 text-[13px] font-bold">
-        <div className="flex items-center gap-3 text-gray-400">
-          <Phone size={16} />
-          <a href={`tel:${booking.customer_phone}`} className="text-white">{booking.customer_phone || 'No phone'}</a>
+        <div className="flex items-center gap-2">
+          {booking.customer_phone ? (
+            <>
+              <a
+                href={`tel:${booking.customer_phone}`}
+                className="flex items-center gap-1 px-2.5 py-2 bg-green-500/10 hover:bg-green-500/20 active:scale-95 rounded-xl text-green-400 text-[10px] font-black uppercase tracking-wide transition-all"
+              >
+                <Phone size={13} /> Call
+              </a>
+              <a
+                href={`sms:${booking.customer_phone}`}
+                className="flex items-center gap-1 px-2.5 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 rounded-xl text-blue-400 text-[10px] font-black uppercase tracking-wide transition-all"
+              >
+                <MessageCircle size={13} /> Msg
+              </a>
+            </>
+          ) : (
+            <span className="text-gray-600 text-xs font-normal">No phone</span>
+          )}
         </div>
         <div className="flex items-center gap-3 text-gray-400 justify-end">
           <Calendar size={16} />
@@ -158,7 +176,7 @@ export default function GuestCard({
         </div>
         <div className="flex items-center gap-3 text-gray-400">
           <Tag size={16} />
-          <span className="text-white truncate max-w-[120px]">{booking.product_name || booking.product_code}</span>
+          <span className="text-white truncate max-w-[120px]">{booking.option_name || booking.product_name || 'No option'}</span>
         </div>
         <div className="flex items-center gap-3 text-gray-400 justify-end">
           <Users size={16} />
