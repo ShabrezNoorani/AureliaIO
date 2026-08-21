@@ -21,13 +21,16 @@ export interface Booking {
   pax_youth: number;
   pax_child: number;
   pax_infant: number;
-  gross_revenue: number;
+  // Any channel (GYG, Klook, KKday, etc.) may omit these in the source booking data — left null
+  // rather than defaulted to 0, so the UI can distinguish "genuinely zero" from "needs input" and
+  // a sync can never silently overwrite an owner-entered value with a blank.
+  gross_revenue: number | null;
   commission_rate: number;
   commission_amount: number;
   net_revenue: number;
-  ticket_cost: number;
-  guide_cost: number;
-  extra_cost: number;
+  ticket_cost: number | null;
+  guide_cost: number | null;
+  extra_cost: number | null;
   net_profit: number;
   status: 'UPCOMING' | 'DONE' | 'NO_SHOW' | 'CANCELLED_EARLY' | 'CANCELLED_LATE';
   notes: string;

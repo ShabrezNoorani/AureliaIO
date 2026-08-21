@@ -141,9 +141,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // so no session existed yet when claim_guide_account() needed to run) can log in fine —
       // their auth.users row exists — but their guides row is still unlinked. On first login
       // with no direct match, try the email-based repair RPC once before concluding "owner".
-      // repair_guide_claim isn't in the generated types yet (regenerate to drop this cast).
       if (!data) {
-        const { data: repaired } = await (supabase.rpc as any)('repair_guide_claim');
+        const { data: repaired, error: repairError } = await supabase.rpc('repair_guide_claim');
+        // Never let a failed repair attempt (e.g. the RPC missing because the migration hasn't
+        // been applied yet) silently fall through to "owner" without a trace — that's exactly how
+        // this went unnoticed before.
+        if (repairError) console.error('repair_guide_claim failed:', repairError);
         if (repaired) {
           const retry = await Promise.race([lookupGuideRow(), timeoutPromise()]);
           if (!mountedRef.current) return;

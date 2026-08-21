@@ -17,6 +17,11 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
     setDraft(booking ? { ...booking } : { ...EMPTY_BOOKING });
   }, [booking]);
 
+  // A field left blank by the owner (or never filled in by a sync) is null, not 0 — this treats
+  // it as 0 for the purposes of the live calculated-fields preview only, without ever writing
+  // that 0 back into the still-blank field itself.
+  const numOrZero = (v: number | null) => v ?? 0;
+
   const update = <K extends keyof Booking>(field: K, value: Booking[K]) => {
     setDraft((prev) => {
       const next = { ...prev, [field]: value };
@@ -26,10 +31,13 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
         next.commission_rate = COMMISSION_DEFAULTS[value as string] ?? 0;
       }
 
-      // Auto-calculate financials
-      next.commission_amount = +(next.gross_revenue * next.commission_rate / 100).toFixed(2);
-      next.net_revenue = +(next.gross_revenue - next.commission_amount).toFixed(2);
-      next.net_profit = +(next.net_revenue - next.ticket_cost - next.guide_cost - next.extra_cost).toFixed(2);
+      // Auto-calculate financials — treats any still-blank input as 0 for this preview, but that
+      // never mutates the blank field itself; it stays null (needs input) until the owner enters
+      // a value for it directly.
+      const gross = numOrZero(next.gross_revenue);
+      next.commission_amount = +(gross * next.commission_rate / 100).toFixed(2);
+      next.net_revenue = +(gross - next.commission_amount).toFixed(2);
+      next.net_profit = +(next.net_revenue - numOrZero(next.ticket_cost) - numOrZero(next.guide_cost) - numOrZero(next.extra_cost)).toFixed(2);
 
       // Cancelled early: zero out revenue + ticket cost
       if (next.status === 'CANCELLED_EARLY') {
@@ -37,11 +45,18 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
         next.ticket_cost = 0;
         next.commission_amount = 0;
         next.net_revenue = 0;
-        next.net_profit = +(0 - next.guide_cost - next.extra_cost).toFixed(2);
+        next.net_profit = +(0 - numOrZero(next.guide_cost) - numOrZero(next.extra_cost)).toFixed(2);
       }
 
       return next;
     });
+  };
+
+  // Shared onChange for the four fields that can be blank ("needs input") — an emptied input
+  // goes back to null rather than snapping to 0, so clearing a field is how the owner re-flags it
+  // as unknown rather than asserting "this genuinely costs €0".
+  const updateMoneyField = (field: 'gross_revenue' | 'ticket_cost' | 'guide_cost' | 'extra_cost', raw: string) => {
+    update(field, raw === '' ? null : Math.max(0, Number(raw)));
   };
 
   const totalPax = draft.pax_adult + draft.pax_youth + draft.pax_child + draft.pax_infant;
@@ -184,11 +199,17 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
           {/* Financials */}
           <section className="mb-8">
             <h3 className="aurelia-section-title mb-4">Financials</h3>
+            <p className="text-xs text-muted-foreground mb-4 -mt-1">
+              Any channel can leave revenue or cost blank in the booking data — those show as{' '}
+              <span className="text-amber-700 font-semibold">Needs input</span> until entered here.
+            </p>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Gross Revenue €</label>
-                <input type="number" min={0} className="aurelia-input" value={draft.gross_revenue}
-                  onChange={(e) => update('gross_revenue', Math.max(0, Number(e.target.value)))}
+                <input type="number" min={0} placeholder="Needs input"
+                  className={`aurelia-input ${draft.gross_revenue === null ? 'border-amber-600/50 placeholder:text-amber-700/70' : ''}`}
+                  value={draft.gross_revenue ?? ''}
+                  onChange={(e) => updateMoneyField('gross_revenue', e.target.value)}
                   disabled={draft.status === 'CANCELLED_EARLY'} />
               </div>
               <div className="space-y-1.5">
@@ -206,19 +227,25 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Ticket Cost €</label>
-                <input type="number" min={0} className="aurelia-input" value={draft.ticket_cost}
-                  onChange={(e) => update('ticket_cost', Math.max(0, Number(e.target.value)))}
+                <input type="number" min={0} placeholder="Needs input"
+                  className={`aurelia-input ${draft.ticket_cost === null ? 'border-amber-600/50 placeholder:text-amber-700/70' : ''}`}
+                  value={draft.ticket_cost ?? ''}
+                  onChange={(e) => updateMoneyField('ticket_cost', e.target.value)}
                   disabled={draft.status === 'CANCELLED_EARLY'} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Guide Cost €</label>
-                <input type="number" min={0} className="aurelia-input" value={draft.guide_cost}
-                  onChange={(e) => update('guide_cost', Math.max(0, Number(e.target.value)))} />
+                <input type="number" min={0} placeholder="Needs input"
+                  className={`aurelia-input ${draft.guide_cost === null ? 'border-amber-600/50 placeholder:text-amber-700/70' : ''}`}
+                  value={draft.guide_cost ?? ''}
+                  onChange={(e) => updateMoneyField('guide_cost', e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Extra Cost €</label>
-                <input type="number" min={0} className="aurelia-input" value={draft.extra_cost}
-                  onChange={(e) => update('extra_cost', Math.max(0, Number(e.target.value)))} />
+                <input type="number" min={0} placeholder="Needs input"
+                  className={`aurelia-input ${draft.extra_cost === null ? 'border-amber-600/50 placeholder:text-amber-700/70' : ''}`}
+                  value={draft.extra_cost ?? ''}
+                  onChange={(e) => updateMoneyField('extra_cost', e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Net Profit</label>

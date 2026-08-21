@@ -85,6 +85,21 @@ function calcTotalPax(b: any) {
   return (b.pax_adult || 0) + (b.pax_youth || 0) + (b.pax_child || 0) + (b.pax_infant || 0);
 }
 
+// Any channel can leave revenue/cost blank in the source booking data — that's stored as null,
+// distinct from a genuine €0, so it renders as a "Needs input" flag rather than silently reading
+// as zero. Only used for gross_revenue/guide_cost/extra_cost/ticket_cost, the four fields that can
+// actually be blank; every other money column always has a computed value.
+function MoneyCell({ value, className }: { value: number | null | undefined; className?: string }) {
+  if (value === null || value === undefined) {
+    return (
+      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wide bg-amber-600/10 text-amber-700 border border-amber-600/20 whitespace-nowrap">
+        Needs input
+      </span>
+    );
+  }
+  return <span className={`tabular-nums ${className || ''}`}>{fmtEuro(value)}</span>;
+}
+
 function fmtEuro(v: number) {
   const num = v || 0;
   // include negative sign before euro symbol
@@ -483,13 +498,13 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                           case 'promo': return <span className="text-muted-foreground">{b.promo_code || '—'}</span>;
                           case 'pax': return <span className="tabular-nums text-emerald-700 font-mono text-[11px]">{formatPax(b)}</span>;
                           case 'tpax': return <span className="tabular-nums text-muted-foreground">{calcTotalPax(b)}</span>;
-                          case 'gross': return <span className="tabular-nums text-foreground">{fmtEuro(b.gross_revenue)}</span>;
+                          case 'gross': return <MoneyCell value={b.gross_revenue} className="text-foreground" />;
                           case 'comm': return <span className="tabular-nums text-muted-foreground">{b.commission_rate ? `${b.commission_rate}%` : '—'}</span>;
                           case 'fee': return <span className="tabular-nums text-muted-foreground">{fmtEuro(b.marketplace_fee)}</span>;
                           case 'netp': return <span className="tabular-nums text-foreground">{fmtEuro(b.net_revenue)}</span>;
-                          case 'gcost': return <span className="tabular-nums text-muted-foreground">{fmtEuro(b.guide_cost)}</span>;
-                          case 'ecost': return <span className="tabular-nums text-muted-foreground">{fmtEuro(b.extra_cost)}</span>;
-                          case 'tcost': return <span className="tabular-nums text-muted-foreground">{fmtEuro(b.ticket_cost)}</span>;
+                          case 'gcost': return <MoneyCell value={b.guide_cost} className="text-muted-foreground" />;
+                          case 'ecost': return <MoneyCell value={b.extra_cost} className="text-muted-foreground" />;
+                          case 'tcost': return <MoneyCell value={b.ticket_cost} className="text-muted-foreground" />;
                           case 'profit': return <span className={`font-bold tabular-nums ${b.net_profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>{fmtEuro(b.net_profit)}</span>;
                           case 'status': return <StatusBadge status={b.status} />;
                           case 'guide': return <span className="text-muted-foreground">{b.assigned_guide || '—'}</span>;

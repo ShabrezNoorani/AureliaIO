@@ -20,6 +20,11 @@ const STATUS_MAP: Record<string, string> = {
   'NOSHOW': 'NO_SHOW',
 };
 
+// Fields any channel (GYG, Klook, KKday, etc.) may leave blank in the source booking data — a
+// sync must never overwrite an existing value (owner-entered or from an earlier sync) with a
+// blank re-read of one of these.
+const PROTECTED_MONEY_FIELDS = new Set(['gross_revenue', 'guide_cost', 'extra_cost', 'ticket_cost']);
+
 const COST_CATEGORY_MAP: Record<string, string> = {
   'Software & IT': 'Tools',
   'Marketing & Ads': 'Marketing',
@@ -106,6 +111,15 @@ function parseEuro(val: string): number {
   return parseFloat(val.replace(/[€\s,]/g, '')) || 0;
 }
 
+// For the four fields any channel can leave blank (gross revenue, guide/extra/ticket cost) — an
+// empty cell means "unknown", not "zero", so it parses to null rather than 0. That's what lets
+// the reconciliation loop below skip writing over an owner-entered value with a blank re-sync.
+function parseEuroOrNull(val: string): number | null {
+  if (!val || !val.trim()) return null;
+  const n = parseFloat(val.replace(/[€\s,]/g, ''));
+  return isNaN(n) ? null : n;
+}
+
 function parseNum(val: string): number {
   if (!val) return 0;
   return parseFloat(val.replace(/[^0-9.\-]/g, '')) || 0;
@@ -185,7 +199,9 @@ export async function syncMasterData(
     if (!bookingRef) { skipped++; continue; } // only skip if no booking ref
 
     const channel = CHANNEL_MAP[cols[11]] || 'Other';
-    const grossRevenue = parseEuro(cols[17]);
+    // Any channel can leave these blank in the sheet — null (not 0) so a blank cell never
+    // silently overwrites a value the owner already entered (see the reconciliation loop below).
+    const grossRevenue = parseEuroOrNull(cols[17]);
 
     let commissionRateForm = parseFloat((cols[18] || '').replace(/[^0-9.]/g, '')) || 0;
     if (commissionRateForm > 0 && commissionRateForm <= 1) {
@@ -198,13 +214,13 @@ export async function syncMasterData(
     if (marketplaceFee > 0) {
       commissionAmount = marketplaceFee;
     } else {
-      commissionAmount = +(grossRevenue * commissionRate / 100).toFixed(2);
+      commissionAmount = +((grossRevenue ?? 0) * commissionRate / 100).toFixed(2);
     }
 
     const netRevenue = parseEuro(cols[20]);
-    const guideCost = parseEuro(cols[21]);
-    const extraCost = parseEuro(cols[22]);
-    const ticketCost = parseEuro(cols[23]);
+    const guideCost = parseEuroOrNull(cols[21]);
+    const extraCost = parseEuroOrNull(cols[22]);
+    const ticketCost = parseEuroOrNull(cols[23]);
     const netProfit = parseEuro(cols[24]);
     const statusRaw = (cols[25] || '').toUpperCase().trim();
     const sheetStatus = STATUS_MAP[statusRaw] || 'UPCOMING';
@@ -269,6 +285,10 @@ export async function syncMasterData(
 
     const changedFields: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(target)) {
+      // A blank cell for one of the four fields any channel can omit means "the sheet doesn't
+      // know" — never write that over whatever's already in the ledger, whether that's an
+      // owner-entered value or a still-blank field from an earlier sync.
+      if (PROTECTED_MONEY_FIELDS.has(key) && value === null) continue;
       if (existing[key] !== value) changedFields[key] = value;
     }
 

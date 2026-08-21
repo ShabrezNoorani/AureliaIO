@@ -10,6 +10,9 @@ import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
 import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/checkin/AllocationBoard';
+import SyncStatusIndicator from '@/components/checkin/SyncStatusIndicator';
+import { enqueueRetry, useRetryQueueItems } from '@/lib/retryQueue';
+import { findCheckinRow, writeCheckin, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
 
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
@@ -47,6 +50,13 @@ export default function TodayToursPage() {
   // and per-action refreshes).
   const mountedRef = useRef(true);
 
+  // Actions currently queued/retrying — used both to render sync status and to stop refreshes
+  // (manual, or realtime-triggered) from clobbering an optimistic card back to its pre-tap state
+  // while its write is still in flight.
+  const queueItems = useRetryQueueItems();
+  const pendingBookingRefs = useMemo(() => new Set(queueItems.map(i => i.key)), [queueItems]);
+  const stuckBookingRefs = useMemo(() => new Set(queueItems.filter(i => i.stuck).map(i => i.key)), [queueItems]);
+
   const loadData = async () => {
     if (!user) return;
     const today = localDateStr();
@@ -62,7 +72,7 @@ export default function TodayToursPage() {
 
     setBookings(bRes.data || []);
     setGuides(gRes.data || []);
-    setCheckins(cRes.data || []);
+    setCheckins(prev => mergeGuardingPending(cRes.data || [], prev, pendingBookingRefs));
 
     const sessionsData = sessRes.data || [];
     setSessions(sessionsData);
@@ -74,7 +84,7 @@ export default function TodayToursPage() {
         supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status').eq('user_id', user.id).in('session_id', sessionIds),
       ]);
       if (!mountedRef.current) return;
-      setSessionBookings(sbRes.data || []);
+      setSessionBookings(prev => mergeGuardingPending(sbRes.data || [], prev, pendingBookingRefs));
       setSessionGuides(sgRes.data || []);
     } else {
       setSessionBookings([]);
@@ -87,11 +97,14 @@ export default function TodayToursPage() {
   // Lightweight, silent refreshes of just one table's worth of state — used both after this
   // client's own writes and as the target of the realtime subscriptions below. None of these
   // touch `loading`, so they never trigger the full-page spinner; only the very first mount does.
+  // Both guard any booking_ref with a write still in flight (queued/retrying) — a realtime event
+  // or a manual refresh landing mid-retry must never revert an optimistic card back to its
+  // pre-tap state.
   const refreshCheckins = async () => {
     if (!user) return;
     const { data } = await supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', todayStrDate);
     if (!mountedRef.current) return;
-    setCheckins(data || []);
+    setCheckins(prev => mergeGuardingPending(data || [], prev, pendingBookingRefs));
   };
 
   const refreshSessionBookings = async () => {
@@ -103,7 +116,7 @@ export default function TodayToursPage() {
     }
     const { data } = await supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds);
     if (!mountedRef.current) return;
-    setSessionBookings(data || []);
+    setSessionBookings(prev => mergeGuardingPending(data || [], prev, pendingBookingRefs));
   };
 
   // session_guides isn't realtime-subscribed (out of this task's scope) — just a targeted
@@ -174,19 +187,6 @@ export default function TodayToursPage() {
   const timeStr = now.toLocaleTimeString('en-US', {
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   });
-
-  // Find (or lack of) an existing checkins row for a booking, scoped to this user + travel date.
-  const findCheckinRow = async (bookingRef: string) => {
-    if (!user) return null;
-    const { data } = await supabase
-      .from('checkins')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('booking_ref', bookingRef)
-      .eq('travel_date', todayStrDate)
-      .maybeSingle();
-    return data;
-  };
 
   const getDisplayName = (b: any) => {
     const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
@@ -271,52 +271,34 @@ export default function TodayToursPage() {
   // Records a check-in or no-show — identical to GuideCheckin's flow (same checkins row shape,
   // same ticket-photo capture, same idempotency guard). Owner-only additions: the change-log
   // audit entry, and auto-allotting a freshly-checked-in guest.
-  const recordCheckin = async (b: any, status: 'checked_in' | 'no_show', photoBase64: string | null = null) => {
+  //
+  // Resilience: the card updates immediately (optimistic), then the actual write is handed to the
+  // retry queue rather than awaited directly — a network drop mid-write never blocks the UI or
+  // reverts the card, it just keeps retrying with backoff until it lands (see src/lib/retryQueue).
+  // writeCheckin() re-derives insert-vs-update from a fresh read on every attempt (no DB unique
+  // constraint on booking_ref+travel_date exists to upsert against), so a retry of a write that
+  // actually succeeded but lost its response to the drop finds the row already in a terminal
+  // status and no-ops instead of inserting a duplicate.
+  const recordCheckin = (b: any, status: 'checked_in' | 'no_show', photoBase64: string | null = null) => {
     if (!user) return;
 
-    const existing = await findCheckinRow(b.booking_ref);
-    if (existing?.status === 'checked_in' || existing?.status === 'no_show') {
-      await refreshCheckins();
-      return;
-    }
+    const already = checkins.find(c => c.booking_ref === b.booking_ref);
+    if (already?.status === 'checked_in' || already?.status === 'no_show') return;
 
-    const totalPax = paxTotal(b);
-    const checkinFields = {
-      checked_in_at: new Date().toISOString(),
-      checked_in_by: 'Coordinator',
-      pax_checked_in: status === 'checked_in' ? totalPax : 0,
-      status,
-      ticket_photo: photoBase64,
-    };
+    const nowIso = new Date().toISOString();
+    const existingOverride = already?.display_name_override ?? null;
 
-    if (existing) {
-      await supabase.from('checkins').update(checkinFields).eq('id', existing.id);
-    } else {
-      await supabase.from('checkins').insert({
-        user_id: user.id,
-        booking_ref: b.booking_ref,
-        travel_date: todayStrDate,
-        ...checkinFields,
-      });
-    }
+    setCheckins(prev => [
+      ...prev.filter(c => c.booking_ref !== b.booking_ref),
+      { booking_ref: b.booking_ref, status, checked_in_at: nowIso, display_name_override: existingOverride },
+    ]);
 
+    // Auto-allot: pick the unlocked guide on this booking's session with the lowest current pax
+    // total (same tie-break rule Balance uses). Decided once, at tap time, and baked into the
+    // retried write — a delayed retry must apply the exact outcome already shown on screen, not
+    // one recomputed from whatever state happens to exist whenever it finally runs.
+    let targetGuideId: string | null = null;
     if (status === 'checked_in') {
-      await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
-
-      await logChange(supabase, user.id, {
-        tableName: 'bookings',
-        recordId: b.booking_ref,
-        fieldName: 'status',
-        oldValue: b.status || 'CONFIRMED',
-        newValue: 'DONE',
-        description: `${b.booking_ref} status changed to DONE (Checked In)`
-      });
-
-      // Auto-allot: pick the unlocked guide on this booking's session with the lowest current
-      // pax total (same tie-break rule Balance uses) — keeps allocation roughly even as guests
-      // check in live instead of dumping everyone into the holding area. A session with no
-      // guides, or where every guide is locked, leaves the guest unallotted rather than
-      // override an owner's explicit lock.
       const sessionId = bookingRefToSessionId.get(b.booking_ref);
       if (sessionId) {
         const team = sessionIdToTeam.get(sessionId) || [];
@@ -329,18 +311,56 @@ export default function TodayToursPage() {
             totals[g.allottedGuideId] += g.pax;
           }
         });
-        const targetGuideId = pickLeastLoadedGuide(unlockedTeam, totals);
+        targetGuideId = pickLeastLoadedGuide(unlockedTeam, totals);
+      }
+    }
+    if (targetGuideId) {
+      setSessionBookings(prev => prev.map((sb: any) => (
+        sb.booking_ref === b.booking_ref ? { ...sb, allotted_guide_id: targetGuideId } : sb
+      )));
+    }
+
+    const totalPax = paxTotal(b);
+    enqueueRetry(b.booking_ref, status === 'checked_in' ? 'Check-in' : 'No-show', async () => {
+      await writeCheckin({
+        userId: user.id,
+        bookingRef: b.booking_ref,
+        travelDate: todayStrDate,
+        status,
+        checkedInBy: 'Coordinator',
+        pax: totalPax,
+        photoBase64,
+      });
+
+      if (status === 'checked_in') {
+        const { error } = await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
+        if (error) throw error;
+
+        await logChange(supabase, user.id, {
+          tableName: 'bookings',
+          recordId: b.booking_ref,
+          fieldName: 'status',
+          oldValue: b.status || 'CONFIRMED',
+          newValue: 'DONE',
+          description: `${b.booking_ref} status changed to DONE (Checked In)`
+        });
+
         if (targetGuideId) {
-          await supabase.from('session_bookings')
+          const { error: allotError } = await supabase.from('session_bookings')
             .update({ allotted_guide_id: targetGuideId })
             .eq('user_id', user.id)
             .eq('booking_ref', b.booking_ref);
+          if (allotError) throw allotError;
         }
       }
-    }
 
-    await refreshCheckins();
-    await refreshSessionBookings();
+      // Refs, not the closed-over functions directly — a retry can fire minutes after the
+      // original tap and must use whichever refresher version is current at that moment (the
+      // same "always latest" pattern the realtime subscription relies on), not one frozen with
+      // whatever sessions/sessionBookings existed back when this was first tapped.
+      await refreshCheckinsRef.current();
+      await refreshSessionBookingsRef.current();
+    });
   };
 
   const handleConfirmCheckin = (photoBase64: string | null) => {
@@ -356,7 +376,7 @@ export default function TodayToursPage() {
     if (!user) return;
     const trimmed = newName.trim();
 
-    const existing = await findCheckinRow(b.booking_ref);
+    const existing = await findCheckinRow(user.id, b.booking_ref, todayStrDate);
 
     if (existing) {
       await supabase.from('checkins').update({ display_name_override: trimmed || null }).eq('id', existing.id);
@@ -376,43 +396,57 @@ export default function TodayToursPage() {
   // back to UPCOMING, and clears their allotment. This is a deliberate manual override — the
   // gsheetSync DONE-pin protection only ever reads whatever status is in the DB at sync time, so
   // once this write lands there is nothing left for that protection to "block".
-  const handleResetCheckin = async (b: any) => {
+  const handleResetCheckin = (b: any) => {
     if (!user) return;
     if (!confirm(`Reset check-in for ${getDisplayName(b)}? They'll return to not-checked-in.`)) return;
 
-    const existing = await findCheckinRow(b.booking_ref);
-    if (existing) {
-      await supabase.from('checkins').delete().eq('id', existing.id);
-    }
+    setCheckins(prev => prev.filter(c => c.booking_ref !== b.booking_ref));
+    setSessionBookings(prev => prev.map((sb: any) => (
+      sb.booking_ref === b.booking_ref ? { ...sb, allotted_guide_id: null } : sb
+    )));
 
-    await supabase.from('bookings').update({ status: 'UPCOMING' }).eq('id', b.id);
+    enqueueRetry(b.booking_ref, 'Reset', async () => {
+      await deleteCheckin(user.id, b.booking_ref, todayStrDate);
 
-    await supabase.from('session_bookings')
-      .update({ allotted_guide_id: null })
-      .eq('user_id', user.id)
-      .eq('booking_ref', b.booking_ref);
+      const { error } = await supabase.from('bookings').update({ status: 'UPCOMING' }).eq('id', b.id);
+      if (error) throw error;
 
-    await logChange(supabase, user.id, {
-      tableName: 'bookings',
-      recordId: b.booking_ref,
-      fieldName: 'status',
-      oldValue: 'DONE',
-      newValue: 'UPCOMING',
-      description: `${b.booking_ref} check-in reset by owner`
+      const { error: allotError } = await supabase.from('session_bookings')
+        .update({ allotted_guide_id: null })
+        .eq('user_id', user.id)
+        .eq('booking_ref', b.booking_ref);
+      if (allotError) throw allotError;
+
+      await logChange(supabase, user.id, {
+        tableName: 'bookings',
+        recordId: b.booking_ref,
+        fieldName: 'status',
+        oldValue: 'DONE',
+        newValue: 'UPCOMING',
+        description: `${b.booking_ref} check-in reset by owner`
+      });
+
+      await refreshCheckinsRef.current();
+      await refreshSessionBookingsRef.current();
     });
-
-    await refreshCheckins();
-    await refreshSessionBookings();
   };
 
   // Owner-only: move a single checked-in guest to a different guide (or unassign to holding).
-  const handleMoveGuest = async (bookingRef: string, newGuideId: string | null) => {
+  const handleMoveGuest = (bookingRef: string, newGuideId: string | null) => {
     if (!user) return;
-    await supabase.from('session_bookings')
-      .update({ allotted_guide_id: newGuideId })
-      .eq('user_id', user.id)
-      .eq('booking_ref', bookingRef);
-    await refreshSessionBookings();
+
+    setSessionBookings(prev => prev.map((sb: any) => (
+      sb.booking_ref === bookingRef ? { ...sb, allotted_guide_id: newGuideId } : sb
+    )));
+
+    enqueueRetry(bookingRef, 'Move guide', async () => {
+      const { error } = await supabase.from('session_bookings')
+        .update({ allotted_guide_id: newGuideId })
+        .eq('user_id', user.id)
+        .eq('booking_ref', bookingRef);
+      if (error) throw error;
+      await refreshSessionBookingsRef.current();
+    });
   };
 
   // Owner-only: lock/unlock a guide on a session — locked guides and their guests are excluded
@@ -482,6 +516,7 @@ export default function TodayToursPage() {
               <CalendarIcon size={16} className="text-gold" />
               <span>{todayStr}</span>
             </div>
+            <div className="mt-2"><SyncStatusIndicator /></div>
           </div>
           <div className="text-right flex flex-col items-end gap-3">
             <div className="flex items-center justify-end gap-2 text-2xl font-mono font-bold text-gold drop-shadow-md mb-2">
@@ -554,6 +589,7 @@ export default function TodayToursPage() {
                 onToggleLock={handleToggleLock}
                 onBalance={handleBalance}
                 balancing={balancingSessionId === session.id}
+                stuckBookingRefs={stuckBookingRefs}
               />
             ))}
           </div>
@@ -588,6 +624,7 @@ function SessionBoard({
   onToggleLock,
   onBalance,
   balancing,
+  stuckBookingRefs,
 }: {
   session: any;
   guests: SessionGuestRow[];
@@ -601,6 +638,7 @@ function SessionBoard({
   onToggleLock: (sessionId: string, guideId: string, locked: boolean) => void;
   onBalance: (sessionId: string) => void;
   balancing: boolean;
+  stuckBookingRefs: Set<string>;
 }) {
   const [tab, setTab] = useState<'checkin' | 'allocation'>('checkin');
   const [search, setSearch] = useState('');
@@ -690,6 +728,7 @@ function SessionBoard({
                     isOwner
                     onSaveName={(newName) => onSaveName(g.booking, newName)}
                     onReset={g.isCheckedIn ? () => onResetCheckin(g.booking) : undefined}
+                    syncStuck={stuckBookingRefs.has(g.booking.booking_ref)}
                   />
                 ))}
               </TourGroup>

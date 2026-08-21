@@ -46,10 +46,21 @@ export async function syncBokunBookings(
   const searchResult = await callBokunProxy(supabase, '/booking.json/booking-search', 'POST', {}, body);
   // booking-search usually returns { items: [...] } or just [...]
   const bookings = searchResult.items || searchResult || [];
-  
+
   let imported = 0;
   let updated = 0;
   let skipped = 0;
+
+  // Known ahead of time so gross_revenue can be handled correctly per row below: a brand-new
+  // booking with no Bokun price yet should still write an explicit null (so it shows as "needs
+  // input" instead of silently defaulting to €0), but an existing booking must never have a
+  // blank Bokun value overwrite whatever's already in the ledger — owner-entered or from an
+  // earlier sync.
+  const { data: existingRows } = await supabase
+    .from('bookings')
+    .select('booking_ref')
+    .eq('user_id', userId);
+  const existingRefs = new Set((existingRows || []).map((r: any) => r.booking_ref));
 
   for (const b of bookings) {
     try {
@@ -67,7 +78,11 @@ export async function syncBokunBookings(
         else pax_adult += ub.quantity;
       });
 
-      const payload = {
+      // Bokun can leave the price off a booking (same as GYG/Klook/KKday leaving it blank
+      // elsewhere) — null, not 0, so it's distinguishable as "needs input" rather than a real €0.
+      const grossRevenue = (b.totalPrice === null || b.totalPrice === undefined) ? null : b.totalPrice;
+
+      const payload: Record<string, unknown> = {
         booking_ref,
         ext_ref: b.externalBookingRef || null,
         product_code: b.productBookings?.[0]?.product?.extranetRef || `P${b.productBookings?.[0]?.product?.id}`,
@@ -77,16 +92,15 @@ export async function syncBokunBookings(
         travel_date: b.startDate,
         travel_time: b.startTime || '',
         booking_date: b.creationDate,
-        channel: booking_ref.startsWith('VIA') ? 'Viator' : 
+        channel: booking_ref.startsWith('VIA') ? 'Viator' :
                  (booking_ref.startsWith('GYG') || booking_ref.startsWith('GET')) ? 'GYG' :
-                 booking_ref.startsWith('ABNB') ? 'Airbnb' : 
+                 booking_ref.startsWith('ABNB') ? 'Airbnb' :
                  b.channel || 'Other',
         pax_adult,
         pax_youth,
         pax_child,
         pax_infant,
         total_pax: total_pax || (pax_adult + pax_youth + pax_child + pax_infant),
-        gross_revenue: b.totalPrice || 0,
         status: b.status === 'CONFIRMED' ? 'UPCOMING' :
                 (b.status === 'DONE' || b.status === 'COMPLETED') ? 'DONE' :
                 b.status === 'CANCELLED' ? 'CANCELLED_EARLY' :
@@ -94,6 +108,14 @@ export async function syncBokunBookings(
         user_id: userId,
         sync_source: 'bokun'
       };
+
+      // Only ever include gross_revenue when Bokun actually gave a price, or this booking has
+      // never been synced before (nothing to protect yet, and writing the explicit null here is
+      // what makes it show "needs input" instead of silently landing on the column's €0 default).
+      // An already-known booking with a blank Bokun price keeps whatever value it already has.
+      if (grossRevenue !== null || !existingRefs.has(booking_ref)) {
+        payload.gross_revenue = grossRevenue;
+      }
 
       const { error: upsertErr } = await supabase
         .from('bookings')

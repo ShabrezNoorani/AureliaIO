@@ -30,7 +30,8 @@ interface Booking {
   pax_youth: number;
   pax_child: number;
   pax_infant: number;
-  gross_revenue: number;
+  // Any channel can leave this blank until the owner fills it in — see BookingPanel/useBookings.
+  gross_revenue: number | null;
   status: string;
 }
 
@@ -142,14 +143,16 @@ export function generateBookingInvoice(
   doc.setFontSize(9);
   doc.text(`Adults: ${booking.pax_adult} | Youth: ${booking.pax_youth} | Children: ${booking.pax_child} | Infant: ${booking.pax_infant} | TOTAL: ${booking.total_pax}`, 105, 79, { align: 'center' });
 
-  // Financials Mockup (as requested)
-  const otaComm = booking.gross_revenue * 0.2; // 20% default mockup
-  const netRev = booking.gross_revenue - otaComm;
-  
+  // Financials Mockup (as requested) — gross_revenue can be null (needs input, not yet filled
+  // in by the owner); treated as 0 here rather than crashing the PDF on a still-blank booking.
+  const grossRevenue = booking.gross_revenue ?? 0;
+  const otaComm = grossRevenue * 0.2; // 20% default mockup
+  const netRev = grossRevenue - otaComm;
+
   doc.autoTable({
     startY: 95,
     body: [
-      ['Gross Revenue', `€${booking.gross_revenue.toFixed(2)}`],
+      ['Gross Revenue', booking.gross_revenue === null ? 'Needs input' : `€${grossRevenue.toFixed(2)}`],
       ['OTA Commission (Est. 20%)', `-€${otaComm.toFixed(2)}`],
       ['Net Revenue', `€${netRev.toFixed(2)}`],
       ['', ''],

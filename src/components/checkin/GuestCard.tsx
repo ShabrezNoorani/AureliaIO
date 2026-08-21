@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CheckCircle2, XCircle, Phone, MessageCircle, Pencil, Check, X } from 'lucide-react';
+import { CheckCircle2, XCircle, Phone, MessageCircle, Pencil, Check, X, CloudAlert } from 'lucide-react';
 
 export interface GuestCardBooking {
   id: string;
@@ -56,6 +56,9 @@ interface GuestCardProps {
   onMoveToSession?: (sessionId: string | null) => void;
   /** Owner-only: revert a wrongly checked-in/no-show guest back to not-checked-in — omit to hide. */
   onReset?: () => void;
+  /** A write for this guest has been retrying in the background for several minutes without
+      confirming — flags the card so it's never silently stuck out of sight. */
+  syncStuck?: boolean;
 }
 
 export default function GuestCard({
@@ -76,6 +79,7 @@ export default function GuestCard({
   currentSessionId,
   onMoveToSession,
   onReset,
+  syncStuck,
 }: GuestCardProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -99,7 +103,7 @@ export default function GuestCard({
   };
 
   return (
-    <div className="bg-card border border-border shadow-sm rounded-lg px-2.5 py-1 space-y-px">
+    <div className={`bg-card border shadow-sm rounded-lg px-2.5 py-1 space-y-px ${syncStuck ? 'border-red-600/50 ring-1 ring-red-600/20' : 'border-border'}`}>
       {/* LINE 1 — check state + name (+ owner-only edit pencil) */}
       <div className="flex items-center gap-1.5">
         {isCheckedIn ? (
@@ -108,6 +112,11 @@ export default function GuestCard({
           <XCircle size={14} className="text-red-700 shrink-0" />
         ) : (
           <span className="w-3.5 h-3.5 rounded-full border-2 border-border shrink-0" />
+        )}
+        {syncStuck && (
+          <span title="Still trying to save this — check your connection" className="text-red-700 shrink-0">
+            <CloudAlert size={13} />
+          </span>
         )}
 
         {canEditName && isEditingName ? (

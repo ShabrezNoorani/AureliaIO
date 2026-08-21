@@ -105,6 +105,7 @@ export type Database = {
           extra_cost: number | null
           gross_revenue: number | null
           guide_cost: number | null
+          gyg_cost: number | null
           id: string
           marketplace_fee: number | null
           net_profit: number | null
@@ -141,6 +142,7 @@ export type Database = {
           extra_cost?: number | null
           gross_revenue?: number | null
           guide_cost?: number | null
+          gyg_cost?: number | null
           id?: string
           marketplace_fee?: number | null
           net_profit?: number | null
@@ -177,6 +179,7 @@ export type Database = {
           extra_cost?: number | null
           gross_revenue?: number | null
           guide_cost?: number | null
+          gyg_cost?: number | null
           id?: string
           marketplace_fee?: number | null
           net_profit?: number | null
@@ -890,12 +893,22 @@ export type Database = {
         }[]
       }
       my_assigned_booking_refs: { Args: never; Returns: string[] }
+      my_company_guides: {
+        Args: never
+        Returns: {
+          guide_number: string
+          id: string
+          name: string
+        }[]
+      }
       my_company_owner_id: { Args: never; Returns: string }
+      my_guide_session_ids: { Args: never; Returns: string[] }
       my_session_booking_refs: { Args: never; Returns: string[] }
       reassign_my_slot: {
         Args: { p_session_id: string; p_to_guide: string }
         Returns: undefined
       }
+      repair_guide_claim: { Args: never; Returns: boolean }
       respond_to_offer: {
         Args: { p_accept: boolean; p_session_id: string }
         Returns: undefined
