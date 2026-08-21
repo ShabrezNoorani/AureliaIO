@@ -2,6 +2,61 @@
 // guide-facing dashboard (GuideHome.tsx) and the owner-facing all-guides overview
 // (GuideDashboard.tsx), so both sides compute the same numbers the same way.
 
+import { localDateStr } from '@/lib/utils';
+
+export type DateRangePreset = 'today' | 'yesterday' | 'month' | 'mtd' | 'ytd';
+
+export interface DateRangeBounds {
+  /** Inclusive, local calendar date (YYYY-MM-DD) — comparable directly against travel_date with
+      no timezone shift. */
+  start: string;
+  end: string;
+}
+
+/**
+ * The ONE place every dashboard's date-range preset is computed — both the header totals and the
+ * per-guide cards on GuideDashboard.tsx call this (via filterAssignmentsByDateRange below) with
+ * the exact same bounds, so they can never disagree the way they did before this existed. All
+ * arithmetic stays in local time throughout (Date's own getFullYear/getMonth/getDate + localDateStr
+ * — never toISOString, which would shift by the browser's UTC offset and could push a boundary
+ * date to the wrong side of midnight).
+ */
+export function getDateRangeBounds(preset: DateRangePreset, today: Date = new Date()): DateRangeBounds {
+  const todayStr = localDateStr(today);
+  switch (preset) {
+    case 'today':
+      return { start: todayStr, end: todayStr };
+    case 'yesterday': {
+      const y = new Date(today);
+      y.setDate(y.getDate() - 1);
+      const yStr = localDateStr(y);
+      return { start: yStr, end: yStr };
+    }
+    case 'month': {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return { start: localDateStr(first), end: localDateStr(last) };
+    }
+    case 'mtd': {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      return { start: localDateStr(first), end: todayStr };
+    }
+    case 'ytd': {
+      const first = new Date(today.getFullYear(), 0, 1);
+      return { start: localDateStr(first), end: todayStr };
+    }
+  }
+}
+
+/** Filters any travel_date-bearing rows to a DateRangeBounds window — the single function both
+    the header totals and the per-guide cards run through, so "the same filtered set feeds both". */
+export function filterAssignmentsByDateRange<T extends { travel_date: string | null }>(
+  rows: T[],
+  bounds: DateRangeBounds
+): T[] {
+  return rows.filter(r => !!r.travel_date && r.travel_date >= bounds.start && r.travel_date <= bounds.end);
+}
+
 export interface GuideAssignmentRow {
   id: string;
   guide_id: string | null;

@@ -7,8 +7,8 @@ import { generateGuideInvoice } from '@/lib/generateInvoice';
 import { localDateStr } from '@/lib/utils';
 import {
   computeGuideOverviewRows, computeAssignmentStats, groupMonthlyEarnings,
-  groupOrphanedMonthlyByName,
-  type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow,
+  groupOrphanedMonthlyByName, getDateRangeBounds, filterAssignmentsByDateRange,
+  type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type DateRangePreset,
 } from '@/lib/guidePerformance';
 import {
   verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, updateGuideMonthlyPayment,
@@ -29,7 +29,7 @@ export default function GuideDashboard() {
   const [ratings, setRatings] = useState<GuideRatingRow[]>([]);
   const [monthlyRows, setMonthlyRows] = useState<GuideMonthlyRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dateRange, setDateRange] = useState<'today' | 'yesterday' | 'month' | 'mtd' | 'ytd'>('month');
+  const [dateRange, setDateRange] = useState<DateRangePreset>('month');
 
   // Invoice Modal State
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -52,11 +52,18 @@ export default function GuideDashboard() {
 
     const [gRes, aRes, rRes, ratingsRes, monthlyRes] = await Promise.all([
       supabase.from('guides').select('*').eq('user_id', user.id).order('name'),
+      // Previously filtered to `sync_source in (gsheet_assignments, manual, null)`, which silently
+      // excluded every row tagged `sync_source = 'import'` — that batch holds 96 of the 97 rows
+      // that actually have a guide_id (the real, attributable tour history), while the rows this
+      // filter DID include are almost entirely unattributed (guide_id null). That's the root cause
+      // of the header/per-guide mismatch: the header counted the (mostly unattributed) included
+      // rows while the per-guide cards could only ever match the handful with a guide_id. Every
+      // sync_source value present in this table represents real imported/synced history — none of
+      // them should be excluded — so this now loads all of it.
       supabase
         .from('guide_assignments')
         .select('*')
-        .eq('user_id', user.id)
-        .or('sync_source.eq.gsheet_assignments,sync_source.eq.manual,sync_source.is.null'),
+        .eq('user_id', user.id),
       supabase.from('guide_product_rates').select('*').eq('user_id', user.id),
       supabase.from('guide_ratings').select('*').eq('user_id', user.id),
       supabase.from('guide_monthly').select('*').eq('user_id', user.id),
@@ -166,36 +173,14 @@ export default function GuideDashboard() {
     await refreshRatingsAndMonthly();
   };
 
-  const filteredAssignments = useMemo(() => {
-    const now = new Date();
-    const todayStr = localDateStr(now);
-
-    let start = '';
-    let end = todayStr;
-
-    if (dateRange === 'today') {
-      start = end = todayStr;
-    } else if (dateRange === 'yesterday') {
-      const y = new Date(); y.setDate(y.getDate() - 1);
-      start = end = localDateStr(y);
-    } else if (dateRange === 'month') {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      start = localDateStr(first);
-      end = localDateStr(last);
-    } else if (dateRange === 'mtd') {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      start = localDateStr(first);
-    } else if (dateRange === 'ytd') {
-      const first = new Date(now.getFullYear(), 0, 1);
-      start = localDateStr(first);
-    }
-
-    return assignments.filter(a => {
-      if (!a.travel_date) return false;
-      return a.travel_date >= start && a.travel_date <= end;
-    });
-  }, [assignments, dateRange]);
+  // ONE shared date-range function (getDateRangeBounds/filterAssignmentsByDateRange, in
+  // guidePerformance.ts) computes the window and filters `assignments` down to it — both the
+  // header totals and the per-guide cards below are then derived from this SAME filtered array,
+  // so they're structurally incapable of disagreeing the way they used to.
+  const filteredAssignments = useMemo(
+    () => filterAssignmentsByDateRange(assignments, getDateRangeBounds(dateRange)),
+    [assignments, dateRange]
+  );
 
   const guideStats = useMemo(() => {
     return guides.map(g => {
@@ -206,8 +191,34 @@ export default function GuideDashboard() {
     });
   }, [guides, filteredAssignments]);
 
-  const totalEarnings = guideStats.reduce((sum, g) => sum + g.earnings, 0);
-  const totalTours = filteredAssignments.length;
+  // Header totals are the SUM of the per-guide cards (not an independently-recomputed count over
+  // filteredAssignments) — this is what guarantees "Total Tours == sum of every guide card's
+  // tours" by construction, for every preset, forever, rather than merely by the two happening to
+  // use the same filtered array today. A row with no guide_id (unattributed imported history)
+  // can't belong to any guide's card, so it correctly can't count toward "tours performed by
+  // guides" here either — it's surfaced separately via unattributedInRangeCount below instead of
+  // silently vanishing.
+  const totalTours = useMemo(() => guideStats.reduce((sum, g) => sum + g.tours, 0), [guideStats]);
+  const totalEarnings = useMemo(() => guideStats.reduce((sum, g) => sum + g.earnings, 0), [guideStats]);
+  const unattributedInRangeCount = useMemo(
+    () => filteredAssignments.filter(a => !a.guide_id).length,
+    [filteredAssignments]
+  );
+
+  // Self-check (dev only): recompute Total Tours independently — by filtering+counting
+  // guide-attributed rows directly, rather than via guideStats' per-guide reduce — and assert it
+  // still matches. Passes trivially today since totalTours is defined as that same sum, but it's
+  // a real regression guard: it would fire the moment a future edit makes guideStats and
+  // totalTours diverge again (e.g. reintroducing an independently-filtered header count), which is
+  // exactly the class of bug this diff fixes.
+  if (import.meta.env.DEV) {
+    const independentTotal = filteredAssignments.filter(a => !!a.guide_id).length;
+    console.assert(
+      independentTotal === totalTours,
+      '[GuideDashboard] Total Tours header does not equal the sum of per-guide cards',
+      { dateRange, totalTours, independentTotal }
+    );
+  }
 
   const handleDownloadInvoice = () => {
     if (!selectedGuide) return;
@@ -296,6 +307,13 @@ export default function GuideDashboard() {
                 <div className="text-4xl font-extrabold text-purple-700">€{totalTours > 0 ? (totalEarnings / totalTours).toFixed(2) : '0.00'}</div>
               </div>
             </div>
+
+            {unattributedInRangeCount > 0 && (
+              <p className="text-[11px] text-muted-foreground -mt-4 flex items-center gap-1.5">
+                <Info size={12} className="shrink-0" />
+                {unattributedInRangeCount} additional tour{unattributedInRangeCount !== 1 ? 's' : ''} in this period {unattributedInRangeCount !== 1 ? "have" : "has"} no guide on file, so {unattributedInRangeCount !== 1 ? "they aren't" : "it isn't"} counted above or on any guide's card.
+              </p>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {guideStats.map(g => (

@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Plus, Trash2, Pencil, RefreshCw } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Plus, Trash2, Pencil, RefreshCw, Info } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { syncAdminCosts } from '@/lib/gsheetSync';
@@ -31,6 +31,27 @@ export default function AdminCostsPage({ costs, setCosts, onSync, costsLoaded }:
   const now = new Date();
   const [viewMonth, setViewMonth] = useState(now.getMonth() + 1);
   const [viewYear, setViewYear] = useState(now.getFullYear());
+  const [autoJumped, setAutoJumped] = useState(false);
+
+  // Imported cost history can lag behind the calendar (e.g. data ending July 2026 while today is
+  // August 2026) — defaulting to "now" then landed on an empty month even though 200+ rows of real
+  // history existed one month earlier. Once costs load, if the current calendar month/year truly
+  // has nothing AND some other month does, jump to the most recent month that actually has data
+  // instead of showing a false "no costs" empty state. Runs once per mount (hasAutoJumpedRef) so
+  // it never fights a month/year the user deliberately picked afterward.
+  const hasAutoJumpedRef = useRef(false);
+  useEffect(() => {
+    if (hasAutoJumpedRef.current || !costsLoaded || costs.length === 0) return;
+    hasAutoJumpedRef.current = true;
+    const hasCurrentView = costs.some((c) => c.month === viewMonth && c.year === viewYear);
+    if (hasCurrentView) return;
+    const latest = [...costs].sort((a, b) => (b.year - a.year) || (b.month - a.month))[0];
+    if (latest) {
+      setViewMonth(latest.month);
+      setViewYear(latest.year);
+      setAutoJumped(true);
+    }
+  }, [costsLoaded, costs, viewMonth, viewYear]);
 
   // Form state
   const [showForm, setShowForm] = useState(false);
@@ -127,7 +148,7 @@ export default function AdminCostsPage({ costs, setCosts, onSync, costsLoaded }:
           <select
             className="aurelia-input w-24"
             value={viewMonth}
-            onChange={(e) => setViewMonth(Number(e.target.value))}
+            onChange={(e) => { setViewMonth(Number(e.target.value)); setAutoJumped(false); }}
           >
             {MONTH_NAMES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
           </select>
@@ -135,7 +156,7 @@ export default function AdminCostsPage({ costs, setCosts, onSync, costsLoaded }:
             type="number"
             className="aurelia-input w-20 text-center"
             value={viewYear}
-            onChange={(e) => setViewYear(Number(e.target.value))}
+            onChange={(e) => { setViewYear(Number(e.target.value)); setAutoJumped(false); }}
           />
           <button onClick={handleAdd} className="aurelia-gold-btn flex items-center gap-2">
             <Plus size={14} /> Add Cost
@@ -158,6 +179,13 @@ export default function AdminCostsPage({ costs, setCosts, onSync, costsLoaded }:
           {syncMsg}
           <button onClick={() => setSyncMsg('')} className="ml-3 opacity-50 hover:opacity-100">✕</button>
         </div>
+      )}
+
+      {autoJumped && (
+        <p className="text-[11px] text-muted-foreground mb-4 flex items-center gap-1.5">
+          <Info size={12} className="shrink-0" />
+          {MONTH_NAMES[now.getMonth()]} {now.getFullYear()} has no costs on file yet, so this jumped to {MONTH_NAMES[viewMonth - 1]} {viewYear} — the most recent month with imported history.
+        </p>
       )}
 
       {/* Summary */}
