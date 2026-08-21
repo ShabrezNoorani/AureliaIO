@@ -4,6 +4,9 @@ import { useAuth } from '@/context/AuthContext';
 import { logChange } from '@/lib/changeLog';
 import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight, Search, Upload, Copy, RefreshCw, Link as LinkIcon, Star } from 'lucide-react';
 import { toast } from 'sonner';
+import { computeRatingStats, type GuideRatingRow } from '@/lib/guidePerformance';
+import { verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, type RatingEditPayload } from '@/lib/guideRatingActions';
+import GuideRatingsPanel from '@/components/guide/GuideRatingsPanel';
 
 interface GuideOptionRate {
   id?: string;
@@ -12,17 +15,7 @@ interface GuideOptionRate {
   rate: number;
 }
 
-interface RatingRow {
-  id: string;
-  guide_id: string;
-  stars: number;
-  quantity: number;
-  source: string | null;
-  note: string | null;
-  verified: boolean | null;
-  verified_at: string | null;
-  created_at: string | null;
-}
+type RatingRow = GuideRatingRow;
 
 interface Guide {
   id: string;
@@ -131,7 +124,7 @@ export default function GuidesPage() {
     fetchRatings();
   }, [user]);
 
-  // Weighted average = sum(stars*quantity)/sum(quantity), over verified rows only.
+  // Weighted average per guide = sum(stars*quantity)/sum(quantity), over verified rows only.
   const ratingSummaryByGuide = useMemo(() => {
     const byGuide = new Map<string, RatingRow[]>();
     ratings.forEach(r => {
@@ -141,19 +134,17 @@ export default function GuidesPage() {
     });
     const summary = new Map<string, { avg: number; count: number }>();
     byGuide.forEach((rows, guideId) => {
-      const verified = rows.filter(r => r.verified);
-      const qty = verified.reduce((sum, r) => sum + r.quantity, 0);
-      const weighted = verified.reduce((sum, r) => sum + r.stars * r.quantity, 0);
-      summary.set(guideId, { avg: qty > 0 ? weighted / qty : 0, count: qty });
+      const { avgRating, verifiedReviewCount } = computeRatingStats(rows, 0);
+      summary.set(guideId, { avg: avgRating ?? 0, count: verifiedReviewCount });
     });
     return summary;
   }, [ratings]);
 
-  const handleVerifyRating = async (ratingId: string) => {
-    const { error } = await supabase
-      .from('guide_ratings')
-      .update({ verified: true, verified_at: new Date().toISOString() })
-      .eq('id', ratingId);
+  // Every write below goes through the shared guideRatingActions helpers, which log a
+  // change_logs row for each one — nothing here can mutate a rating silently.
+  const handleVerifyRating = async (rating: RatingRow) => {
+    if (!user || !reviewsGuide) return;
+    const { error } = await verifyGuideRating(supabase, user.id, rating, reviewsGuide.name);
     if (error) {
       console.error(error);
       toast.error('Failed to verify rating');
@@ -162,9 +153,10 @@ export default function GuidesPage() {
     fetchRatings();
   };
 
-  const handleDeleteRating = async (ratingId: string) => {
+  const handleDeleteRating = async (rating: RatingRow) => {
+    if (!user || !reviewsGuide) return;
     if (!confirm('Delete this rating?')) return;
-    const { error } = await supabase.from('guide_ratings').delete().eq('id', ratingId);
+    const { error } = await deleteGuideRating(supabase, user.id, rating, reviewsGuide.name);
     if (error) {
       console.error(error);
       toast.error('Failed to delete rating');
@@ -173,22 +165,20 @@ export default function GuidesPage() {
     fetchRatings();
   };
 
-  const handleAddRating = async (
-    guideId: string,
-    payload: { stars: number; quantity: number; source: string | null; note: string | null }
-  ) => {
-    if (!user) return;
-    const { error } = await supabase.from('guide_ratings').insert({
-      user_id: user.id,
-      guide_id: guideId,
-      added_by: user.id,
-      verified: true,
-      verified_at: new Date().toISOString(),
-      stars: payload.stars,
-      quantity: payload.quantity,
-      source: payload.source,
-      note: payload.note,
-    });
+  const handleEditRating = async (rating: RatingRow, next: RatingEditPayload) => {
+    if (!user || !reviewsGuide) return;
+    const { error } = await updateGuideRating(supabase, user.id, rating, next, reviewsGuide.name);
+    if (error) {
+      console.error(error);
+      toast.error('Failed to update rating');
+      return;
+    }
+    fetchRatings();
+  };
+
+  const handleAddRating = async (payload: RatingEditPayload) => {
+    if (!user || !reviewsGuide) return;
+    const { error } = await addGuideRating(supabase, user.id, reviewsGuide.id, reviewsGuide.name, payload);
     if (error) {
       console.error(error);
       toast.error('Failed to add rating');
@@ -1033,129 +1023,17 @@ export default function GuidesPage() {
         )}
 
         {reviewsGuide && (
-          <GuideReviewsModal
-            guide={reviewsGuide}
+          <GuideRatingsPanel
+            guideName={reviewsGuide.name}
             ratings={ratings.filter(r => r.guide_id === reviewsGuide.id)}
+            isOwner
             onClose={() => setReviewsGuide(null)}
             onVerify={handleVerifyRating}
             onDelete={handleDeleteRating}
-            onAdd={payload => handleAddRating(reviewsGuide.id, payload)}
+            onEdit={handleEditRating}
+            onAdd={handleAddRating}
           />
         )}
-    </div>
-  );
-}
-
-interface GuideReviewsModalProps {
-  guide: Guide;
-  ratings: RatingRow[];
-  onClose: () => void;
-  onVerify: (ratingId: string) => void;
-  onDelete: (ratingId: string) => void;
-  onAdd: (payload: { stars: number; quantity: number; source: string | null; note: string | null }) => Promise<void>;
-}
-
-function GuideReviewsModal({ guide, ratings, onClose, onVerify, onDelete, onAdd }: GuideReviewsModalProps) {
-  const [stars, setStars] = useState(5);
-  const [quantity, setQuantity] = useState(1);
-  const [source, setSource] = useState('');
-  const [note, setNote] = useState('');
-  const [adding, setAdding] = useState(false);
-
-  const verified = ratings.filter(r => r.verified);
-  const verifiedQty = verified.reduce((sum, r) => sum + r.quantity, 0);
-  const verifiedAvg = verifiedQty > 0 ? verified.reduce((sum, r) => sum + r.stars * r.quantity, 0) / verifiedQty : 0;
-
-  const handleAdd = async () => {
-    setAdding(true);
-    await onAdd({ stars, quantity, source: source.trim() || null, note: note.trim() || null });
-    setStars(5);
-    setQuantity(1);
-    setSource('');
-    setNote('');
-    setAdding(false);
-  };
-
-  return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-xl" onClick={onClose}>
-      <div
-        className="bg-card border border-border rounded-[24px] w-full max-w-lg max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="p-6 border-b border-border flex items-center justify-between bg-muted">
-          <div>
-            <h2 className="text-xl font-black">{guide.name}'s Reviews</h2>
-            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-              <Star size={12} className="fill-gold text-gold" />
-              {verifiedQty > 0 ? verifiedAvg.toFixed(1) : '—'} · {verifiedQty} verified review{verifiedQty !== 1 ? 's' : ''}
-            </p>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-muted rounded-xl text-muted-foreground hover:text-foreground transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 aurelia-scrollbar">
-          <div className="bg-muted p-4 rounded-2xl border border-border space-y-3">
-            <h3 className="text-[10px] font-bold text-gold uppercase tracking-widest">Add a Rating</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <select value={stars} onChange={e => setStars(Number(e.target.value))} className="aurelia-input bg-muted appearance-none">
-                {[5, 4, 3, 2, 1].map(n => <option key={n} value={n}>{n} star{n !== 1 ? 's' : ''}</option>)}
-              </select>
-              <input
-                type="number"
-                min={1}
-                value={quantity}
-                onChange={e => setQuantity(Math.max(1, Number(e.target.value)))}
-                className="aurelia-input"
-                placeholder="Qty"
-              />
-            </div>
-            <input value={source} onChange={e => setSource(e.target.value)} className="aurelia-input text-xs" placeholder="Source (e.g. Viator)" />
-            <textarea rows={2} value={note} onChange={e => setNote(e.target.value)} className="aurelia-input text-xs resize-none" placeholder="Note (optional)" />
-            <button onClick={handleAdd} disabled={adding} className="aurelia-gold-btn w-full py-2 text-xs font-bold disabled:opacity-50">
-              {adding ? 'Adding…' : 'Add Rating (verified)'}
-            </button>
-          </div>
-
-          <div className="space-y-2">
-            {ratings.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-6">No ratings yet.</p>
-            ) : ratings.map(r => (
-              <div key={r.id} className="flex flex-wrap items-center justify-between gap-3 bg-muted rounded-xl p-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="flex items-center gap-0.5 text-gold shrink-0">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <Star key={i} size={12} className={i < r.stars ? 'fill-gold' : 'opacity-20'} />
-                    ))}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-foreground truncate">
-                      {r.quantity > 1 ? `×${r.quantity} · ` : ''}{r.source || 'General'}
-                    </p>
-                    {r.note && <p className="text-[10px] text-muted-foreground truncate max-w-[220px]">{r.note}</p>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {r.verified ? (
-                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-green-600/15 text-green-700">Verified</span>
-                  ) : (
-                    <button
-                      onClick={() => onVerify(r.id)}
-                      className="text-[9px] font-black uppercase px-2 py-1 rounded-full bg-amber-600/15 text-amber-700 hover:bg-amber-600/25 transition-colors"
-                    >
-                      Verify
-                    </button>
-                  )}
-                  <button onClick={() => onDelete(r.id)} className="text-muted-foreground hover:text-red-700 p-1">
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

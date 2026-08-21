@@ -2,20 +2,35 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Users, Activity, Euro, BarChart2, Calendar, FileText, X } from 'lucide-react';
+import { Users, Activity, Euro, BarChart2, Calendar, FileText, X, Star, Info } from 'lucide-react';
 import { generateGuideInvoice } from '@/lib/generateInvoice';
 import { localDateStr } from '@/lib/utils';
+import {
+  computeGuideOverviewRows, computeAssignmentStats, groupMonthlyEarnings,
+  groupOrphanedMonthlyByName,
+  type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow,
+} from '@/lib/guidePerformance';
+import {
+  verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, updateGuideMonthlyPayment,
+} from '@/lib/guideRatingActions';
+import GuideStatCards from '@/components/guide/GuideStatCards';
+import GuideEarningsChart from '@/components/guide/GuideEarningsChart';
+import TourHistoryList from '@/components/guide/TourHistoryList';
+import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
+import GuideRatingsPanel from '@/components/guide/GuideRatingsPanel';
 
 export default function GuideDashboard() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
 
   const [guides, setGuides] = useState<any[]>([]);
-  const [assignments, setAssignments] = useState<any[]>([]);
+  const [assignments, setAssignments] = useState<GuideAssignmentRow[]>([]);
   const [optionRates, setOptionRates] = useState<any[]>([]);
+  const [ratings, setRatings] = useState<GuideRatingRow[]>([]);
+  const [monthlyRows, setMonthlyRows] = useState<GuideMonthlyRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<'today' | 'yesterday' | 'month' | 'mtd' | 'ytd'>('month');
-  
+
   // Invoice Modal State
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -25,23 +40,33 @@ export default function GuideDashboard() {
     to: localDateStr()
   });
 
+  // Full-detail panel — opened from the new "All Guides" overview table below. Separate from
+  // selectedGuide/showDetailsModal above (the pre-existing lightweight assignment-table modal),
+  // which stays untouched.
+  const [detailGuideId, setDetailGuideId] = useState<string | null>(null);
+  const [detailVirtualName, setDetailVirtualName] = useState<string | null>(null);
+
   const fetchData = async () => {
     if (!user) return;
     setLoading(true);
 
-    const [gRes, aRes, rRes] = await Promise.all([
+    const [gRes, aRes, rRes, ratingsRes, monthlyRes] = await Promise.all([
       supabase.from('guides').select('*').eq('user_id', user.id).order('name'),
       supabase
         .from('guide_assignments')
         .select('*')
         .eq('user_id', user.id)
         .or('sync_source.eq.gsheet_assignments,sync_source.eq.manual,sync_source.is.null'),
-      supabase.from('guide_product_rates').select('*').eq('user_id', user.id)
+      supabase.from('guide_product_rates').select('*').eq('user_id', user.id),
+      supabase.from('guide_ratings').select('*').eq('user_id', user.id),
+      supabase.from('guide_monthly').select('*').eq('user_id', user.id),
     ]);
 
     if (gRes.data) setGuides(gRes.data);
     if (aRes.data) setAssignments(aRes.data);
     if (rRes.data) setOptionRates(rRes.data);
+    setRatings(ratingsRes.data || []);
+    setMonthlyRows(monthlyRes.data || []);
     setLoading(false);
   };
 
@@ -49,6 +74,97 @@ export default function GuideDashboard() {
     if (!user) return;
     fetchData();
   }, [user]);
+
+  // All-time performance overview — deliberately built from the FULL `assignments` array, not
+  // `filteredAssignments` below (which only covers the dateRange picker's period). A guide's
+  // lifetime totals here must match what they see on their own dashboard; the dateRange filter
+  // only ever scoped the pre-existing period cards/grid further down this page.
+  const todayStr = localDateStr();
+  const overviewRows = useMemo(
+    () => computeGuideOverviewRows(guides, assignments, ratings, monthlyRows, todayStr),
+    [guides, assignments, ratings, monthlyRows, todayStr]
+  );
+  const unattributedAssignmentCount = useMemo(
+    () => assignments.filter(a => !a.guide_id).length,
+    [assignments]
+  );
+
+  const detailGuide = detailGuideId ? guides.find(g => g.id === detailGuideId) || null : null;
+  const detailGuideAssignments = useMemo(
+    () => detailGuideId ? assignments.filter(a => a.guide_id === detailGuideId) : [],
+    [assignments, detailGuideId]
+  );
+  const detailGuideRatings = useMemo(
+    () => detailGuideId ? ratings.filter(r => r.guide_id === detailGuideId) : [],
+    [ratings, detailGuideId]
+  );
+  const detailGuideMonthly = useMemo(
+    () => detailGuideId ? monthlyRows.filter(m => m.guide_id === detailGuideId) : [],
+    [monthlyRows, detailGuideId]
+  );
+  const detailGuideStats = useMemo(
+    () => computeAssignmentStats(detailGuideAssignments, todayStr),
+    [detailGuideAssignments, todayStr]
+  );
+  const detailGuideMonthlyEarnings = useMemo(
+    () => groupMonthlyEarnings(detailGuideAssignments),
+    [detailGuideAssignments]
+  );
+
+  const virtualMonthlyByName = useMemo(() => groupOrphanedMonthlyByName(monthlyRows), [monthlyRows]);
+  const detailVirtualRows = detailVirtualName ? (virtualMonthlyByName.get(detailVirtualName) || []) : [];
+
+  const closeDetail = () => { setDetailGuideId(null); setDetailVirtualName(null); };
+
+  const refreshRatingsAndMonthly = async () => {
+    if (!user) return;
+    const [ratingsRes, monthlyRes] = await Promise.all([
+      supabase.from('guide_ratings').select('*').eq('user_id', user.id),
+      supabase.from('guide_monthly').select('*').eq('user_id', user.id),
+    ]);
+    setRatings(ratingsRes.data || []);
+    setMonthlyRows(monthlyRes.data || []);
+  };
+
+  const handleVerifyRating = async (rating: GuideRatingRow) => {
+    if (!user || !detailGuide) return;
+    const { error } = await verifyGuideRating(supabase, user.id, rating, detailGuide.name);
+    if (error) { alert(`Failed to verify rating: ${error}`); return; }
+    await refreshRatingsAndMonthly();
+  };
+
+  const handleDeleteRating = async (rating: GuideRatingRow) => {
+    if (!user || !detailGuide) return;
+    if (!confirm('Delete this rating?')) return;
+    const { error } = await deleteGuideRating(supabase, user.id, rating, detailGuide.name);
+    if (error) { alert(`Failed to delete rating: ${error}`); return; }
+    await refreshRatingsAndMonthly();
+  };
+
+  const handleEditRating = async (rating: GuideRatingRow, next: { stars: number; quantity: number; source: string | null; note: string | null }) => {
+    if (!user || !detailGuide) return;
+    const { error } = await updateGuideRating(supabase, user.id, rating, next, detailGuide.name);
+    if (error) { alert(`Failed to update rating: ${error}`); return; }
+    await refreshRatingsAndMonthly();
+  };
+
+  const handleAddRating = async (payload: { stars: number; quantity: number; source: string | null; note: string | null }) => {
+    if (!user || !detailGuide) return;
+    const { error } = await addGuideRating(supabase, user.id, detailGuide.id, detailGuide.name, payload);
+    if (error) { alert(`Failed to add rating: ${error}`); return; }
+    await refreshRatingsAndMonthly();
+  };
+
+  const handleUpdatePayment = async (row: GuideMonthlyRow, next: { payment_sent: boolean; payment_date: string | null }) => {
+    if (!user) return;
+    const guideLabel = row.guide_name || detailGuide?.name || 'Guide';
+    const { error } = await updateGuideMonthlyPayment(
+      supabase, user.id, row.id, guideLabel, row.month || 'this month',
+      { payment_sent: !!row.payment_sent, payment_date: row.payment_date }, next
+    );
+    if (error) { alert(`Failed to update payment status: ${error}`); return; }
+    await refreshRatingsAndMonthly();
+  };
 
   const filteredAssignments = useMemo(() => {
     const now = new Date();
@@ -224,6 +340,72 @@ export default function GuideDashboard() {
                 </div>
               ))}
             </div>
+
+            {/* ALL GUIDES — ALL-TIME PERFORMANCE OVERVIEW */}
+            <div className="pt-4 border-t border-border">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="text-xl font-extrabold tracking-tight">All Guides — All-Time Performance</h2>
+              </div>
+              <p className="text-xs text-muted-foreground mb-4">
+                Lifetime totals across every tour on record — independent of the period picker above.
+              </p>
+              <div className="aurelia-card border border-border overflow-x-auto">
+                <table className="w-full text-left text-sm min-w-[820px]">
+                  <thead className="bg-muted text-xs text-muted-foreground uppercase tracking-widest font-bold">
+                    <tr>
+                      <th className="px-5 py-3">Guide</th>
+                      <th className="px-5 py-3 text-right">Done</th>
+                      <th className="px-5 py-3 text-right">Upcoming</th>
+                      <th className="px-5 py-3 text-right">Earned</th>
+                      <th className="px-5 py-3 text-right">Paid</th>
+                      <th className="px-5 py-3 text-right">Pending</th>
+                      <th className="px-5 py-3 text-right">Avg Rating</th>
+                      <th className="px-5 py-3 text-right">Review Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {overviewRows.map(row => (
+                      <tr
+                        key={row.id}
+                        onClick={() => row.kind === 'real' ? setDetailGuideId(row.id) : setDetailVirtualName(row.name)}
+                        className="hover:bg-muted transition-colors cursor-pointer"
+                      >
+                        <td className="px-5 py-3">
+                          <div className="font-bold flex items-center gap-2">
+                            {row.name}
+                            {row.kind === 'virtual' && (
+                              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border" title="Imported invoice history with no linked guide profile">
+                                Unlinked
+                              </span>
+                            )}
+                          </div>
+                          {row.guideNumber && <div className="text-[10px] text-muted-foreground font-mono">{row.guideNumber}</div>}
+                        </td>
+                        <td className="px-5 py-3 text-right tabular-nums">{row.toursDone}</td>
+                        <td className="px-5 py-3 text-right tabular-nums text-blue-700">{row.toursUpcoming}</td>
+                        <td className="px-5 py-3 text-right tabular-nums font-bold">€{row.totalEarned.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        <td className="px-5 py-3 text-right tabular-nums text-green-700">€{row.paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        <td className="px-5 py-3 text-right tabular-nums text-amber-700">€{row.pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                        <td className="px-5 py-3 text-right tabular-nums">
+                          {row.avgRating != null ? (
+                            <span className="inline-flex items-center gap-1 justify-end">
+                              {row.avgRating.toFixed(1)} <Star size={11} className="fill-gold text-gold" />
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td className="px-5 py-3 text-right tabular-nums">{row.reviewRatePct != null ? `${row.reviewRatePct.toFixed(0)}%` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {unattributedAssignmentCount > 0 && (
+                <p className="text-[11px] text-muted-foreground mt-2 flex items-center gap-1.5">
+                  <Info size={12} className="shrink-0" />
+                  {unattributedAssignmentCount} additional imported tour record{unattributedAssignmentCount !== 1 ? 's have' : ' has'} no guide on file and {unattributedAssignmentCount !== 1 ? "aren't" : "isn't"} shown per-guide above.
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -261,7 +443,7 @@ export default function GuideDashboard() {
                       <tr key={a.id} className="hover:bg-muted transition-colors">
                         <td className="px-3 py-3 font-mono text-muted-foreground whitespace-nowrap">{a.travel_date}</td>
                         <td className="px-3 py-3 text-muted-foreground">{a.travel_time || '—'}</td>
-                        <td className="px-3 py-3 font-bold">{a.tour_name || a.product_code || a.product_name || '—'}</td>
+                        <td className="px-3 py-3 font-bold">{a.tour_name || a.product_code || '—'}</td>
                         <td className="px-3 py-3 text-foreground/80">{a.language || '—'}</td>
                         <td className="px-3 py-3 text-muted-foreground">{a.tour_type || '—'}</td>
                         <td className="px-3 py-3 text-right font-mono">€{Number(a.calculated_pay || 0).toFixed(2)}</td>
@@ -342,6 +524,85 @@ export default function GuideDashboard() {
                     Download PDF
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* GUIDE DETAIL PANEL — real guide, full picture matching their own dashboard */}
+        {detailGuide && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 bg-black/80 backdrop-blur-xl animate-fade-in">
+            <div className="bg-card border border-border rounded-[32px] w-full max-w-4xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+              <div className="p-6 md:p-8 border-b border-border flex items-center justify-between bg-muted shrink-0">
+                <div className="min-w-0">
+                  <h2 className="text-2xl font-black truncate">{detailGuide.name}</h2>
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1 font-mono">
+                    {detailGuide.guide_number}{detailGuide.status ? ` · ${detailGuide.status}` : ''}
+                  </p>
+                </div>
+                <button onClick={closeDetail} className="p-2 hover:bg-background rounded-xl text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-8 aurelia-scrollbar">
+                <section className="space-y-4">
+                  <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Tours &amp; Pay</h3>
+                  <GuideStatCards stats={detailGuideStats} />
+                  <GuideEarningsChart data={detailGuideMonthlyEarnings} />
+                  <TourHistoryList
+                    assignments={detailGuideAssignments}
+                    todayStr={todayStr}
+                    isOwner
+                    guideWhatsapp={detailGuide.whatsapp || detailGuide.phone}
+                  />
+                </section>
+
+                <section className="space-y-4 pt-6 border-t border-border">
+                  <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Invoices</h3>
+                  <MonthlyInvoiceList rows={detailGuideMonthly} isOwner onUpdatePayment={handleUpdatePayment} />
+                </section>
+
+                <section className="space-y-4 pt-6 border-t border-border">
+                  <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Ratings</h3>
+                  <GuideRatingsPanel
+                    guideName={detailGuide.name}
+                    ratings={detailGuideRatings}
+                    toursDoneCount={detailGuideStats.toursDone}
+                    isOwner
+                    embedded
+                    onVerify={handleVerifyRating}
+                    onDelete={handleDeleteRating}
+                    onEdit={handleEditRating}
+                    onAdd={handleAddRating}
+                  />
+                </section>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* GUIDE DETAIL PANEL — name-only imported history, no linked guide profile to attribute
+            tour history or ratings to, so only the invoice statement is shown (honestly — not
+            fabricated). */}
+        {detailVirtualName && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 bg-black/80 backdrop-blur-xl animate-fade-in">
+            <div className="bg-card border border-border rounded-[32px] w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+              <div className="p-6 md:p-8 border-b border-border flex items-center justify-between bg-muted shrink-0">
+                <div className="min-w-0">
+                  <h2 className="text-2xl font-black truncate">{detailVirtualName}</h2>
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">Imported invoice history · no linked profile</p>
+                </div>
+                <button onClick={closeDetail} className="p-2 hover:bg-background rounded-xl text-muted-foreground hover:text-foreground transition-colors shrink-0">
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-4 aurelia-scrollbar">
+                <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+                  <Info size={13} className="shrink-0 mt-0.5" />
+                  This name doesn't match any current guide profile, so only their imported monthly invoice history is available — no tour history or ratings can be attributed to them.
+                </p>
+                <MonthlyInvoiceList rows={detailVirtualRows} isOwner onUpdatePayment={handleUpdatePayment} />
               </div>
             </div>
           </div>

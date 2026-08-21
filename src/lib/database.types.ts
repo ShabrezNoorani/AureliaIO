@@ -19,30 +19,48 @@ export type Database = {
           amount: number
           category: string | null
           created_at: string | null
+          expense_date: string | null
+          frequency: string | null
           id: string
+          import_batch: string | null
           label: string
           month: number | null
+          payment_method: string | null
+          receipt: string | null
           user_id: string | null
+          vat_amount: number | null
           year: number | null
         }
         Insert: {
           amount: number
           category?: string | null
           created_at?: string | null
+          expense_date?: string | null
+          frequency?: string | null
           id?: string
+          import_batch?: string | null
           label: string
           month?: number | null
+          payment_method?: string | null
+          receipt?: string | null
           user_id?: string | null
+          vat_amount?: number | null
           year?: number | null
         }
         Update: {
           amount?: number
           category?: string | null
           created_at?: string | null
+          expense_date?: string | null
+          frequency?: string | null
           id?: string
+          import_batch?: string | null
           label?: string
           month?: number | null
+          payment_method?: string | null
+          receipt?: string | null
           user_id?: string | null
+          vat_amount?: number | null
           year?: number | null
         }
         Relationships: []
@@ -294,6 +312,7 @@ export type Database = {
           created_at: string | null
           guide_id: string | null
           id: string
+          import_batch: string | null
           is_paid: boolean | null
           language: string | null
           notes: string | null
@@ -320,6 +339,7 @@ export type Database = {
           created_at?: string | null
           guide_id?: string | null
           id?: string
+          import_batch?: string | null
           is_paid?: boolean | null
           language?: string | null
           notes?: string | null
@@ -346,6 +366,7 @@ export type Database = {
           created_at?: string | null
           guide_id?: string | null
           id?: string
+          import_batch?: string | null
           is_paid?: boolean | null
           language?: string | null
           notes?: string | null
@@ -366,6 +387,68 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "guide_assignments_guide_id_fkey"
+            columns: ["guide_id"]
+            isOneToOne: false
+            referencedRelation: "guides"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      guide_monthly: {
+        Row: {
+          amount_owed: number | null
+          created_at: string | null
+          difference: number | null
+          guide_id: string | null
+          guide_name: string | null
+          id: string
+          import_batch: string | null
+          invoice_amount: number | null
+          invoice_received: string | null
+          month: string | null
+          payment_date: string | null
+          payment_sent: boolean | null
+          tours_completed: number | null
+          tva: number | null
+          user_id: string | null
+        }
+        Insert: {
+          amount_owed?: number | null
+          created_at?: string | null
+          difference?: number | null
+          guide_id?: string | null
+          guide_name?: string | null
+          id?: string
+          import_batch?: string | null
+          invoice_amount?: number | null
+          invoice_received?: string | null
+          month?: string | null
+          payment_date?: string | null
+          payment_sent?: boolean | null
+          tours_completed?: number | null
+          tva?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          amount_owed?: number | null
+          created_at?: string | null
+          difference?: number | null
+          guide_id?: string | null
+          guide_name?: string | null
+          id?: string
+          import_batch?: string | null
+          invoice_amount?: number | null
+          invoice_received?: string | null
+          month?: string | null
+          payment_date?: string | null
+          payment_sent?: boolean | null
+          tours_completed?: number | null
+          tva?: number | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "guide_monthly_guide_id_fkey"
             columns: ["guide_id"]
             isOneToOne: false
             referencedRelation: "guides"

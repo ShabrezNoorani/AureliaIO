@@ -1,8 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Calendar as CalendarIcon, Compass, Users, X } from 'lucide-react';
+import { Calendar as CalendarIcon, Compass, Users, X, Star } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
+import {
+  computeAssignmentStats, computeRatingStats, groupMonthlyEarnings,
+  type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow,
+} from '@/lib/guidePerformance';
+import GuideStatCards from '@/components/guide/GuideStatCards';
+import GuideEarningsChart from '@/components/guide/GuideEarningsChart';
+import TourHistoryList from '@/components/guide/TourHistoryList';
+import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
 
 interface SessionGuideRow {
   session_id: string;
@@ -59,6 +67,15 @@ export default function GuideHome() {
   const [reassignSessionId, setReassignSessionId] = useState<string | null>(null);
   const [reassignTargetId, setReassignTargetId] = useState('');
   const [reassigning, setReassigning] = useState(false);
+
+  // "How am I doing" performance data — a separate fetch/effect from the offers/sessions data
+  // above, scoped to this guide's own rows only (RLS: guide_id IN (SELECT id FROM guides WHERE
+  // auth_user_id = auth.uid())). Kept independent so a hiccup in either fetch never affects the
+  // other.
+  const [assignments, setAssignments] = useState<GuideAssignmentRow[]>([]);
+  const [monthlyRows, setMonthlyRows] = useState<GuideMonthlyRow[]>([]);
+  const [ratings, setRatings] = useState<GuideRatingRow[]>([]);
+  const [perfLoading, setPerfLoading] = useState(true);
 
   const today = localDateStr();
   const todayStr = new Date().toLocaleDateString('en-US', {
@@ -124,6 +141,34 @@ export default function GuideHome() {
   useEffect(() => {
     loadData();
   }, [guideId, guideUserId]);
+
+  useEffect(() => {
+    const loadPerformance = async () => {
+      if (!guideId) return;
+      setPerfLoading(true);
+      const [aRes, mRes, rRes] = await Promise.all([
+        supabase.from('guide_assignments')
+          .select('id, guide_id, travel_date, travel_time, tour_name, tour_type, language, calculated_pay, rate_override, bonus, total_pay, is_paid, paid_date, product_code, option_name, booking_ref, clients, notes, pax_count')
+          .eq('guide_id', guideId),
+        supabase.from('guide_monthly')
+          .select('id, guide_id, guide_name, month, tours_completed, amount_owed, invoice_received, invoice_amount, tva, difference, payment_sent, payment_date')
+          .eq('guide_id', guideId),
+        supabase.from('guide_ratings').select('*').eq('guide_id', guideId),
+      ]);
+      setAssignments(aRes.data || []);
+      setMonthlyRows(mRes.data || []);
+      setRatings(rRes.data || []);
+      setPerfLoading(false);
+    };
+    loadPerformance();
+  }, [guideId]);
+
+  const assignmentStats = useMemo(() => computeAssignmentStats(assignments, today), [assignments, today]);
+  const monthlyEarnings = useMemo(() => groupMonthlyEarnings(assignments), [assignments]);
+  const ratingStats = useMemo(
+    () => computeRatingStats(ratings, assignmentStats.toursDone),
+    [ratings, assignmentStats.toursDone]
+  );
 
   const sessionById = useMemo(() => new Map(sessions.map(s => [s.id, s])), [sessions]);
 
@@ -302,6 +347,53 @@ export default function GuideHome() {
               )}
             </>
           )}
+        </>
+      )}
+
+      {/* ─── HOW AM I DOING ─── */}
+      {perfLoading ? (
+        <div className="flex justify-center p-12">
+          <div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin" />
+        </div>
+      ) : (
+        <>
+          <section className="space-y-4">
+            <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Tours &amp; Pay</h2>
+            <GuideStatCards stats={assignmentStats} />
+            <GuideEarningsChart data={monthlyEarnings} />
+            <TourHistoryList assignments={assignments} todayStr={today} />
+          </section>
+
+          <section className="space-y-4">
+            <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Invoices</h2>
+            <MonthlyInvoiceList rows={monthlyRows} />
+          </section>
+
+          <section className="space-y-4">
+            <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Performance</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="aurelia-card p-5 border-l-[3px] border-l-gold">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Average Rating</p>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-3xl font-extrabold">{ratingStats.avgRating != null ? ratingStats.avgRating.toFixed(1) : '—'}</span>
+                  {ratingStats.avgRating != null && <Star size={18} className="text-gold fill-gold" />}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {ratingStats.verifiedReviewCount} verified review{ratingStats.verifiedReviewCount !== 1 ? 's' : ''}
+                </p>
+              </div>
+              <div className="aurelia-card p-5 border-l-[3px] border-l-blue-500">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Review Rate</p>
+                <span className="text-3xl font-extrabold">
+                  {ratingStats.reviewRatePct != null ? `${ratingStats.reviewRatePct.toFixed(0)}%` : '—'}
+                </span>
+                <p className="text-xs text-muted-foreground mt-1">guests who reviewed</p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground italic">
+              Punctuality tracking begins with live check-ins.
+            </p>
+          </section>
         </>
       )}
 
