@@ -11,6 +11,7 @@ import TodayToursPage from '@/pages/TodayToursPage';
 import DispatchPage from '@/pages/DispatchPage';
 import ExecutiveDashboard from '@/pages/ExecutiveDashboard';
 import AnalyticsPage from '@/pages/AnalyticsPage';
+import BreakdownPnlPage from '@/pages/BreakdownPnlPage';
 import GuidesPage from '@/pages/GuidesPage';
 import GuideDashboard from '@/pages/GuideDashboard';
 import MarketplacePage from '@/pages/MarketplacePage';
@@ -22,7 +23,7 @@ import { syncMasterData } from '@/lib/gsheetSync';
 import { syncFromBokun } from '@/lib/bokunSync';
 import { localDateStr } from '@/lib/utils';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 const AppLayout = () => {
   const { user, profile } = useAuth();
@@ -62,6 +63,7 @@ const AppLayout = () => {
     else if (path.includes('/ledger')) setView('ledger');
     else if (path.includes('/admin-costs')) setView('admin-costs');
     else if (path.includes('/analytics')) setView('analytics');
+    else if (path.includes('/breakdown-pnl')) setView('breakdown-pnl');
     else if (path.includes('/settings')) setView('settings');
     else if (path.includes('/products')) setView('products');
     else if (path.includes('/changelog')) setView('changelog');
@@ -292,6 +294,7 @@ const AppLayout = () => {
         {view === 'dispatch' && <DispatchPage />}
         {view === 'executive' && <ExecutiveDashboard />}
         {view === 'analytics' && <AnalyticsPage />}
+        {view === 'breakdown-pnl' && <BreakdownPnlPage />}
         {view === 'settings' && <SettingsPage />}
         {view === 'guides' && <GuidesPage />}
         {view === 'guide-dashboard' && <GuideDashboard />}

@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart, Send } from 'lucide-react';
+import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart, Send, LineChart } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, Profile } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'executive' | 'analytics' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -180,6 +180,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
               <SidebarItem icon={Home} label="Home" active={activeView === 'executive'} onClick={() => handleNavigate('executive')} indent />
               <SidebarItem icon={TrendingUp} label="Simulator" active={activeView === 'simulator'} onClick={() => handleNavigate('simulator')} indent />
               <SidebarItem icon={BarChart3} label="Analytics" active={activeView === 'analytics'} onClick={() => handleNavigate('analytics')} indent />
+              <SidebarItem icon={LineChart} label="Breakdown P&L" active={activeView === 'breakdown-pnl'} onClick={() => handleNavigate('breakdown-pnl', '/app/breakdown-pnl')} indent />
             </div>
           )}
         </div>

@@ -48,17 +48,6 @@ class AnalyticsErrorBoundary extends Component<{children: ReactNode, resetError:
   }
 }
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
-
-// Defaults the day-based P&L range to the current calendar month.
-const currentMonthRange = () => {
-  const d = new Date();
-  const start = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-01`;
-  const endDate = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-  const end = `${endDate.getFullYear()}-${pad2(endDate.getMonth() + 1)}-${pad2(endDate.getDate())}`;
-  return { start, end };
-};
-
 export default function AnalyticsPageWrapper() {
   const navigate = useNavigate();
   return (
@@ -82,10 +71,6 @@ function AnalyticsPage() {
   const [productFilter, setProductFilter] = useState('All');
   const [channelFilter, setChannelFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
-
-  // Day-based P&L date range (independent of the filters above — defaults to the current month)
-  const [pnlStartDate, setPnlStartDate] = useState(() => currentMonthRange().start);
-  const [pnlEndDate, setPnlEndDate] = useState(() => currentMonthRange().end);
 
   // Load data
   useEffect(() => {
@@ -422,45 +407,6 @@ function AnalyticsPage() {
     };
   }, [bookings]);
 
-  // 8. DAY-BASED PROFIT & LOSS
-  // Column names taken directly from database.types.ts's bookings table: travel_date, gross_revenue,
-  // commission_amount, marketplace_fee, guide_cost, extra_cost, ticket_cost, net_profit. The stored
-  // net_profit is summed directly when present; only bookings missing it fall back to
-  // gross_revenue minus the summed costs, so every day total stays internally consistent.
-  const dayPnlData = useMemo(() => {
-    const map = new Map<string, { date: string; bookings: number; pax: number; gross: number; costs: number; netp: number }>();
-    (bookings || []).forEach(b => {
-      const raw = b?.travel_date;
-      if (!raw) return;
-      const day = String(raw).slice(0, 10);
-      if (day < pnlStartDate || day > pnlEndDate) return;
-
-      const costs = (b?.commission_amount || 0) + (b?.marketplace_fee || 0) + (b?.guide_cost || 0) + (b?.extra_cost || 0) + (b?.ticket_cost || 0);
-      const netp = b?.net_profit != null ? b.net_profit : (b?.gross_revenue || 0) - costs;
-      const pax = (b?.pax_adult || 0) + (b?.pax_youth || 0) + (b?.pax_child || 0) + (b?.pax_infant || 0);
-
-      if (!map.has(day)) map.set(day, { date: day, bookings: 0, pax: 0, gross: 0, costs: 0, netp: 0 });
-      const row = map.get(day)!;
-      row.bookings++;
-      row.pax += pax;
-      row.gross += (b?.gross_revenue || 0);
-      row.costs += costs;
-      row.netp += netp;
-    });
-    // Days with zero bookings simply never get a map entry — omitted rather than padded with zero rows.
-    return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
-  }, [bookings, pnlStartDate, pnlEndDate]);
-
-  const pnlChartData = useMemo(
-    () => [...dayPnlData].sort((a, b) => a.date.localeCompare(b.date)),
-    [dayPnlData]
-  );
-
-  const pnlTotals = useMemo(() => dayPnlData.reduce((acc, d) => {
-    acc.bookings += d.bookings; acc.pax += d.pax; acc.gross += d.gross; acc.costs += d.costs; acc.netp += d.netp;
-    return acc;
-  }, { bookings: 0, pax: 0, gross: 0, costs: 0, netp: 0 }), [dayPnlData]);
-
   const fmtE = (v: number) => `€${(v||0).toLocaleString(undefined, {maximumFractionDigits:0})}`;
   const fmtP = (v: number) => `${((v||0)*100).toFixed(1)}%`;
 
@@ -707,130 +653,6 @@ function AnalyticsPage() {
               </tbody>
             </table>
           ) : <div className="p-8 text-center text-muted-foreground">No monthly data matching filters.</div>}
-        </div>
-      </div>
-
-      {/* ROW 4.5: DAY-BASED PROFIT & LOSS */}
-      <div className="mb-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h2 className="text-sm font-bold tracking-widest text-muted-foreground uppercase flex items-center gap-2">
-            <Calendar size={16} /> Day-by-Day Profit &amp; Loss
-          </h2>
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <label className="text-muted-foreground font-medium">From</label>
-            <input
-              type="date"
-              className="aurelia-input w-auto py-1.5"
-              value={pnlStartDate}
-              max={pnlEndDate}
-              onChange={e => setPnlStartDate(e.target.value)}
-            />
-            <label className="text-muted-foreground font-medium">To</label>
-            <input
-              type="date"
-              className="aurelia-input w-auto py-1.5"
-              value={pnlEndDate}
-              min={pnlStartDate}
-              onChange={e => setPnlEndDate(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <p className="text-[11px] text-muted-foreground mb-4">
-          Admin costs are recorded monthly, not per booking, so they aren't day-attributable and are excluded from this breakdown.
-        </p>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <div className="aurelia-card p-4">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-1">Days with Bookings</div>
-            <div className="text-xl font-black tabular-nums">{dayPnlData.length}</div>
-          </div>
-          <div className="aurelia-card p-4">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-1">Gross Revenue</div>
-            <div className="text-xl font-black tabular-nums">{fmtE(pnlTotals.gross)}</div>
-          </div>
-          <div className="aurelia-card p-4">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-1">Total Costs</div>
-            <div className="text-xl font-black tabular-nums text-muted-foreground">{fmtE(pnlTotals.costs)}</div>
-          </div>
-          <div className="aurelia-card p-4">
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold mb-1">Net Profit</div>
-            <div className={`text-xl font-black tabular-nums ${pnlTotals.netp >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>{fmtE(pnlTotals.netp)}</div>
-          </div>
-        </div>
-
-        <div className="aurelia-card p-5 mb-4">
-          <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-4">Daily Net Profit</h3>
-          <div className="h-[260px]">
-            {pnlChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={pnlChartData} margin={{ left: -10, right: 10, bottom: 0, top: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={colors.grid} />
-                  <XAxis dataKey="date" stroke={colors.text} fontSize={10} tickFormatter={d => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} />
-                  <YAxis stroke={colors.text} fontSize={11} tickFormatter={v => `€${v}`} />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: colors.tooltip.bg, borderColor: colors.tooltip.border, borderRadius: '8px', fontSize: '12px', color: colors.tooltip.text }}
-                    itemStyle={{ color: colors.tooltip.text }}
-                    labelFormatter={d => new Date(d).toLocaleDateString()}
-                    formatter={(v: number) => fmtE(v)}
-                  />
-                  <Bar dataKey="netp" name="Net Profit" radius={[4, 4, 0, 0]}>
-                    {pnlChartData.map((d, i) => (
-                      <Cell key={i} fill={d.netp >= 0 ? colors.secondary : '#ef4444'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-muted-foreground">No bookings in this date range.</div>
-            )}
-          </div>
-        </div>
-
-        <div className="aurelia-card overflow-hidden">
-          <div className="p-4 bg-muted/20 border-b border-border">
-            <h3 className="text-sm font-bold tracking-widest text-muted-foreground uppercase">Daily Breakdown</h3>
-          </div>
-          <div className="overflow-x-auto">
-            {dayPnlData.length > 0 ? (
-              <table className="w-full text-xs text-left">
-                <thead>
-                  <tr className="bg-muted border-b border-border text-[10px] uppercase text-muted-foreground tracking-wider">
-                    <th className="py-3 px-4 font-bold">Date</th>
-                    <th className="py-3 px-3 font-bold text-center">Bookings</th>
-                    <th className="py-3 px-3 font-bold text-center">Pax</th>
-                    <th className="py-3 px-3 font-bold text-right">Revenue</th>
-                    <th className="py-3 px-3 font-bold text-right">Costs</th>
-                    <th className="py-3 px-4 font-bold text-right">Net Profit</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/40">
-                  {dayPnlData.map(d => (
-                    <tr key={d.date} className="hover:bg-muted/60 transition-colors">
-                      <td className="py-3 px-4 font-semibold tabular-nums">
-                        {new Date(d.date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
-                      </td>
-                      <td className="py-3 px-3 text-center tabular-nums">{d.bookings}</td>
-                      <td className="py-3 px-3 text-center tabular-nums">{d.pax}</td>
-                      <td className="py-3 px-3 text-right tabular-nums">{fmtE(d.gross)}</td>
-                      <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">{fmtE(d.costs)}</td>
-                      <td className={`py-3 px-4 text-right tabular-nums font-bold ${d.netp >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>{fmtE(d.netp)}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-primary/5 font-bold">
-                    <td className="py-3 px-4">TOTAL</td>
-                    <td className="py-3 px-3 text-center tabular-nums">{pnlTotals.bookings}</td>
-                    <td className="py-3 px-3 text-center tabular-nums">{pnlTotals.pax}</td>
-                    <td className="py-3 px-3 text-right tabular-nums">{fmtE(pnlTotals.gross)}</td>
-                    <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">{fmtE(pnlTotals.costs)}</td>
-                    <td className={`py-3 px-4 text-right tabular-nums ${pnlTotals.netp >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>{fmtE(pnlTotals.netp)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            ) : (
-              <div className="p-8 text-center text-muted-foreground">No bookings in this date range.</div>
-            )}
-          </div>
         </div>
       </div>
 
