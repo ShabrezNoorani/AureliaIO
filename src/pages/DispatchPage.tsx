@@ -68,6 +68,12 @@ interface NaturalGroup {
 const paxTotal = (b: Booking) =>
   (Number(b.pax_adult) || 0) + (Number(b.pax_youth) || 0) + (Number(b.pax_child) || 0) + (Number(b.pax_infant) || 0);
 
+// Any status starting with CANCELLED (CANCELLED_EARLY, CANCELLED_LATE, bare CANCELLED, ...) is
+// treated as cancelled — shown so nothing looks like it silently vanished, but never selectable,
+// never assignable to a session or guide, and never counted in pax totals used for allocation.
+const isCancelledStatus = (status: string | null | undefined) =>
+  !!status && status.toUpperCase().startsWith('CANCELLED');
+
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   offered: { label: 'Offered', className: 'bg-amber-600/15 text-amber-700' },
   accepted: { label: 'Accepted', className: 'bg-green-600/15 text-green-700' },
@@ -99,9 +105,10 @@ export default function DispatchPage() {
     setLoading(true);
 
     const [bRes, sRes, gRes] = await Promise.all([
+      // Cancelled bookings are fetched too (not filtered out) — Dispatch shows them, struck
+      // through and unselectable, rather than making them silently disappear from the day.
       supabase.from('bookings').select('*')
         .eq('user_id', user.id).eq('travel_date', selectedDate)
-        .not('status', 'in', '("CANCELLED_EARLY","CANCELLED_LATE")')
         .order('travel_time', { ascending: true }),
       supabase.from('tour_sessions').select('*')
         .eq('user_id', user.id).eq('tour_date', selectedDate)
@@ -190,10 +197,13 @@ export default function DispatchPage() {
   const sessionById = useMemo(() => new Map(sessions.map(s => [s.id, s])), [sessions]);
 
   const getGroupAssignmentInfo = (group: NaturalGroup) => {
-    const assignedSessionIds = group.bookings.map(b => bookingRefToSessionId.get(b.booking_ref));
+    // Assignment status is computed over assignable (non-cancelled) bookings only, so a group
+    // that's fully assigned except for a cancelled guest still reads as fully assigned.
+    const assignableBookings = group.bookings.filter(b => !isCancelledStatus(b.status));
+    const assignedSessionIds = assignableBookings.map(b => bookingRefToSessionId.get(b.booking_ref));
     const assignedCount = assignedSessionIds.filter(Boolean).length;
     const uniqueSessionIds = Array.from(new Set(assignedSessionIds.filter(Boolean))) as string[];
-    return { assignedCount, uniqueSessionIds };
+    return { assignedCount, assignableCount: assignableBookings.length, uniqueSessionIds };
   };
 
   const toggleGroupSelection = (key: string) => {
@@ -213,7 +223,9 @@ export default function DispatchPage() {
   };
 
   const selectedGroups = naturalGroups.filter(g => selectedGroupKeys.has(g.key));
-  const selectedBookingsFlat = selectedGroups.flatMap(g => g.bookings);
+  // Cancelled bookings never get built into a session — filtered out here so both the "create
+  // session" refs and the displayed total pax exclude them.
+  const selectedBookingsFlat = selectedGroups.flatMap(g => g.bookings.filter(b => !isCancelledStatus(b.status)));
   const selectedTotalPax = selectedBookingsFlat.reduce((s, b) => s + paxTotal(b), 0);
   const selectedDistinctTimes = new Set(selectedGroups.map(g => g.travel_time));
   const selectedDistinctProducts = new Set(selectedGroups.map(g => `${g.product_name} — ${g.option_name}`));
@@ -266,7 +278,12 @@ export default function DispatchPage() {
   };
 
   const handleMoveGroupToSession = async (group: NaturalGroup, targetSessionId: string | null) => {
-    await reassignBookings(group.bookings.map(b => b.booking_ref), targetSessionId);
+    // Assigning to a session excludes cancelled bookings (never added); unassigning clears the
+    // whole group, including any cancelled booking left over from before it was cancelled.
+    const refs = targetSessionId
+      ? group.bookings.filter(b => !isCancelledStatus(b.status)).map(b => b.booking_ref)
+      : group.bookings.map(b => b.booking_ref);
+    await reassignBookings(refs, targetSessionId);
     await loadData();
   };
 
@@ -371,7 +388,10 @@ export default function DispatchPage() {
                   const info = getGroupAssignmentInfo(group);
                   const isSelected = selectedGroupKeys.has(group.key);
                   const isExpanded = expandedGroups.has(group.key);
-                  const groupPax = group.bookings.reduce((s, b) => s + paxTotal(b), 0);
+                  const cancelledCount = group.bookings.filter(b => isCancelledStatus(b.status)).length;
+                  // Cancelled pax never counts toward the total used to build/balance a session.
+                  const groupPax = group.bookings.reduce((s, b) => s + (isCancelledStatus(b.status) ? 0 : paxTotal(b)), 0);
+                  const groupSelectable = info.assignableCount > 0;
 
                   return (
                     <div key={group.key} className={`aurelia-card p-4 border transition-colors ${isSelected ? 'border-gold/50 bg-gold/5' : 'border-border'}`}>
@@ -380,7 +400,9 @@ export default function DispatchPage() {
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleGroupSelection(group.key)}
-                          className="mt-1.5 w-4 h-4 accent-gold shrink-0"
+                          disabled={!groupSelectable}
+                          title={!groupSelectable ? 'All bookings in this group are cancelled' : undefined}
+                          className="mt-1.5 w-4 h-4 accent-gold shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -390,15 +412,17 @@ export default function DispatchPage() {
                                 {group.product_name} <span className="text-muted-foreground font-normal">—</span> <span className="text-gold">{group.option_name}</span>
                               </span>
                             </div>
-                            {info.assignedCount === 0 ? (
+                            {info.assignableCount === 0 ? (
+                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0">All cancelled</span>
+                            ) : info.assignedCount === 0 ? (
                               <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-muted text-muted-foreground shrink-0">Unassigned</span>
-                            ) : info.assignedCount === group.bookings.length && info.uniqueSessionIds.length === 1 ? (
+                            ) : info.assignedCount === info.assignableCount && info.uniqueSessionIds.length === 1 ? (
                               <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-green-600/15 text-green-700 shrink-0">
                                 In {sessionById.get(info.uniqueSessionIds[0])?.label || 'Session'}
                               </span>
                             ) : (
                               <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-amber-600/15 text-amber-700 shrink-0">
-                                {info.assignedCount}/{group.bookings.length} assigned
+                                {info.assignedCount}/{info.assignableCount} assigned
                               </span>
                             )}
                           </div>
@@ -406,6 +430,11 @@ export default function DispatchPage() {
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-1.5">
                             <span>{group.bookings.length} booking{group.bookings.length !== 1 ? 's' : ''}</span>
                             <span className="text-gold font-bold">{groupPax} pax</span>
+                            {cancelledCount > 0 && (
+                              <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-600/10 text-red-700/80">
+                                {cancelledCount} cancelled
+                              </span>
+                            )}
                             <button onClick={() => toggleExpand(group.key)} className="text-gold hover:underline font-bold">
                               {isExpanded ? 'Hide' : 'Show'} bookings
                             </button>
@@ -415,12 +444,14 @@ export default function DispatchPage() {
                             <label className="text-[10px] font-bold text-muted-foreground uppercase shrink-0">Move group:</label>
                             <select
                               value=""
+                              disabled={!groupSelectable}
+                              title={!groupSelectable ? 'All bookings in this group are cancelled' : undefined}
                               onChange={e => {
                                 const v = e.target.value;
                                 if (!v) return;
                                 handleMoveGroupToSession(group, v === '__unassign__' ? null : v);
                               }}
-                              className="aurelia-input w-auto text-xs py-1"
+                              className="aurelia-input w-auto text-xs py-1 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                               <option value="">-- choose session --</option>
                               <option value="__unassign__">— Unassign —</option>
@@ -432,22 +463,30 @@ export default function DispatchPage() {
                             <div className="mt-3 space-y-2 border-t border-border pt-3">
                               {group.bookings.map(b => {
                                 const sid = bookingRefToSessionId.get(b.booking_ref) || '';
+                                const cancelled = isCancelledStatus(b.status);
                                 return (
-                                  <div key={b.id} className="flex flex-wrap items-center justify-between gap-2 text-xs bg-muted rounded-lg p-2">
-                                    <div className="min-w-0 truncate">
-                                      <span className="font-bold text-foreground">{b.customer_name}</span>
-                                      <span className="text-muted-foreground font-mono ml-2">{b.booking_ref}</span>
+                                  <div key={b.id} className={`flex flex-wrap items-center justify-between gap-2 text-xs rounded-lg p-2 ${cancelled ? 'bg-muted/50' : 'bg-muted'}`}>
+                                    <div className="min-w-0 truncate flex items-center gap-2">
+                                      <span className={`font-bold ${cancelled ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{b.customer_name}</span>
+                                      <span className={`font-mono ${cancelled ? 'line-through text-muted-foreground/70' : 'text-muted-foreground'}`}>{b.booking_ref}</span>
+                                      {cancelled && (
+                                        <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-600/10 text-red-700/80 shrink-0">Cancelled</span>
+                                      )}
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
-                                      <span className="text-gold font-bold">{paxTotal(b)} pax</span>
-                                      <select
-                                        value={sid}
-                                        onChange={e => handleMoveBookingToSession(b.booking_ref, e.target.value || null)}
-                                        className="aurelia-input w-auto text-[10px] py-1"
-                                      >
-                                        <option value="">Unassigned</option>
-                                        {sessions.map(s => <option key={s.id} value={s.id}>{s.label || 'Untitled Session'}</option>)}
-                                      </select>
+                                      <span className={`font-bold ${cancelled ? 'text-muted-foreground line-through' : 'text-gold'}`}>{paxTotal(b)} pax</span>
+                                      {cancelled ? (
+                                        <span className="text-[10px] text-muted-foreground italic px-1">Not assignable</span>
+                                      ) : (
+                                        <select
+                                          value={sid}
+                                          onChange={e => handleMoveBookingToSession(b.booking_ref, e.target.value || null)}
+                                          className="aurelia-input w-auto text-[10px] py-1"
+                                        >
+                                          <option value="">Unassigned</option>
+                                          {sessions.map(s => <option key={s.id} value={s.id}>{s.label || 'Untitled Session'}</option>)}
+                                        </select>
+                                      )}
                                     </div>
                                   </div>
                                 );
@@ -510,7 +549,9 @@ export default function DispatchPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {sessions.map(session => {
                   const sBookings = sessionIdToBookings.get(session.id) || [];
-                  const sPax = sBookings.reduce((s, b) => s + paxTotal(b), 0);
+                  // Defensive: a booking assigned before being cancelled must not count toward
+                  // the pax total used to balance/offer guides for this session.
+                  const sPax = sBookings.reduce((s, b) => s + (isCancelledStatus(b.status) ? 0 : paxTotal(b)), 0);
                   const sGuideRows = sessionIdToGuideRows.get(session.id) || [];
                   const assignedGuideIds = sGuideRows.map(r => r.guide_id);
                   const isEditingLabel = editingLabelId === session.id;
@@ -650,20 +691,26 @@ export default function DispatchPage() {
                       <div className="space-y-1.5 max-h-56 overflow-y-auto aurelia-scrollbar">
                         {sBookings.length === 0 ? (
                           <p className="text-xs text-muted-foreground italic">No bookings in this session.</p>
-                        ) : sBookings.map(b => (
-                          <div key={b.id} className="flex items-center justify-between gap-2 text-xs bg-muted rounded-lg p-2">
-                            <div className="min-w-0 truncate">
-                              <span className="font-bold text-foreground">{b.customer_name}</span>
-                              <span className="text-muted-foreground font-mono ml-2">{b.booking_ref}</span>
+                        ) : sBookings.map(b => {
+                          const cancelled = isCancelledStatus(b.status);
+                          return (
+                          <div key={b.id} className={`flex items-center justify-between gap-2 text-xs rounded-lg p-2 ${cancelled ? 'bg-muted/50' : 'bg-muted'}`}>
+                            <div className="min-w-0 truncate flex items-center gap-2">
+                              <span className={`font-bold ${cancelled ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{b.customer_name}</span>
+                              <span className={`font-mono ${cancelled ? 'line-through text-muted-foreground/70' : 'text-muted-foreground'}`}>{b.booking_ref}</span>
+                              {cancelled && (
+                                <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded bg-red-600/10 text-red-700/80 shrink-0">Cancelled</span>
+                              )}
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
-                              <span className="text-gold font-bold">{paxTotal(b)}</span>
+                              <span className={`font-bold ${cancelled ? 'text-muted-foreground line-through' : 'text-gold'}`}>{paxTotal(b)}</span>
                               <button onClick={() => handleMoveBookingToSession(b.booking_ref, null)} title="Remove from session" className="text-muted-foreground hover:text-red-700 p-1">
                                 <X size={13} />
                               </button>
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   );

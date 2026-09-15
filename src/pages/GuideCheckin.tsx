@@ -64,6 +64,11 @@ interface GuideProfile {
 const paxTotal = (b: Booking) =>
   (Number(b.pax_adult) || 0) + (Number(b.pax_youth) || 0) + (Number(b.pax_child) || 0) + (Number(b.pax_infant) || 0);
 
+// Any status starting with CANCELLED — shown struck-through, never checkinable, never counted
+// toward a session's pax total.
+const isCancelledStatus = (status: string | null | undefined) =>
+  !!status && status.toUpperCase().startsWith('CANCELLED');
+
 export default function GuideCheckin() {
   const { guideId, guideName, guideUserId } = useAuth();
 
@@ -303,7 +308,7 @@ export default function GuideCheckin() {
       const cRecord = checkins.find(c => c.booking_ref === sb.booking_ref);
       if (cRecord?.status !== 'checked_in') return;
       const b = bookings.find(bk => bk.booking_ref === sb.booking_ref);
-      if (!b) return;
+      if (!b || isCancelledStatus(b.status)) return;
       const arr = m.get(sb.session_id) || [];
       arr.push({
         bookingRef: sb.booking_ref,
@@ -329,6 +334,7 @@ export default function GuideCheckin() {
   // status and no-ops instead of inserting a duplicate.
   const recordCheckin = (b: Booking, status: 'checked_in' | 'no_show', photoBase64: string | null = null) => {
     if (!guideUserId) return;
+    if (isCancelledStatus(b.status)) return;
 
     const already = checkins.find(c => c.booking_ref === b.booking_ref);
     if (already?.status === 'checked_in' || already?.status === 'no_show') return;
@@ -469,7 +475,8 @@ export default function GuideCheckin() {
         ) : (
           sessionsWithBookings.map(session => {
             const sessionBookingsList = sessionBookingsMap.get(session.id) || [];
-            const totalPax = sessionBookingsList.reduce((sum, b) => sum + paxTotal(b), 0);
+            // A cancelled guest never counts toward the pax total used for allocation/balancing.
+            const totalPax = sessionBookingsList.reduce((sum, b) => sum + (isCancelledStatus(b.status) ? 0 : paxTotal(b)), 0);
 
             const teamGuides = sessionIdToTeam.get(session.id) || [];
             const checkedInGuests = sessionIdToCheckedInGuests.get(session.id) || [];
@@ -499,6 +506,7 @@ export default function GuideCheckin() {
                         onNoShow={() => recordCheckin(b, 'no_show')}
                         onReset={isDone ? () => handleResetCheckin(b) : undefined}
                         syncStuck={stuckBookingRefs.has(b.booking_ref)}
+                        isCancelled={isCancelledStatus(b.status)}
                       />
                     );
                   })}

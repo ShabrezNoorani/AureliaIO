@@ -59,6 +59,8 @@ interface GuestCardProps {
   /** A write for this guest has been retrying in the background for several minutes without
       confirming — flags the card so it's never silently stuck out of sight. */
   syncStuck?: boolean;
+  /** Booking status starts with CANCELLED — shown struck-through with a badge, never checkinable. */
+  isCancelled?: boolean;
 }
 
 export default function GuestCard({
@@ -80,14 +82,15 @@ export default function GuestCard({
   onMoveToSession,
   onReset,
   syncStuck,
+  isCancelled,
 }: GuestCardProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [savingName, setSavingName] = useState(false);
 
   const name = displayName && displayName.trim() ? displayName : booking.customer_name;
-  const locked = isCheckedIn || isNoShow;
-  const canEditName = !!(editableName && isOwner);
+  const locked = isCheckedIn || isNoShow || !!isCancelled;
+  const canEditName = !!(editableName && isOwner) && !isCancelled;
 
   const startEditing = () => {
     setNameDraft(name);
@@ -143,11 +146,16 @@ export default function GuestCard({
           <div className="flex items-center gap-1.5 flex-1 min-w-0 group/name">
             <span
               className={`text-sm font-bold truncate ${
-                isCheckedIn ? 'line-through text-muted-foreground' : isNoShow ? 'text-muted-foreground' : 'text-foreground'
+                isCancelled || isCheckedIn ? 'line-through text-muted-foreground' : isNoShow ? 'text-muted-foreground' : 'text-foreground'
               }`}
             >
               {name}
             </span>
+            {isCancelled && (
+              <span className="text-[8px] font-black uppercase tracking-wide bg-red-600/10 text-red-700/80 px-1.5 py-0.5 rounded shrink-0">
+                Cancelled
+              </span>
+            )}
             {canEditName && (
               <button
                 onClick={startEditing}
@@ -242,10 +250,10 @@ export default function GuestCard({
           ) : (
             <>
               <span className="text-[9px] font-bold uppercase text-muted-foreground tracking-wide whitespace-nowrap">
-                {isCheckedIn ? 'Checked in' : 'No show'}
-                {checkedInAt ? ` · ${new Date(checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+                {isCancelled ? 'Cancelled' : isCheckedIn ? 'Checked in' : 'No show'}
+                {!isCancelled && checkedInAt ? ` · ${new Date(checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
               </span>
-              {onReset && (
+              {onReset && !isCancelled && (
                 <button
                   onClick={onReset}
                   className="text-[10px] font-bold uppercase text-red-700/80 hover:text-red-700 transition-colors whitespace-nowrap"
