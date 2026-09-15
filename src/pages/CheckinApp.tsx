@@ -5,7 +5,7 @@ import { useSearchParams, useParams } from 'react-router-dom';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
-import { localDateStr } from '@/lib/utils';
+import { localDateStr, shortProductCode } from '@/lib/utils';
 
 interface Guide {
   id: string;
@@ -324,7 +324,7 @@ export default function CheckinApp() {
             const sharedGuideName = uniqueGuides.length === 1 ? guides.find(g => g.id === uniqueGuides[0])?.name : null;
 
             return (
-              <TourGroup key={key} time={time} code={code} bookingsCount={groupBookings.length} totalPax={totalPax} sharedGuideName={sharedGuideName}>
+              <TourGroup key={key} time={time} code={shortProductCode(code)} bookingsCount={groupBookings.length} totalPax={totalPax} sharedGuideName={sharedGuideName}>
                 {groupBookings.map(b => {
                   const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
                   const isDone = cRecord?.status === 'checked_in';

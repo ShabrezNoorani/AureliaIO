@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { useEffect } from 'react';
 import { TrendingUp, TrendingDown, Calendar, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useChartColors } from '@/lib/theme';
-import { localDateStr } from '@/lib/utils';
+import { localDateStr, shortProductCode } from '@/lib/utils';
 
 const CHANNELS = ['All', 'Viator', 'GYG', 'Airbnb', 'Website', 'Other'];
 const QUICK_RANGES = ['YTD', '6M', '3M', '1M', 'Custom'];
@@ -53,9 +53,11 @@ export default function ExecutiveDashboard() {
     });
   }, [user]);
 
-  // Derived unique products
+  // Derived unique products — keyed by the short product code (not product_name), same reasoning
+  // as AnalyticsPage: old rows' product_name is literally just the short code, new rows carry the
+  // full tour name, so grouping by name splits one tour into two buckets across sources.
   const uniqueProducts = useMemo(() => {
-    const set = new Set(bookings.map(b => b.product_name).filter(Boolean));
+    const set = new Set(bookings.map(b => shortProductCode(b.product_code)).filter(Boolean));
     return ['All', ...Array.from(set)];
   }, [bookings]);
 
@@ -91,7 +93,7 @@ export default function ExecutiveDashboard() {
     const prevEnd = start;
 
     let bFiltered = bookings;
-    if (productFilter !== 'All') bFiltered = bFiltered.filter(b => b.product_name === productFilter);
+    if (productFilter !== 'All') bFiltered = bFiltered.filter(b => shortProductCode(b.product_code) === productFilter);
     if (channelFilter !== 'All') bFiltered = bFiltered.filter(b => b.channel === channelFilter);
     if (!includeCancelled) bFiltered = bFiltered.filter(b => !['CANCELLED_EARLY', 'CANCELLED_LATE'].includes(b.status));
 
@@ -200,7 +202,7 @@ export default function ExecutiveDashboard() {
   const productPerformance = useMemo(() => {
     const map: Record<string, any> = {};
     currentData.forEach(b => {
-      const code = b.product_name || 'Unknown';
+      const code = shortProductCode(b.product_code) || 'Unknown';
       if (!map[code]) map[code] = { code, opts: new Set(), bookings: 0, pax: 0, gross: 0, opProfit: 0, cancelLoss: 0 };
       
       map[code].opts.add(b.option_name || '');
@@ -231,15 +233,15 @@ export default function ExecutiveDashboard() {
     // Alert 1: Margin drop >10%
     const currentMap: Record<string, {gross: number, op: number}> = {};
     currentData.forEach(b => {
-      const code = b.product_name || 'Unknown';
+      const code = shortProductCode(b.product_code) || 'Unknown';
       if (!currentMap[code]) currentMap[code] = {gross:0, op:0};
       currentMap[code].gross += (b.gross_revenue||0);
       currentMap[code].op += calcOpProfit(b);
     });
-    
+
     const prevMap: Record<string, {gross: number, op: number}> = {};
     prevData.forEach(b => {
-      const code = b.product_name || 'Unknown';
+      const code = shortProductCode(b.product_code) || 'Unknown';
       if (!prevMap[code]) prevMap[code] = {gross:0, op:0};
       prevMap[code].gross += (b.gross_revenue||0);
       prevMap[code].op += calcOpProfit(b);

@@ -9,6 +9,7 @@ import {
 import { Filter, Calendar, TrendingUp, AlertTriangle, ArrowLeft, Package } from 'lucide-react';
 
 import { useChartColors } from '@/lib/theme';
+import { shortProductCode } from '@/lib/utils';
 
 // const COLORS = ['#3b82f6', '#10b981', '#f5a623', '#8b5cf6', '#64748b', '#f43f5e', '#06b6d4'];
 
@@ -92,7 +93,13 @@ function AnalyticsPage() {
   }, [user]);
 
   // Derived filter options
-  const uniqueProducts = useMemo(() => Array.from(new Set((bookings || []).map(b => b?.product_name).filter(Boolean))), [bookings]);
+  // Grouped/labeled by the short product code, not product_name — old (gsheet) rows and new
+  // (bokun) rows for the same tour otherwise split into two buckets: product_name on old rows is
+  // literally just the short code string ("P13"), while new rows carry the full tour name, so
+  // grouping by name never unifies them. product_code is the one field reliably present and
+  // consistent (short or id-prefixed) across both sources — always reduce it with
+  // shortProductCode() before using it as an identity/grouping key.
+  const uniqueProducts = useMemo(() => Array.from(new Set((bookings || []).map(b => shortProductCode(b?.product_code)).filter(Boolean))), [bookings]);
   const uniqueChannels = useMemo(() => Array.from(new Set((bookings || []).map(b => b?.channel).filter(Boolean))), [bookings]);
   const uniqueStatuses = useMemo(() => Array.from(new Set((bookings || []).map(b => b?.status).filter(Boolean))), [bookings]);
 
@@ -121,7 +128,7 @@ function AnalyticsPage() {
           const mIdx = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].indexOf(monthFilter);
           if (d.getMonth() !== mIdx) return false;
         }
-        if (productFilter !== 'All' && b?.product_name !== productFilter) return false;
+        if (productFilter !== 'All' && shortProductCode(b?.product_code) !== productFilter) return false;
         if (channelFilter !== 'All' && b?.channel !== channelFilter) return false;
         if (statusFilter !== 'All' && b?.status !== statusFilter) return false;
         
@@ -169,7 +176,7 @@ function AnalyticsPage() {
           map[monStr].Gross += (b?.gross_revenue||0);
           map[monStr].Net += (b?.net_profit||0);
         } else if (trendMode === 'By Product') {
-          const p = b?.product_name || 'Unknown';
+          const p = shortProductCode(b?.product_code) || 'Unknown';
           map[monStr][p] = (map[monStr][p] || 0) + (b?.gross_revenue||0);
         } else if (trendMode === 'By Channel') {
           const c = b?.channel || 'Unknown';
@@ -266,7 +273,7 @@ function AnalyticsPage() {
     const items = filteredBookings || [];
     items.forEach(b => {
       if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
-      const p = b?.product_name || 'Unknown';
+      const p = shortProductCode(b?.product_code) || 'Unknown';
       if (!map[p]) map[p] = {bk: 0, gross: 0, net: 0};
       map[p].bk++;
       map[p].gross += (b?.gross_revenue||0);
@@ -280,7 +287,7 @@ function AnalyticsPage() {
   const activeProductData = useMemo(() => {
     if (!productDrilldown) return null;
     const items = filteredBookings || [];
-    const prodBks = items.filter(b => b?.product_name === productDrilldown && !['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || ''));
+    const prodBks = items.filter(b => shortProductCode(b?.product_code) === productDrilldown && !['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || ''));
     if (prodBks.length === 0) return null;
     
     const monMap: Record<string, number> = {};
@@ -876,7 +883,7 @@ function AnalyticsPage() {
                   {cancelData.table.map(b => (
                     <tr key={b?.id || b?.booking_ref || Math.random()} className="hover:bg-muted/60 transition-colors">
                       <td className="py-2 px-4 font-semibold">{b?.booking_ref || '—'}</td>
-                      <td className="py-2 px-3 text-muted-foreground truncate max-w-[120px]">{b?.product_name || 'Unknown'}</td>
+                      <td className="py-2 px-3 text-muted-foreground truncate max-w-[120px]">{shortProductCode(b?.product_code) || 'Unknown'}</td>
                       <td className="py-2 px-3 tabular-nums">{b?.travel_date || '—'}</td>
                       <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">{fmtE(b?.gross_revenue)}</td>
                       <td className="py-2 px-4 text-right tabular-nums text-red-700 font-bold">{b?.ticket_cost > 0 ? fmtE(b?.ticket_cost) : '—'}</td>
