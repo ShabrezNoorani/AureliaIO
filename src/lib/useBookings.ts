@@ -9,6 +9,9 @@ export interface Booking {
   booking_ref: string;
   ext_ref: string;
   product_name: string;
+  // Short OTA code ("P13") or Bokun's id-prefixed form ("5591586P13") — always render through
+  // shortProductCode() in lib/utils, never displayed raw.
+  product_code?: string | null;
   option_name: string;
   customer_name: string;
   customer_phone: string;
@@ -27,10 +30,15 @@ export interface Booking {
   gross_revenue: number | null;
   commission_rate: number;
   commission_amount: number;
+  // Any channel (GYG, Klook, KKday, etc.) may omit this in the source booking data — same
+  // needs-input convention as the four fields above.
+  marketplace_fee: number | null;
   net_revenue: number;
   ticket_cost: number | null;
   guide_cost: number | null;
   extra_cost: number | null;
+  // GetYourGuide-specific pass-through cost — never populated by a sync, always owner-entered.
+  gyg_cost: number | null;
   net_profit: number;
   status: 'UPCOMING' | 'DONE' | 'NO_SHOW' | 'CANCELLED_EARLY' | 'CANCELLED_LATE';
   notes: string;
@@ -41,6 +49,7 @@ export const EMPTY_BOOKING: Booking = {
   booking_ref: '',
   ext_ref: '',
   product_name: '',
+  product_code: null,
   option_name: '',
   customer_name: '',
   customer_phone: '',
@@ -56,10 +65,12 @@ export const EMPTY_BOOKING: Booking = {
   gross_revenue: 0,
   commission_rate: 30,
   commission_amount: 0,
+  marketplace_fee: 0,
   net_revenue: 0,
   ticket_cost: 0,
   guide_cost: 0,
   extra_cost: 0,
+  gyg_cost: 0,
   net_profit: 0,
   status: 'UPCOMING',
   notes: '',

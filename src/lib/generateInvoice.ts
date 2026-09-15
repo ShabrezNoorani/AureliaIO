@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { shortProductCode } from './utils';
 
 interface Guide {
   name: string;
@@ -132,7 +133,7 @@ export function generateBookingInvoice(
   doc.text(`Phone: ${booking.customer_phone || '—'}`, 20, 60);
   
   doc.text(`Travel: ${booking.travel_date} at ${booking.travel_time}`, 120, 45);
-  doc.text(`Product: ${booking.product_code}`, 120, 50);
+  doc.text(`Product: ${shortProductCode(booking.product_code)}`, 120, 50);
   doc.text(`Option: ${booking.option_name}`, 120, 55);
   doc.text(`Channel: ${booking.channel}`, 120, 60);
 

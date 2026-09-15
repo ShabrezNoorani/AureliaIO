@@ -15,3 +15,13 @@ export const localDateStr = (d: Date = new Date()) => {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 };
+
+// bookings.product_code comes in two shapes depending on source: older gsheet rows store just the
+// short OTA code ("P13"), newer bokun_email rows store it prefixed with the numeric Bokun product
+// id ("5591586P13"). Always display the trailing short code — never the raw column value or
+// product_name — so the two sources read identically everywhere a product code is shown.
+export function shortProductCode(code: string | null | undefined): string {
+  if (!code) return '';
+  const match = code.match(/P\d+$/);
+  return match ? match[0] : code;
+}

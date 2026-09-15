@@ -22,8 +22,10 @@ const STATUS_MAP: Record<string, string> = {
 
 // Fields any channel (GYG, Klook, KKday, etc.) may leave blank in the source booking data — a
 // sync must never overwrite an existing value (owner-entered or from an earlier sync) with a
-// blank re-read of one of these.
-const PROTECTED_MONEY_FIELDS = new Set(['gross_revenue', 'guide_cost', 'extra_cost', 'ticket_cost']);
+// blank re-read of one of these. gyg_cost is never written by this sync at all (not part of
+// sheetFields below), so it's already implicitly protected — listed here anyway so the invariant
+// stays true even if a future column gets added to the sheet.
+const PROTECTED_MONEY_FIELDS = new Set(['gross_revenue', 'guide_cost', 'extra_cost', 'ticket_cost', 'gyg_cost']);
 
 const COST_CATEGORY_MAP: Record<string, string> = {
   'Software & IT': 'Tools',

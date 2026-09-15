@@ -37,7 +37,18 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
       const gross = numOrZero(next.gross_revenue);
       next.commission_amount = +(gross * next.commission_rate / 100).toFixed(2);
       next.net_revenue = +(gross - next.commission_amount).toFixed(2);
-      next.net_profit = +(next.net_revenue - numOrZero(next.ticket_cost) - numOrZero(next.guide_cost) - numOrZero(next.extra_cost)).toFixed(2);
+      // net_profit = gross_revenue - ticket_cost - guide_cost - extra_cost - gyg_cost -
+      // commission_amount - marketplace_fee. Subtracts commission/marketplace directly off gross
+      // (not via net_revenue) so channels that charge both are never double- or under-counted.
+      next.net_profit = +(
+        gross
+        - numOrZero(next.ticket_cost)
+        - numOrZero(next.guide_cost)
+        - numOrZero(next.extra_cost)
+        - numOrZero(next.gyg_cost)
+        - next.commission_amount
+        - numOrZero(next.marketplace_fee)
+      ).toFixed(2);
 
       // Cancelled early: zero out revenue + ticket cost
       if (next.status === 'CANCELLED_EARLY') {
@@ -45,17 +56,23 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
         next.ticket_cost = 0;
         next.commission_amount = 0;
         next.net_revenue = 0;
-        next.net_profit = +(0 - numOrZero(next.guide_cost) - numOrZero(next.extra_cost)).toFixed(2);
+        next.net_profit = +(
+          0
+          - numOrZero(next.guide_cost)
+          - numOrZero(next.extra_cost)
+          - numOrZero(next.gyg_cost)
+          - numOrZero(next.marketplace_fee)
+        ).toFixed(2);
       }
 
       return next;
     });
   };
 
-  // Shared onChange for the four fields that can be blank ("needs input") — an emptied input
+  // Shared onChange for the five fields that can be blank ("needs input") — an emptied input
   // goes back to null rather than snapping to 0, so clearing a field is how the owner re-flags it
   // as unknown rather than asserting "this genuinely costs €0".
-  const updateMoneyField = (field: 'gross_revenue' | 'ticket_cost' | 'guide_cost' | 'extra_cost', raw: string) => {
+  const updateMoneyField = (field: 'gross_revenue' | 'ticket_cost' | 'guide_cost' | 'extra_cost' | 'gyg_cost', raw: string) => {
     update(field, raw === '' ? null : Math.max(0, Number(raw)));
   };
 
@@ -248,11 +265,25 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
                   onChange={(e) => updateMoneyField('extra_cost', e.target.value)} />
               </div>
               <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">GYG Cost €</label>
+                <input type="number" min={0} placeholder="Needs input"
+                  className={`aurelia-input ${draft.gyg_cost === null ? 'border-amber-600/50 placeholder:text-amber-700/70' : ''}`}
+                  value={draft.gyg_cost ?? ''}
+                  onChange={(e) => updateMoneyField('gyg_cost', e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Marketplace Fee €</label>
+                <input type="number" className="aurelia-input bg-background/50" value={draft.marketplace_fee ?? 0} readOnly />
+              </div>
+              <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Net Profit</label>
                 <input
-                  type="number"
-                  className={`aurelia-input bg-background/50 font-bold ${draft.net_profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}
-                  value={draft.net_profit}
+                  type="text"
+                  className={`aurelia-input bg-background/50 font-bold ${
+                    draft.gross_revenue === null ? 'text-muted-foreground' :
+                    draft.net_profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'
+                  }`}
+                  value={draft.gross_revenue === null ? '—' : draft.net_profit}
                   readOnly
                 />
               </div>

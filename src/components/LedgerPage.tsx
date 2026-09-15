@@ -4,6 +4,7 @@ import { useAppData } from '@/lib/useAppData';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { syncMasterData } from '@/lib/gsheetSync';
+import { shortProductCode } from '@/lib/utils';
 import { generateBookingInvoice } from '@/lib/generateInvoice';
 import BookingPanel from './BookingPanel';
 import CsvUploadModal from './CsvUploadModal';
@@ -36,6 +37,7 @@ const DEFAULT_COLS = [
   { id: 'gcost', label: 'Guide Cost €', width: 90, align: 'text-right' },
   { id: 'ecost', label: 'Extra Cost €', width: 90, align: 'text-right' },
   { id: 'tcost', label: 'Ticket Cost €', width: 90, align: 'text-right' },
+  { id: 'gygcost', label: 'GYG Cost €', width: 90, align: 'text-right' },
   { id: 'profit', label: 'Net Profit €', width: 100, align: 'text-right' },
   { id: 'status', label: 'Status', width: 130, sticky: 'right', stickyZ: 20 },
   { id: 'guide', label: 'Assigned Guide', width: 120 },
@@ -137,12 +139,20 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   const [bookingYear, setBookingYear] = useState('');
   const [page, setPage] = useState(0);
 
-  // Column Widths
+  // Column Widths — defaults first, then overlaid with any saved widths, so a column added after
+  // a user already has localStorage state (like gygcost) still gets a sane width instead of
+  // `undefined` from a saved object that predates it.
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
-    const saved = localStorage.getItem('ledger_col_widths');
-    if (saved) return JSON.parse(saved);
     const def: Record<string, number> = {};
     DEFAULT_COLS.forEach(c => def[c.id] = c.width);
+    const saved = localStorage.getItem('ledger_col_widths');
+    if (saved) {
+      try {
+        return { ...def, ...JSON.parse(saved) };
+      } catch {
+        return def;
+      }
+    }
     return def;
   });
 
@@ -198,7 +208,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   const summary = useMemo(() => {
     const rev = filtered.reduce((s, b) => s + (b.gross_revenue || 0), 0);
     const comm = filtered.reduce((s, b) => s + (b.marketplace_fee || 0), 0);
-    const costs = filtered.reduce((s, b) => s + (b.ticket_cost || 0) + (b.guide_cost || 0) + (b.extra_cost || 0), 0);
+    const costs = filtered.reduce((s, b) => s + (b.ticket_cost || 0) + (b.guide_cost || 0) + (b.extra_cost || 0) + (b.gyg_cost || 0), 0);
     const profit = filtered.reduce((s, b) => s + (b.net_profit || 0), 0);
     return { rev, comm, costs, profit };
   }, [filtered]);
@@ -211,10 +221,20 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   const handleSave = async (booking: any) => {
     if (booking.id) {
       const { id, user_id, created_at, ...fields } = booking;
-      const { data } = await supabase.from('bookings').update(fields).eq('id', id).select().single();
+      const { data, error } = await supabase.from('bookings').update(fields).eq('id', id).select().single();
+      if (error) {
+        console.error('Error saving booking:', error);
+        setSyncMsg(`❌ Save failed: ${error.message}`);
+        return;
+      }
       if (data) setBookings(bookings.map((x) => (x.id === id ? data : x)));
     } else {
-      const { data } = await supabase.from('bookings').insert({ ...booking, user_id: user?.id }).select().single();
+      const { data, error } = await supabase.from('bookings').insert({ ...booking, user_id: user?.id }).select().single();
+      if (error) {
+        console.error('Error adding booking:', error);
+        setSyncMsg(`❌ Save failed: ${error.message}`);
+        return;
+      }
       if (data) setBookings([data, ...bookings]);
     }
     setPanelOpen(false);
@@ -487,7 +507,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                           case 'ref': return <span className="font-semibold text-foreground">{b.booking_ref || '—'}</span>;
                           case 'source': return <SourceBadge source={b.sync_source || 'manual'} />;
                           case 'extId': return <span className="text-muted-foreground">{b.ext_ref || '—'}</span>;
-                          case 'prod': return b.product_name || '—';
+                          case 'prod': return shortProductCode(b.product_code) || '—';
                           case 'opt': return b.option_name || '—';
                           case 'name': return b.customer_name || '—';
                           case 'phone': return <span className="text-muted-foreground">{b.customer_phone || '—'}</span>;
@@ -505,6 +525,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                           case 'gcost': return <MoneyCell value={b.guide_cost} className="text-muted-foreground" />;
                           case 'ecost': return <MoneyCell value={b.extra_cost} className="text-muted-foreground" />;
                           case 'tcost': return <MoneyCell value={b.ticket_cost} className="text-muted-foreground" />;
+                          case 'gygcost': return <MoneyCell value={b.gyg_cost} className="text-muted-foreground" />;
                           case 'profit': return <span className={`font-bold tabular-nums ${b.net_profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>{fmtEuro(b.net_profit)}</span>;
                           case 'status': return <StatusBadge status={b.status} />;
                           case 'guide': return <span className="text-muted-foreground">{b.assigned_guide || '—'}</span>;
