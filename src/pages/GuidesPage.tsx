@@ -6,6 +6,7 @@ import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight
 import { toast } from 'sonner';
 import { computeRatingStats, type GuideRatingRow } from '@/lib/guidePerformance';
 import { verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, type RatingEditPayload } from '@/lib/guideRatingActions';
+import { updateGuideDetails, type GuideEditableDetails } from '@/lib/guideActions';
 import GuideRatingsPanel from '@/components/guide/GuideRatingsPanel';
 
 interface GuideOptionRate {
@@ -444,47 +445,79 @@ export default function GuidesPage() {
     setPanelOpen(true);
   };
 
+  // Fields the owner can correct after a guide exists — never guide_number, status or
+  // auth_user_id, which are system-controlled and DB-locked by guides_field_guard_trg.
+  const toEditableDetails = (source: { guideNumber?: string; status?: string } & Record<string, any>): GuideEditableDetails => ({
+    name: source.name,
+    email: source.email || null,
+    phone: source.phone || null,
+    whatsapp: source.whatsapp || null,
+    base_rate: Number(source.baseRate ?? source.base_rate ?? 0),
+    notes: source.notes || null,
+    languages: source.languages || null,
+    licensed: !!source.licensed,
+    tours_qualified: source.toursQualified ?? source.tours_qualified ?? null,
+    account_holder: source.accountHolder ?? source.account_holder ?? null,
+    iban: source.iban || null,
+    swift_code: source.swiftCode ?? source.swift_code ?? null,
+    bank_name: source.bankName ?? source.bank_name ?? null,
+    bank_address: source.bankAddress ?? source.bank_address ?? null,
+    contracted: !!source.contracted,
+    contract_date: source.contracted && (source.contractDate ?? source.contract_date)
+      ? (source.contractDate ?? source.contract_date)
+      : null,
+  });
+
   const handleSave = async () => {
     if (!user) return;
     if (!form.name.trim()) return alert("Name is required");
 
-    const payload = {
-      user_id: user.id,
-      guide_number: form.guideNumber,
-      name: form.name,
-      email: form.email || null,
-      phone: form.phone || null,
-      base_rate: Number(form.baseRate),
-      status: form.status,
-      notes: form.notes || null,
-      whatsapp: form.whatsapp || null,
-      languages: form.languages || null,
-      licensed: form.licensed,
-      tours_qualified: form.toursQualified || null,
-      account_holder: form.accountHolder || null,
-      iban: form.iban || null,
-      swift_code: form.swiftCode || null,
-      bank_name: form.bankName || null,
-      bank_address: form.bankAddress || null,
-      contracted: form.contracted,
-      contract_date: form.contracted && form.contractDate ? form.contractDate : null
-    };
-
     let guideId = editingGuide?.id;
 
     if (editingGuide) {
-      const { error } = await supabase
-        .from('guides')
-        .update(payload)
-        .eq('id', editingGuide.id);
-      if (error) console.error(error);
+      const before = toEditableDetails(editingGuide);
+      const after = toEditableDetails(form);
+
+      const { error, changedFields } = await updateGuideDetails(
+        supabase, user.id, editingGuide.id, form.name, before, after
+      );
+      if (error) {
+        console.error(error);
+        toast.error(`Failed to save guide: ${error}`);
+        return;
+      }
+
+      const emailChanged = changedFields.includes('email');
+      const isUnclaimed = !editingGuide.auth_user_id && !editingGuide.claimed_at;
+      if (emailChanged && isUnclaimed) {
+        toast.success('Email updated', {
+          description: 'Generate a new claim link so the guide gets one tied to the corrected email?',
+          action: {
+            label: 'Regenerate link',
+            onClick: () => handleGenerateClaimLink(editingGuide),
+          },
+        });
+      } else if (changedFields.length > 0) {
+        toast.success('Guide updated');
+      }
     } else {
+      const payload = {
+        user_id: user.id,
+        guide_number: form.guideNumber,
+        status: form.status,
+        ...toEditableDetails(form),
+      };
+
       const { data, error } = await supabase
         .from('guides')
         .insert(payload)
         .select()
         .single();
-      if (error) console.error(error);
+      if (error) {
+        console.error(error);
+        toast.error(`Failed to create guide: ${error.message}`);
+        return;
+      }
       if (data) guideId = data.id;
     }
 
@@ -726,20 +759,24 @@ export default function GuidesPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Guide Number</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         value={form.guideNumber}
                         onChange={e => setForm({...form, guideNumber: e.target.value})}
-                        className="aurelia-input"
+                        className="aurelia-input disabled:opacity-60 disabled:cursor-not-allowed"
                         placeholder="e.g. SZT-2026-001"
+                        disabled={!!editingGuide}
+                        title={editingGuide ? 'Guide number is set at creation and cannot be changed' : undefined}
                       />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">Status</label>
-                      <select 
+                      <select
                         value={form.status}
                         onChange={e => setForm({...form, status: e.target.value})}
-                        className="aurelia-input appearance-none bg-muted w-full"
+                        className="aurelia-input appearance-none bg-muted w-full disabled:opacity-60 disabled:cursor-not-allowed"
+                        disabled={!!editingGuide}
+                        title={editingGuide ? 'Status is controlled outside this form' : undefined}
                       >
                         <option value="active">Active</option>
                         <option value="inactive">Inactive</option>
