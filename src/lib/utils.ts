@@ -22,6 +22,6 @@ export const localDateStr = (d: Date = new Date()) => {
 // product_name — so the two sources read identically everywhere a product code is shown.
 export function shortProductCode(code: string | null | undefined): string {
   if (!code) return '';
-  const match = code.match(/P\d+$/);
-  return match ? match[0] : code;
+  const match = code.match(/([PG]\d+)$/i);
+  return match ? match[1].toUpperCase() : code;
 }
