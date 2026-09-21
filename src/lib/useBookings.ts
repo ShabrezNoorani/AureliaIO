@@ -40,9 +40,20 @@ export interface Booking {
   // GetYourGuide-specific pass-through cost — never populated by a sync, always owner-entered.
   gyg_cost: number | null;
   net_profit: number;
+  // Real column, but historically only ever written by the Bokun sync — a gsheet sync or a plain
+  // owner save never touched it, so older rows can have it out of sync with pax_adult+youth+
+  // child+infant. Recomputed on every owner save (see lib/bookingCalc.ts) so it's trustworthy
+  // going forward; display code should still prefer summing the four pax fields directly for any
+  // row that predates this.
+  total_pax?: number;
   status: 'UPCOMING' | 'DONE' | 'NO_SHOW' | 'CANCELLED_EARLY' | 'CANCELLED_LATE';
   notes: string;
   created_at?: string;
+  // Field names (from PROTECTABLE_BOOKING_FIELDS, lib/bookingOverrides.ts) the owner has hand-
+  // edited on this booking — a NEW column, not yet in the database (see the SQL this feature
+  // ships alongside). A Bokun/gsheet sync must never write over any field listed here. Optional/
+  // nullable so code here keeps working against rows fetched before the column exists.
+  manual_overrides?: string[] | null;
 }
 
 export const EMPTY_BOOKING: Booking = {
@@ -72,8 +83,10 @@ export const EMPTY_BOOKING: Booking = {
   extra_cost: 0,
   gyg_cost: 0,
   net_profit: 0,
+  total_pax: 0,
   status: 'UPCOMING',
   notes: '',
+  manual_overrides: [],
 };
 
 export const COMMISSION_DEFAULTS: Record<string, number> = {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw, MapPin } from 'lucide-react';
 import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
@@ -12,7 +12,9 @@ import TourGroup from '@/components/checkin/TourGroup';
 import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/checkin/AllocationBoard';
 import SyncStatusIndicator from '@/components/checkin/SyncStatusIndicator';
 import { enqueueRetry, useRetryQueueItems } from '@/lib/retryQueue';
-import { findCheckinRow, writeCheckin, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
+import { findCheckinRow, writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
+import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
+import { ARRIVAL_COLUMNS, ArrivalRow, formatArrivalStatus } from '@/lib/guideArrivals';
 
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
@@ -25,6 +27,7 @@ interface SessionGuestRow {
   isNoShow: boolean;
   checkedInAt: string | null;
   allottedGuideId: string | null;
+  ticketPhoto: string | null;
 }
 
 export default function TodayToursPage() {
@@ -36,6 +39,9 @@ export default function TodayToursPage() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [sessionBookings, setSessionBookings] = useState<any[]>([]);
   const [sessionGuides, setSessionGuides] = useState<any[]>([]);
+  // Read-only: every assigned guide's "I've arrived" record for today's sessions. The owner sees
+  // the whole company's rows; this board never writes them.
+  const [arrivals, setArrivals] = useState<ArrivalRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
 
@@ -79,16 +85,19 @@ export default function TodayToursPage() {
     const sessionIds = sessionsData.map((s: any) => s.id);
 
     if (sessionIds.length > 0) {
-      const [sbRes, sgRes] = await Promise.all([
+      const [sbRes, sgRes, arrRes] = await Promise.all([
         supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
         supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status').eq('user_id', user.id).in('session_id', sessionIds),
+        supabase.from('guide_arrivals').select(ARRIVAL_COLUMNS).eq('user_id', user.id).in('session_id', sessionIds),
       ]);
       if (!mountedRef.current) return;
       setSessionBookings(prev => mergeGuardingPending(sbRes.data || [], prev, pendingBookingRefs));
       setSessionGuides(sgRes.data || []);
+      setArrivals(arrRes.data || []);
     } else {
       setSessionBookings([]);
       setSessionGuides([]);
+      setArrivals([]);
     }
 
     setLoading(false);
@@ -215,6 +224,17 @@ export default function TodayToursPage() {
     return m;
   }, [sessionGuides, guides]);
 
+  // Arrival status text per session+guide, ready to render — "Arrived 8:58, on time" / "Arrived
+  // 9:07, 7 min late". A guide with no row simply isn't in the map ("Not yet arrived").
+  const arrivalStatusBySessionGuide = useMemo(() => {
+    const m = new Map<string, string>();
+    arrivals.forEach(a => m.set(
+      `${a.session_id}:${a.guide_id}`,
+      formatArrivalStatus(a.arrived_at, a.minutes_late, ', '),
+    ));
+    return m;
+  }, [arrivals]);
+
   // Every guest (checked in or not) per session — the single source of truth Tab 1's flat list,
   // the progress bar, Tab 2's checked-in-only view, and the summary cards all derive from.
   const sessionIdToGuests = useMemo(() => {
@@ -233,6 +253,7 @@ export default function TodayToursPage() {
         isNoShow: cRecord?.status === 'no_show',
         checkedInAt: cRecord?.checked_in_at || null,
         allottedGuideId: sb.allotted_guide_id ?? null,
+        ticketPhoto: cRecord?.ticket_photo ?? null,
       });
       m.set(sb.session_id, arr);
     });
@@ -279,7 +300,12 @@ export default function TodayToursPage() {
   // constraint on booking_ref+travel_date exists to upsert against), so a retry of a write that
   // actually succeeded but lost its response to the drop finds the row already in a terminal
   // status and no-ops instead of inserting a duplicate.
-  const recordCheckin = (b: any, status: 'checked_in' | 'no_show', photoBase64: string | null = null) => {
+  // The photo (if any) is a SEPARATE retry-queue item, enqueued under the same booking_ref key
+  // right after the check-in one — the queue chains same-key items in order (see
+  // lib/retryQueue.ts), so the upload only starts once the check-in write has actually succeeded,
+  // and never blocks or is bundled with it. A photo stuck retrying on bad signal never loses or
+  // delays the check-in itself; the check-in is already durably saved by then.
+  const recordCheckin = (b: any, status: 'checked_in' | 'no_show', photo: Blob | null = null) => {
     if (!user) return;
 
     const already = checkins.find(c => c.booking_ref === b.booking_ref);
@@ -290,7 +316,7 @@ export default function TodayToursPage() {
 
     setCheckins(prev => [
       ...prev.filter(c => c.booking_ref !== b.booking_ref),
-      { booking_ref: b.booking_ref, status, checked_in_at: nowIso, display_name_override: existingOverride },
+      { booking_ref: b.booking_ref, status, checked_in_at: nowIso, display_name_override: existingOverride, ticket_photo: null },
     ]);
 
     // Auto-allot: pick the unlocked guide on this booking's session with the lowest current pax
@@ -329,7 +355,7 @@ export default function TodayToursPage() {
         status,
         checkedInBy: 'Coordinator',
         pax: totalPax,
-        photoBase64,
+        ticketPhoto: null,
       });
 
       if (status === 'checked_in') {
@@ -361,13 +387,21 @@ export default function TodayToursPage() {
       await refreshCheckinsRef.current();
       await refreshSessionBookingsRef.current();
     });
+
+    if (photo) {
+      enqueueRetry(b.booking_ref, 'Ticket photo', async () => {
+        const path = await uploadCheckinPhoto({ userId: user.id, travelDate: todayStrDate, bookingRef: b.booking_ref, photo });
+        await attachCheckinPhoto(user.id, b.booking_ref, todayStrDate, path);
+        await refreshCheckinsRef.current();
+      });
+    }
   };
 
-  const handleConfirmCheckin = (photoBase64: string | null) => {
+  const handleConfirmCheckin = (photo: Blob | null) => {
     if (!showConfirm) return;
     const b = showConfirm;
     setShowConfirm(null);
-    recordCheckin(b, 'checked_in', photoBase64);
+    recordCheckin(b, 'checked_in', photo);
   };
 
   // Saves a display-only name correction to checkins.display_name_override.
@@ -580,6 +614,7 @@ export default function TodayToursPage() {
                 session={session}
                 guests={sessionIdToGuests.get(session.id) || []}
                 team={sessionIdToTeam.get(session.id) || []}
+                arrivalStatusByGuide={arrivalStatusBySessionGuide}
                 checkedInGuests={sessionIdToCheckedInGuests.get(session.id) || []}
                 onCheckInClick={(b: any) => setShowConfirm(b)}
                 onNoShow={(b: any) => recordCheckin(b, 'no_show')}
@@ -615,6 +650,7 @@ function SessionBoard({
   session,
   guests,
   team,
+  arrivalStatusByGuide,
   checkedInGuests,
   onCheckInClick,
   onNoShow,
@@ -629,6 +665,8 @@ function SessionBoard({
   session: any;
   guests: SessionGuestRow[];
   team: AllocationGuide[];
+  /** Read-only arrival text keyed `${session_id}:${guide_id}`; absent = not yet arrived. */
+  arrivalStatusByGuide: Map<string, string>;
   checkedInGuests: AllocationGuest[];
   onCheckInClick: (b: any) => void;
   onNoShow: (b: any) => void;
@@ -663,6 +701,22 @@ function SessionBoard({
           <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
             <Clock size={12} /> {session.start_time || '—'}
           </p>
+          {team.length > 0 && (
+            <div className="mt-2 space-y-0.5">
+              {team.map(g => {
+                const arrival = arrivalStatusByGuide.get(`${session.id}:${g.id}`);
+                return (
+                  <p key={g.id} className="text-[11px] flex items-center gap-1.5">
+                    <MapPin size={11} className={arrival ? 'text-green-700 shrink-0' : 'text-muted-foreground/50 shrink-0'} />
+                    <span className="font-bold text-foreground">{g.name}</span>
+                    <span className={arrival ? 'text-green-700 font-medium' : 'text-muted-foreground'}>
+                      {arrival || 'Not yet arrived'}
+                    </span>
+                  </p>
+                );
+              })}
+            </div>
+          )}
         </div>
         <div className="flex bg-background p-1 rounded-xl shrink-0">
           <button
@@ -729,6 +783,7 @@ function SessionBoard({
                     onSaveName={(newName) => onSaveName(g.booking, newName)}
                     onReset={g.isCheckedIn ? () => onResetCheckin(g.booking) : undefined}
                     syncStuck={stuckBookingRefs.has(g.booking.booking_ref)}
+                    ticketPhoto={g.ticketPhoto}
                   />
                 ))}
               </TourGroup>

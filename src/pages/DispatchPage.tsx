@@ -74,9 +74,12 @@ const paxTotal = (b: Booking) =>
 const isCancelledStatus = (status: string | null | undefined) =>
   !!status && status.toUpperCase().startsWith('CANCELLED');
 
+// 'offered'/'declined' can still appear on rows created before assignment became immediate —
+// kept here purely so any such historical row still renders sensibly, never produced by this
+// page anymore.
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   offered: { label: 'Offered', className: 'bg-amber-600/15 text-amber-700' },
-  accepted: { label: 'Accepted', className: 'bg-green-600/15 text-green-700' },
+  accepted: { label: 'Assigned', className: 'bg-green-600/15 text-green-700' },
   declined: { label: 'Declined', className: 'bg-red-600/15 text-red-700' },
   reassigned: { label: 'Reassigned', className: 'bg-muted text-muted-foreground' },
 };
@@ -304,14 +307,17 @@ export default function DispatchPage() {
     await loadData();
   };
 
-  // A fresh assignment always starts as an offer the guide must accept or decline.
-  const handleOfferGuide = async (sessionId: string, guideId: string) => {
+  // Assignment is immediate — no accept/decline step. The guide is on the hook for this tour
+  // the moment the owner picks them; 'accepted' is the status every other query (Today's Tours,
+  // guide check-in, the guide dashboard) already treats as "actively working this session".
+  const handleAssignGuide = async (sessionId: string, guideId: string) => {
     if (!user) return;
     await supabase.from('session_guides').insert({
       session_id: sessionId,
       guide_id: guideId,
       user_id: user.id,
-      status: 'offered',
+      status: 'accepted',
+      responded_at: new Date().toISOString(),
     });
     await loadData();
   };
@@ -319,15 +325,6 @@ export default function DispatchPage() {
   const handleRemoveGuide = async (sessionId: string, guideId: string) => {
     if (!user) return;
     await supabase.from('session_guides').delete().eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
-    await loadData();
-  };
-
-  // Puts a declined offer back in front of the guide.
-  const handleReofferGuide = async (sessionId: string, guideId: string) => {
-    if (!user) return;
-    await supabase.from('session_guides')
-      .update({ status: 'offered', offered_at: new Date().toISOString(), responded_at: null })
-      .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
     await loadData();
   };
 
@@ -605,7 +602,7 @@ export default function DispatchPage() {
                         <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest block mb-1.5">Assigned Guide(s)</label>
                         <div className="space-y-1.5">
                           {sGuideRows.length === 0 ? (
-                            <p className="text-xs text-muted-foreground italic">No guides offered yet.</p>
+                            <p className="text-xs text-muted-foreground italic">No guides assigned yet.</p>
                           ) : sGuideRows.map(sg => {
                             const guide = guideById.get(sg.guide_id);
                             const fromGuide = sg.reassigned_from ? guideById.get(sg.reassigned_from) : null;
@@ -622,14 +619,6 @@ export default function DispatchPage() {
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
-                                  {sg.status === 'declined' && (
-                                    <button
-                                      onClick={() => handleReofferGuide(session.id, sg.guide_id)}
-                                      className="text-[10px] font-bold text-gold hover:underline px-1.5 py-1"
-                                    >
-                                      Re-offer
-                                    </button>
-                                  )}
                                   <button
                                     onClick={() => handleRemoveGuide(session.id, sg.guide_id)}
                                     title="Remove guide"
@@ -678,10 +667,10 @@ export default function DispatchPage() {
 
                         <select
                           value=""
-                          onChange={e => { const v = e.target.value; if (v) handleOfferGuide(session.id, v); }}
+                          onChange={e => { const v = e.target.value; if (v) handleAssignGuide(session.id, v); }}
                           className="aurelia-input w-auto text-xs py-1.5 mt-2"
                         >
-                          <option value="">+ Offer a guide…</option>
+                          <option value="">+ Assign a guide…</option>
                           {guides.filter(g => !assignedGuideIds.includes(g.id)).map(g => (
                             <option key={g.id} value={g.id}>{g.name}</option>
                           ))}

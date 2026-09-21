@@ -74,16 +74,13 @@ export default function GuideClaimPage() {
         throw signUpError;
       }
 
-      // claim_guide_account needs a live session — it reads auth.uid() server-side. If email
-      // confirmation is required, signUp() returns no session yet, so we can't call it now.
-      // Rather than dead-end here, leave the guide row unclaimed-but-linkable: their claim_token
-      // is still set, and once they confirm their email and log in for the first time,
-      // AuthContext's repair_guide_claim() safety net finishes the link automatically.
-      if (!signUpData.session) {
-        setState('pending-confirmation');
-        return;
-      }
-
+      // Always attempt the claim RPC right after signUp — whether or not a session came back.
+      // It reads auth.uid() server-side, so it links the guides row using whatever auth context
+      // signUp() just established. The old code bailed to 'pending-confirmation' BEFORE this
+      // call when email confirmation is required, which left the guides row permanently
+      // unlinked (no session ever came back through this page again) until AuthContext's
+      // repair_guide_claim() safety net happened to run on a later login. The row must be
+      // linked at claim time regardless of whether a session came back.
       const { data: claimed, error: claimError } = await supabase.rpc('claim_guide_account', {
         p_token: token,
       });
@@ -92,6 +89,11 @@ export default function GuideClaimPage() {
 
       if (!claimed) {
         setState('used');
+        return;
+      }
+
+      if (!signUpData.session) {
+        setState('pending-confirmation');
         return;
       }
 

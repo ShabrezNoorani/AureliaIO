@@ -6,6 +6,9 @@ import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
 import { localDateStr, shortProductCode } from '@/lib/utils';
+import { enqueueRetry } from '@/lib/retryQueue';
+import { attachCheckinPhoto } from '@/lib/checkinWrites';
+import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
 
 interface Guide {
   id: string;
@@ -37,7 +40,7 @@ interface Checkin {
   booking_ref: string;
   status: string;
   checked_in_at: string;
-  ticket_photo?: string;
+  ticket_photo?: string | null;
 }
 
 interface Assignment {
@@ -152,7 +155,11 @@ export default function CheckinApp() {
     setShowConfirm(booking);
   };
 
-  const confirmCheckIn = async (status: 'checked_in' | 'no_show', photoBase64: string | null = null) => {
+  // The photo (if any) is uploaded and attached in a SEPARATE step, queued via the same
+  // retry-with-backoff mechanism GuideCheckin.tsx/TodayToursPage.tsx use for their own writes
+  // (lib/retryQueue.ts) — a slow/failed upload on bad signal at the meeting point never blocks or
+  // loses the check-in itself, which is written first, directly, exactly as before.
+  const confirmCheckIn = async (status: 'checked_in' | 'no_show', photo: Blob | null = null) => {
     if (!showConfirm || !companyUserId) return;
     const b = showConfirm;
     const totalPax = (b.pax_adult || 0) + (b.pax_youth || 0) + (b.pax_child || 0) + (b.pax_infant || 0);
@@ -170,8 +177,17 @@ export default function CheckinApp() {
       checked_in_by: guideName || 'Guide',
       pax_checked_in: status === 'checked_in' ? totalPax : 0,
       status: status,
-      ticket_photo: photoBase64
+      ticket_photo: null
     });
+
+    if (photo) {
+      const userId = companyUserId;
+      enqueueRetry(b.booking_ref, 'Ticket photo', async () => {
+        const path = await uploadCheckinPhoto({ userId, travelDate: b.travel_date, bookingRef: b.booking_ref, photo });
+        await attachCheckinPhoto(userId, b.booking_ref, b.travel_date, path);
+        await fetchData();
+      });
+    }
 
     setShowConfirm(null);
     fetchData();
@@ -343,6 +359,7 @@ export default function CheckinApp() {
                       guides={guides}
                       selectedGuideId={assignment?.guide_id || ''}
                       onSelectGuide={(guideId) => handleAssignGuide(b, guideId)}
+                      ticketPhoto={cRecord?.ticket_photo}
                     />
                   );
                 })}
@@ -357,7 +374,7 @@ export default function CheckinApp() {
         <CheckinConfirmModal
           customerName={showConfirm.customer_name}
           pax={{ adult: showConfirm.pax_adult, youth: showConfirm.pax_youth, child: showConfirm.pax_child, infant: showConfirm.pax_infant }}
-          onConfirm={(photoBase64) => confirmCheckIn('checked_in', photoBase64)}
+          onConfirm={(photo) => confirmCheckIn('checked_in', photo)}
           onCancel={() => setShowConfirm(null)}
         />
       )}

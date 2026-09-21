@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { localDateStr } from './utils';
+import { stripManualOverrides } from './bookingOverrides';
 
 // ──────────── Helpers ────────────
 
@@ -285,8 +286,15 @@ export async function syncMasterData(
     // that hasn't caught up yet must never revert that back to UPCOMING or anything else.
     const target = existing.status === 'DONE' ? { ...sheetFields, status: 'DONE' } : sheetFields;
 
+    // Owner-edited fields (bookings.manual_overrides — see lib/bookingOverrides.ts) are stripped
+    // out entirely before anything else runs, regardless of what the sheet now reports for them.
+    // This is the general-purpose version of the PROTECTED_MONEY_FIELDS/null check below: that
+    // one only ever protected a field from a BLANK re-read, never from the sheet coming back with
+    // a real but different value than whatever the owner hand-corrected it to.
+    const protectedTarget = stripManualOverrides(target, existing.manual_overrides);
+
     const changedFields: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(target)) {
+    for (const [key, value] of Object.entries(protectedTarget)) {
       // A blank cell for one of the four fields any channel can omit means "the sheet doesn't
       // know" — never write that over whatever's already in the ledger, whether that's an
       // owner-entered value or a still-blank field from an earlier sync.

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CheckCircle2, XCircle, Phone, MessageCircle, Pencil, Check, X, CloudAlert } from 'lucide-react';
+import CheckinPhotoThumb from './CheckinPhotoThumb';
 
 export interface GuestCardBooking {
   id: string;
@@ -61,6 +62,9 @@ interface GuestCardProps {
   syncStuck?: boolean;
   /** Booking status starts with CANCELLED — shown struck-through with a badge, never checkinable. */
   isCancelled?: boolean;
+  /** Raw checkins.ticket_photo — legacy base64 or a Storage path (see lib/checkinPhotos.ts).
+      Renders a thumbnail once the guest is checked in; omit/null shows nothing. */
+  ticketPhoto?: string | null;
 }
 
 export default function GuestCard({
@@ -83,6 +87,7 @@ export default function GuestCard({
   onReset,
   syncStuck,
   isCancelled,
+  ticketPhoto,
 }: GuestCardProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -249,6 +254,7 @@ export default function GuestCard({
             </>
           ) : (
             <>
+              {!isCancelled && <CheckinPhotoThumb photo={ticketPhoto} />}
               <span className="text-[9px] font-bold uppercase text-muted-foreground tracking-wide whitespace-nowrap">
                 {isCancelled ? 'Cancelled' : isCheckedIn ? 'Checked in' : 'No show'}
                 {!isCancelled && checkedInAt ? ` · ${new Date(checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}

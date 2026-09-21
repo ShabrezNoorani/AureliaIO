@@ -1,4 +1,5 @@
 import { callBokunProxy } from './bokunProxy';
+import { stripManualOverrides } from './bookingOverrides';
 
 export async function testBokunConnection(
   supabase: any
@@ -58,9 +59,16 @@ export async function syncBokunBookings(
   // earlier sync.
   const { data: existingRows } = await supabase
     .from('bookings')
-    .select('booking_ref')
+    .select('booking_ref, manual_overrides')
     .eq('user_id', userId);
-  const existingRefs = new Set((existingRows || []).map((r: any) => r.booking_ref));
+  const existingRowsTyped = (existingRows || []) as { booking_ref: string; manual_overrides: string[] | null }[];
+  const existingRefs = new Set(existingRowsTyped.map((r) => r.booking_ref));
+  // Owner-edited fields (see lib/bookingOverrides.ts) per existing booking_ref — stripped out of
+  // the upsert payload below unconditionally, so a Bokun re-read can never silently revert a
+  // hand-corrected value no matter what Bokun now reports for it.
+  const overridesByRef = new Map<string, string[]>(
+    existingRowsTyped.map((r) => [r.booking_ref, r.manual_overrides || []])
+  );
 
   for (const b of bookings) {
     try {
@@ -117,9 +125,16 @@ export async function syncBokunBookings(
         payload.gross_revenue = grossRevenue;
       }
 
+      // Run last, after every other field (including gross_revenue above) has been decided —
+      // an owner-edited field is dropped from the upsert payload unconditionally, so Postgres's
+      // ON CONFLICT DO UPDATE simply never touches that column and the hand-corrected value
+      // survives. A brand-new booking_ref has no entry in overridesByRef, so this is a no-op for
+      // inserts.
+      const protectedPayload = stripManualOverrides(payload, overridesByRef.get(booking_ref));
+
       const { error: upsertErr } = await supabase
         .from('bookings')
-        .upsert(payload, {
+        .upsert(protectedPayload, {
           onConflict: 'booking_ref,user_id',
           ignoreDuplicates: false
         });

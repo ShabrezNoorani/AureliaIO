@@ -6,6 +6,8 @@ import { supabase } from '@/lib/supabase';
 import { syncMasterData } from '@/lib/gsheetSync';
 import { shortProductCode } from '@/lib/utils';
 import { generateBookingInvoice } from '@/lib/generateInvoice';
+import { EMPTY_BOOKING, type Booking } from '@/lib/useBookings';
+import { saveBooking } from '@/lib/bookingActions';
 import BookingPanel from './BookingPanel';
 import CsvUploadModal from './CsvUploadModal';
 import MultiSelect from './MultiSelect';
@@ -123,7 +125,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
 
   // Panel state
   const [panelOpen, setPanelOpen] = useState(false);
-  const [editBooking, setEditBooking] = useState<any | null>(null);
+  const [editBooking, setEditBooking] = useState<Booking | null>(null);
   const [csvOpen, setCsvOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
@@ -218,30 +220,28 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   const pageBookings = filtered.slice(page * PER_PAGE, (page + 1) * PER_PAGE);
 
   // Mutations
-  const handleSave = async (booking: any) => {
-    if (booking.id) {
-      const { id, user_id, created_at, ...fields } = booking;
-      const { data, error } = await supabase.from('bookings').update(fields).eq('id', id).select().single();
-      if (error) {
-        console.error('Error saving booking:', error);
-        setSyncMsg(`❌ Save failed: ${error.message}`);
-        return;
-      }
-      if (data) setBookings(bookings.map((x) => (x.id === id ? data : x)));
-    } else {
-      const { data, error } = await supabase.from('bookings').insert({ ...booking, user_id: user?.id }).select().single();
-      if (error) {
-        console.error('Error adding booking:', error);
-        setSyncMsg(`❌ Save failed: ${error.message}`);
-        return;
-      }
-      if (data) setBookings([data, ...bookings]);
+  // Single write path for owner edits (see lib/bookingActions.ts): recomputes total_pax/
+  // net_profit fresh from what's being saved, flags whichever protectable fields actually
+  // changed so a later Bokun/gsheet sync can never revert them, and writes one change_logs row
+  // per changed field. `editBooking` is the pre-edit snapshot to diff against — EMPTY_BOOKING for
+  // a brand-new booking, so every hand-entered field on it gets protected too.
+  const handleSave = async (booking: Booking) => {
+    if (!user) return;
+    const before = booking.id ? (editBooking ?? EMPTY_BOOKING) : EMPTY_BOOKING;
+    const { error, booking: saved } = await saveBooking(supabase, user.id, before, booking);
+    if (error) {
+      console.error('Error saving booking:', error);
+      setSyncMsg(`❌ Save failed: ${error}`);
+      return;
+    }
+    if (saved) {
+      setBookings(booking.id ? bookings.map((x) => (x.id === saved.id ? saved : x)) : [saved, ...bookings]);
     }
     setPanelOpen(false);
     setEditBooking(null);
   };
 
-  const handleEdit = (b: any) => {
+  const handleEdit = (b: Booking) => {
     setEditBooking(b);
     setPanelOpen(true);
   };

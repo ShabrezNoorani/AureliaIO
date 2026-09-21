@@ -191,6 +191,95 @@ export function computeRatingStats(ratings: GuideRatingRow[], toursDoneCount: nu
   return { avgRating, verifiedReviewCount: verifiedQty, reviewRatePct };
 }
 
+// ─── GUIDE SCORE (Quality · Engagement · Punctuality) ──────────────────────────────────────────
+// A single fairness rule governs every piece of this: nothing here is a raw count. A brand-new
+// guide with 2 perfect reviews must score the same Quality as a veteran with 80, and a guide with
+// zero data in a component must never be scored a 0 for it — that would punish "no data yet"
+// exactly as if it were "bad", which it isn't. Each component is independently nullable, and the
+// combined score renormalizes its weights across whichever components actually have data (see
+// computeGuideScore below) rather than ever dividing by a component that isn't there.
+
+/** minutes_late <= this still counts as on-time — a small buffer for a guide who beat the meeting
+    point by a minute of clock drift, not a loophole for genuine lateness. */
+export const PUNCTUALITY_GRACE_MINUTES = 5;
+
+export const GUIDE_SCORE_WEIGHTS = {
+  quality: 0.6,
+  engagement: 0.2,
+  punctuality: 0.2,
+} as const;
+
+export interface ArrivalPunctualityRow {
+  minutes_late: number | null;
+}
+
+export interface PunctualityStats {
+  /** Arrivals recorded WITH a minutes_late value — an arrival logged for a session with no
+      parsable meeting time (minutes_late: null) is excluded entirely, never counted as either
+      on-time or late. */
+  countedArrivals: number;
+  onTimeCount: number;
+  /** 0-100, or null when there are no counted arrivals yet ("—", never a fabricated 0/100%). */
+  onTimePct: number | null;
+}
+
+/** On-time = minutes_late <= PUNCTUALITY_GRACE_MINUTES. Rows with minutes_late === null (no
+    schedule to measure against) are skipped, not counted as late. */
+export function computePunctualityStats(arrivals: ArrivalPunctualityRow[]): PunctualityStats {
+  const counted = arrivals.filter((a): a is { minutes_late: number } => a.minutes_late != null);
+  const onTime = counted.filter(a => a.minutes_late <= PUNCTUALITY_GRACE_MINUTES);
+  return {
+    countedArrivals: counted.length,
+    onTimeCount: onTime.length,
+    onTimePct: counted.length > 0 ? (onTime.length / counted.length) * 100 : null,
+  };
+}
+
+export interface GuideScoreResult {
+  /** Combined 0-100 score, or null only when NONE of the three components have any data at all
+      (a brand new guide with no reviews and no arrivals) — never a fake 0. */
+  score: number | null;
+  quality: { stars: number | null; reviewCount: number };
+  engagement: { pct: number | null; toursDone: number; reviewCount: number };
+  punctuality: { pct: number | null; arrivalsCount: number };
+}
+
+/**
+ * COMBINED SCORE = 60% quality + 20% engagement + 20% punctuality, each normalized to 0-100
+ * first (quality: stars/5*100). Any component with no data (null) is dropped from both the
+ * numerator and the weight total — a guide with reviews but no arrivals yet is scored 60/60
+ * quality-only (75%-weighted-equivalent... in practice: 100% of a renormalized 0.6-weight pool),
+ * never quality*0.6 + 0 + 0 against the full 1.0. If ALL components are null, score is null.
+ */
+export function computeGuideScore(
+  ratingStats: RatingStats,
+  punctualityStats: PunctualityStats,
+  toursDoneCount: number,
+): GuideScoreResult {
+  const qualityPct = ratingStats.avgRating != null ? (ratingStats.avgRating / 5) * 100 : null;
+  const engagementPct = ratingStats.reviewRatePct;
+  const punctualityPct = punctualityStats.onTimePct;
+
+  const allComponents: { value: number | null; weight: number }[] = [
+    { value: qualityPct, weight: GUIDE_SCORE_WEIGHTS.quality },
+    { value: engagementPct, weight: GUIDE_SCORE_WEIGHTS.engagement },
+    { value: punctualityPct, weight: GUIDE_SCORE_WEIGHTS.punctuality },
+  ];
+  const components = allComponents.filter((c): c is { value: number; weight: number } => c.value != null);
+
+  const totalWeight = components.reduce((sum, c) => sum + c.weight, 0);
+  const score = totalWeight > 0
+    ? components.reduce((sum, c) => sum + c.value * c.weight, 0) / totalWeight
+    : null;
+
+  return {
+    score,
+    quality: { stars: ratingStats.avgRating, reviewCount: ratingStats.verifiedReviewCount },
+    engagement: { pct: engagementPct, toursDone: toursDoneCount, reviewCount: ratingStats.verifiedReviewCount },
+    punctuality: { pct: punctualityPct, arrivalsCount: punctualityStats.countedArrivals },
+  };
+}
+
 /** Distinct guide_name values among guide_monthly rows that were imported without ever being
     linked to a real guides row — "name-only" history that must stay visible rather than being
     silently dropped because it has no guide_id to join on. */

@@ -177,9 +177,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ]);
         if (repairError) console.error('repair_guide_claim failed:', repairError);
         if (repaired) {
-          const retry = await Promise.race([lookupGuideRow(), timeout()]);
+          const { data: retryData, error: retryError } = await Promise.race([lookupGuideRow(), timeout()]);
           if (!mountedRef.current) return;
-          data = retry.data;
+          // Promise.race only rejects via the timeout branch — a query-level error from
+          // lookupGuideRow() itself (network hiccup, RLS hiccup) resolves normally with
+          // {data: null, error: {...}}. Silently taking retryData here previously read that
+          // failed lookup as a positively-confirmed "no guide row" and fell through to the
+          // 'owner' branch below. Throw instead so it lands in the same fail-closed catch
+          // block as every other error path in this function.
+          if (retryError) {
+            console.error('guide row retry lookup failed:', retryError);
+            throw retryError;
+          }
+          data = retryData;
         }
       }
 

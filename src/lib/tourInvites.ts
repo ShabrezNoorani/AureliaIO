@@ -6,27 +6,38 @@ const toGoogleDateUtc = (date: Date): string =>
   `${date.getUTCFullYear()}${pad2(date.getUTCMonth() + 1)}${pad2(date.getUTCDate())}` +
   `T${pad2(date.getUTCHours())}${pad2(date.getUTCMinutes())}${pad2(date.getUTCSeconds())}Z`;
 
-// tour_sessions.start_time is free text (normally "HH:MM" 24h, optionally with an AM/PM suffix).
-// Anything that doesn't match falls back to a 2-hour block starting at 9:00 local time.
-const deriveSessionStart = (tourDate: string, startTime?: string | null): Date => {
+// tour_sessions.start_time is free text (normally "HH:MM" 24h, optionally with seconds or an
+// AM/PM suffix) — and can also be a non-time placeholder like "No Time". Returns the scheduled
+// start as a LOCAL Date on tourDate, or null when there is no real time to derive one from.
+// Callers that need a definite Date use deriveSessionStart() below; callers measuring against
+// the schedule (punctuality) must use this and treat null as "no scheduled time to compare to",
+// never a fabricated default.
+export const parseSessionStart = (tourDate: string, startTime?: string | null): Date | null => {
+  const match = startTime?.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(am|pm)?$/i);
+  if (!match) return null;
+
+  let h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const ampm = match[3]?.toLowerCase();
+  if (ampm === 'pm' && h < 12) h += 12;
+  if (ampm === 'am' && h === 12) h = 0;
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+
   const start = new Date(`${tourDate}T00:00:00`);
-  let hours = 9;
-  let minutes = 0;
+  if (Number.isNaN(start.getTime())) return null;
 
-  const match = startTime?.trim().match(/^(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
-  if (match) {
-    let h = parseInt(match[1], 10);
-    const m = parseInt(match[2], 10);
-    const ampm = match[3]?.toLowerCase();
-    if (ampm === 'pm' && h < 12) h += 12;
-    if (ampm === 'am' && h === 12) h = 0;
-    if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
-      hours = h;
-      minutes = m;
-    }
-  }
+  start.setHours(h, m, 0, 0);
+  return start;
+};
 
-  start.setHours(hours, minutes, 0, 0);
+// Same parse, but always yields a Date: anything unparsable falls back to 9:00 local on
+// tourDate, which the calendar/WhatsApp invites need so a link is always produced.
+const deriveSessionStart = (tourDate: string, startTime?: string | null): Date => {
+  const parsed = parseSessionStart(tourDate, startTime);
+  if (parsed) return parsed;
+
+  const start = new Date(`${tourDate}T00:00:00`);
+  start.setHours(9, 0, 0, 0);
   return start;
 };
 

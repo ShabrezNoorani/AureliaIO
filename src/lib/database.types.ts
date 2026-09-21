@@ -125,6 +125,10 @@ export type Database = {
           guide_cost: number | null
           gyg_cost: number | null
           id: string
+          // NEW COLUMN — not yet applied to the database. See the SQL supplied alongside the
+          // ledger-editing feature that introduced this. Field names the owner has manually
+          // edited; a Bokun/gsheet sync must skip writing any field listed here.
+          manual_overrides: string[] | null
           marketplace_fee: number | null
           net_profit: number | null
           net_revenue: number | null
@@ -162,6 +166,7 @@ export type Database = {
           guide_cost?: number | null
           gyg_cost?: number | null
           id?: string
+          manual_overrides?: string[] | null
           marketplace_fee?: number | null
           net_profit?: number | null
           net_revenue?: number | null
@@ -199,6 +204,7 @@ export type Database = {
           guide_cost?: number | null
           gyg_cost?: number | null
           id?: string
+          manual_overrides?: string[] | null
           marketplace_fee?: number | null
           net_profit?: number | null
           net_revenue?: number | null
@@ -301,6 +307,60 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: []
+      }
+      guide_arrivals: {
+        Row: {
+          arrived_at: string
+          created_at: string | null
+          guide_id: string
+          id: string
+          latitude: number | null
+          longitude: number | null
+          meeting_time: string | null
+          minutes_late: number | null
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          arrived_at?: string
+          created_at?: string | null
+          guide_id: string
+          id?: string
+          latitude?: number | null
+          longitude?: number | null
+          meeting_time?: string | null
+          minutes_late?: number | null
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          arrived_at?: string
+          created_at?: string | null
+          guide_id?: string
+          id?: string
+          latitude?: number | null
+          longitude?: number | null
+          meeting_time?: string | null
+          minutes_late?: number | null
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "guide_arrivals_guide_id_fkey"
+            columns: ["guide_id"]
+            isOneToOne: false
+            referencedRelation: "guides"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "guide_arrivals_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "tour_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       guide_assignments: {
         Row: {

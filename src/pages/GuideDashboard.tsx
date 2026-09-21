@@ -6,9 +6,11 @@ import { Users, Activity, Euro, BarChart2, Calendar, FileText, X, Star, Info } f
 import { generateGuideInvoice } from '@/lib/generateInvoice';
 import { localDateStr } from '@/lib/utils';
 import {
-  computeGuideOverviewRows, computeAssignmentStats, groupMonthlyEarnings,
-  groupOrphanedMonthlyByName, getDateRangeBounds, filterAssignmentsByDateRange,
+  computeGuideOverviewRows, computeAssignmentStats, computeRatingStats, computePunctualityStats,
+  computeGuideScore, groupMonthlyEarnings, groupOrphanedMonthlyByName, getDateRangeBounds,
+  filterAssignmentsByDateRange,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type DateRangePreset,
+  type ArrivalPunctualityRow,
 } from '@/lib/guidePerformance';
 import {
   verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, updateGuideMonthlyPayment,
@@ -18,6 +20,11 @@ import GuideEarningsChart from '@/components/guide/GuideEarningsChart';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
 import GuideRatingsPanel from '@/components/guide/GuideRatingsPanel';
+import GuideScoreCard from '@/components/guide/GuideScoreCard';
+
+interface GuideArrivalRow extends ArrivalPunctualityRow {
+  guide_id: string;
+}
 
 export default function GuideDashboard() {
   const { user, profile } = useAuth();
@@ -28,6 +35,9 @@ export default function GuideDashboard() {
   const [optionRates, setOptionRates] = useState<any[]>([]);
   const [ratings, setRatings] = useState<GuideRatingRow[]>([]);
   const [monthlyRows, setMonthlyRows] = useState<GuideMonthlyRow[]>([]);
+  // All-time, company-wide arrivals — the owner sees every guide's punctuality history, same
+  // scope as ratings/assignments above. Score computation is per-guide (see detailGuideScore).
+  const [arrivals, setArrivals] = useState<GuideArrivalRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<DateRangePreset>('month');
 
@@ -50,7 +60,7 @@ export default function GuideDashboard() {
     if (!user) return;
     setLoading(true);
 
-    const [gRes, aRes, rRes, ratingsRes, monthlyRes] = await Promise.all([
+    const [gRes, aRes, rRes, ratingsRes, monthlyRes, arrivalsRes] = await Promise.all([
       supabase.from('guides').select('*').eq('user_id', user.id).order('name'),
       // Previously filtered to `sync_source in (gsheet_assignments, manual, null)`, which silently
       // excluded every row tagged `sync_source = 'import'` — that batch holds 96 of the 97 rows
@@ -67,6 +77,7 @@ export default function GuideDashboard() {
       supabase.from('guide_product_rates').select('*').eq('user_id', user.id),
       supabase.from('guide_ratings').select('*').eq('user_id', user.id),
       supabase.from('guide_monthly').select('*').eq('user_id', user.id),
+      supabase.from('guide_arrivals').select('guide_id, minutes_late').eq('user_id', user.id),
     ]);
 
     if (gRes.data) setGuides(gRes.data);
@@ -74,6 +85,7 @@ export default function GuideDashboard() {
     if (rRes.data) setOptionRates(rRes.data);
     setRatings(ratingsRes.data || []);
     setMonthlyRows(monthlyRes.data || []);
+    setArrivals(arrivalsRes.data || []);
     setLoading(false);
   };
 
@@ -117,6 +129,15 @@ export default function GuideDashboard() {
     () => groupMonthlyEarnings(detailGuideAssignments),
     [detailGuideAssignments]
   );
+  const detailGuideArrivals = useMemo(
+    () => detailGuideId ? arrivals.filter(a => a.guide_id === detailGuideId) : [],
+    [arrivals, detailGuideId]
+  );
+  const detailGuideScore = useMemo(() => {
+    const ratingStats = computeRatingStats(detailGuideRatings, detailGuideStats.toursDone);
+    const punctualityStats = computePunctualityStats(detailGuideArrivals);
+    return computeGuideScore(ratingStats, punctualityStats, detailGuideStats.toursDone);
+  }, [detailGuideRatings, detailGuideArrivals, detailGuideStats.toursDone]);
 
   const virtualMonthlyByName = useMemo(() => groupOrphanedMonthlyByName(monthlyRows), [monthlyRows]);
   const detailVirtualRows = detailVirtualName ? (virtualMonthlyByName.get(detailVirtualName) || []) : [];
@@ -565,6 +586,11 @@ export default function GuideDashboard() {
 
               <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-8 aurelia-scrollbar">
                 <section className="space-y-4">
+                  <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Score</h3>
+                  <GuideScoreCard score={detailGuideScore} compact />
+                </section>
+
+                <section className="space-y-4 pt-6 border-t border-border">
                   <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Tours &amp; Pay</h3>
                   <GuideStatCards stats={detailGuideStats} />
                   <GuideEarningsChart data={detailGuideMonthlyEarnings} />

@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Camera, Check } from 'lucide-react';
+import { compressCheckinPhoto } from '@/lib/checkinPhotos';
 
 interface CheckinConfirmModalProps {
   customerName: string;
@@ -9,24 +10,43 @@ interface CheckinConfirmModalProps {
     child?: number | null;
     infant?: number | null;
   };
-  onConfirm: (photoBase64: string | null) => void;
+  /** The compressed photo, ready to upload — never the raw camera file/base64 (see
+      compressCheckinPhoto). null if no photo was captured. */
+  onConfirm: (photo: Blob | null) => void;
   onCancel: () => void;
 }
 
 export default function CheckinConfirmModal({ customerName, pax, onConfirm, onCancel }: CheckinConfirmModalProps) {
-  const [photoBase64, setPhotoBase64] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<Blob | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [compressing, setCompressing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const total = (pax.adult || 0) + (pax.youth || 0) + (pax.child || 0) + (pax.infant || 0);
 
-  const handleCapturePhoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // object URLs are per-Blob and must be revoked once superseded/unmounted, or they leak.
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+
+  const handleCapturePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = ''; // lets picking the same file twice in a row still fire onChange
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setPhotoBase64(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    setCompressing(true);
+    try {
+      // Compressed once, here, at capture time — not on every retry attempt later, and not the
+      // full multi-MB camera original, which would otherwise sit in the retry queue's closure
+      // across however many attempts a bad connection needs.
+      const compressed = await compressCheckinPhoto(file);
+      setPhoto(compressed);
+      setPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(compressed);
+      });
+    } catch (err) {
+      console.error('Failed to process check-in photo:', err);
+    } finally {
+      setCompressing(false);
+    }
   };
 
   return (
@@ -48,12 +68,14 @@ export default function CheckinConfirmModal({ customerName, pax, onConfirm, onCa
           onClick={() => fileInputRef.current?.click()}
           className="aspect-square bg-muted border-2 border-dashed border-border rounded-[2.5rem] flex flex-col items-center justify-center gap-3 cursor-pointer overflow-hidden relative group"
         >
-          {photoBase64 ? (
-            <img src={photoBase64} className="w-full h-full object-cover" />
+          {previewUrl ? (
+            <img src={previewUrl} className="w-full h-full object-cover" />
           ) : (
             <>
               <Camera size={32} className="text-muted-foreground group-hover:text-gold transition-colors" />
-              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Ticket Photo (Optional)</span>
+              <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                {compressing ? 'Processing…' : 'Ticket Photo (Optional)'}
+              </span>
             </>
           )}
           <input
@@ -68,8 +90,9 @@ export default function CheckinConfirmModal({ customerName, pax, onConfirm, onCa
 
         <div className="grid grid-cols-1 gap-3">
           <button
-            onClick={() => onConfirm(photoBase64)}
-            className="w-full py-5 bg-gold text-black rounded-2xl font-black text-sm uppercase tracking-[0.1em] shadow-xl shadow-gold/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+            onClick={() => onConfirm(photo)}
+            disabled={compressing}
+            className="w-full py-5 bg-gold text-black rounded-2xl font-black text-sm uppercase tracking-[0.1em] shadow-xl shadow-gold/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
           >
             <Check size={20} /> Confirm Check-in
           </button>

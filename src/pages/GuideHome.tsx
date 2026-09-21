@@ -1,16 +1,18 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Calendar as CalendarIcon, Compass, Users, X, Star } from 'lucide-react';
+import { Calendar as CalendarIcon, Compass, Users, X } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
 import {
-  computeAssignmentStats, computeRatingStats, groupMonthlyEarnings,
-  type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow,
+  computeAssignmentStats, computeRatingStats, computePunctualityStats, computeGuideScore,
+  groupMonthlyEarnings,
+  type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type ArrivalPunctualityRow,
 } from '@/lib/guidePerformance';
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import GuideEarningsChart from '@/components/guide/GuideEarningsChart';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
+import GuideScoreCard from '@/components/guide/GuideScoreCard';
 
 interface SessionGuideRow {
   session_id: string;
@@ -63,7 +65,6 @@ export default function GuideHome() {
   const [otherGuides, setOtherGuides] = useState<Guide[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [respondingId, setRespondingId] = useState<string | null>(null);
   const [reassignSessionId, setReassignSessionId] = useState<string | null>(null);
   const [reassignTargetId, setReassignTargetId] = useState('');
   const [reassigning, setReassigning] = useState(false);
@@ -75,6 +76,9 @@ export default function GuideHome() {
   const [assignments, setAssignments] = useState<GuideAssignmentRow[]>([]);
   const [monthlyRows, setMonthlyRows] = useState<GuideMonthlyRow[]>([]);
   const [ratings, setRatings] = useState<GuideRatingRow[]>([]);
+  // All-time, not scoped to any date range — the score reflects the guide's whole track record,
+  // same as ratings/assignments above.
+  const [arrivals, setArrivals] = useState<ArrivalPunctualityRow[]>([]);
   const [perfLoading, setPerfLoading] = useState(true);
 
   const today = localDateStr();
@@ -146,7 +150,7 @@ export default function GuideHome() {
     const loadPerformance = async () => {
       if (!guideId) return;
       setPerfLoading(true);
-      const [aRes, mRes, rRes] = await Promise.all([
+      const [aRes, mRes, rRes, arrRes] = await Promise.all([
         supabase.from('guide_assignments')
           .select('id, guide_id, travel_date, travel_time, tour_name, tour_type, language, calculated_pay, rate_override, bonus, total_pay, is_paid, paid_date, product_code, option_name, booking_ref, clients, notes, pax_count')
           .eq('guide_id', guideId),
@@ -154,10 +158,12 @@ export default function GuideHome() {
           .select('id, guide_id, guide_name, month, tours_completed, amount_owed, invoice_received, invoice_amount, tva, difference, payment_sent, payment_date')
           .eq('guide_id', guideId),
         supabase.from('guide_ratings').select('*').eq('guide_id', guideId),
+        supabase.from('guide_arrivals').select('minutes_late').eq('guide_id', guideId),
       ]);
       setAssignments(aRes.data || []);
       setMonthlyRows(mRes.data || []);
       setRatings(rRes.data || []);
+      setArrivals(arrRes.data || []);
       setPerfLoading(false);
     };
     loadPerformance();
@@ -168,6 +174,11 @@ export default function GuideHome() {
   const ratingStats = useMemo(
     () => computeRatingStats(ratings, assignmentStats.toursDone),
     [ratings, assignmentStats.toursDone]
+  );
+  const punctualityStats = useMemo(() => computePunctualityStats(arrivals), [arrivals]);
+  const guideScore = useMemo(
+    () => computeGuideScore(ratingStats, punctualityStats, assignmentStats.toursDone),
+    [ratingStats, punctualityStats, assignmentStats.toursDone]
   );
 
   const sessionById = useMemo(() => new Map(sessions.map(s => [s.id, s])), [sessions]);
@@ -186,12 +197,6 @@ export default function GuideHome() {
   const sortByWhen = (a: { session: TourSession }, b: { session: TourSession }) =>
     `${a.session.tour_date}${a.session.start_time || ''}`.localeCompare(`${b.session.tour_date}${b.session.start_time || ''}`);
 
-  const pendingOffers = useMemo(() => sessionGuides
-    .filter(sg => sg.status === 'offered')
-    .map(sg => ({ sg, session: sessionById.get(sg.session_id) }))
-    .filter((x): x is { sg: SessionGuideRow; session: TourSession } => !!x.session)
-    .sort(sortByWhen), [sessionGuides, sessionById]);
-
   const myTours = useMemo(() => sessionGuides
     .filter(sg => sg.status === 'accepted')
     .map(sg => ({ sg, session: sessionById.get(sg.session_id) }))
@@ -201,20 +206,6 @@ export default function GuideHome() {
   const todaysTours = myTours.filter(x => x.session.tour_date === today);
   const totalTours = todaysTours.length;
   const totalPax = todaysTours.reduce((sum, x) => sum + (sessionPax.get(x.sg.session_id) || 0), 0);
-
-  const handleRespond = async (sessionId: string, accept: boolean) => {
-    setRespondingId(sessionId);
-    try {
-      const { error } = await supabase.rpc('respond_to_offer', { p_session_id: sessionId, p_accept: accept });
-      if (error) throw error;
-      await loadData();
-    } catch (e) {
-      console.error('Failed to respond to offer:', e);
-      alert('Failed to respond. Please try again.');
-    } finally {
-      setRespondingId(null);
-    }
-  };
 
   const openReassign = (sessionId: string) => {
     setReassignSessionId(sessionId);
@@ -270,82 +261,40 @@ export default function GuideHome() {
             </div>
           </div>
 
-          {pendingOffers.length === 0 && myTours.length === 0 ? (
+          {myTours.length === 0 ? (
             <div className="aurelia-card p-12 text-center flex flex-col items-center">
               <CalendarIcon size={48} className="text-muted-foreground/30 mb-4" />
               <h3 className="text-xl font-bold mb-2">No tours assigned</h3>
               <p className="text-muted-foreground">Check back later or contact your coordinator.</p>
             </div>
           ) : (
-            <>
-              {pendingOffers.length > 0 && (
-                <section className="space-y-3">
-                  <h2 className="text-sm font-black uppercase tracking-widest text-amber-700">Pending Offers</h2>
-                  <div className="space-y-3">
-                    {pendingOffers.map(({ sg, session }) => (
-                      <div key={sg.session_id} className="aurelia-card p-4 border-l-[3px] border-l-amber-500 space-y-3">
-                        <div>
-                          <h3 className="font-bold text-base">{session.label || 'Untitled Session'}</h3>
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground mt-1">
-                            <span>{formatDate(session.tour_date)}</span>
-                            <span>&middot;</span>
-                            <span>{session.start_time || '—'}</span>
-                            <span>&middot;</span>
-                            <span className="text-gold font-bold">{sessionPax.get(sg.session_id) || 0} pax</span>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <button
-                            onClick={() => handleRespond(sg.session_id, true)}
-                            disabled={respondingId === sg.session_id}
-                            className="bg-gold text-black py-2.5 rounded-xl font-black text-xs uppercase tracking-widest disabled:opacity-50 active:scale-95 transition-all"
-                          >
-                            Accept
-                          </button>
-                          <button
-                            onClick={() => handleRespond(sg.session_id, false)}
-                            disabled={respondingId === sg.session_id}
-                            className="bg-red-600/10 border border-red-600/20 text-red-700 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest disabled:opacity-50 active:scale-95 transition-all"
-                          >
-                            Decline
-                          </button>
+            <section className="space-y-3">
+              <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">My Tours</h2>
+              <div className="space-y-3">
+                {myTours.map(({ sg, session }) => (
+                  <div key={sg.session_id} className="aurelia-card p-4 border-l-[3px] border-l-green-500">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="font-bold text-base truncate">{session.label || 'Untitled Session'}</h3>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground mt-1">
+                          <span>{formatDate(session.tour_date)}</span>
+                          <span>&middot;</span>
+                          <span>{session.start_time || '—'}</span>
+                          <span>&middot;</span>
+                          <span className="text-gold font-bold">{sessionPax.get(sg.session_id) || 0} pax</span>
                         </div>
                       </div>
-                    ))}
+                      <button
+                        onClick={() => openReassign(sg.session_id)}
+                        className="text-[10px] font-bold uppercase text-muted-foreground hover:text-gold border border-border hover:border-gold/30 rounded-lg px-2.5 py-1.5 shrink-0 transition-colors"
+                      >
+                        Give to another guide
+                      </button>
+                    </div>
                   </div>
-                </section>
-              )}
-
-              {myTours.length > 0 && (
-                <section className="space-y-3">
-                  <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">My Tours</h2>
-                  <div className="space-y-3">
-                    {myTours.map(({ sg, session }) => (
-                      <div key={sg.session_id} className="aurelia-card p-4 border-l-[3px] border-l-green-500">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <h3 className="font-bold text-base truncate">{session.label || 'Untitled Session'}</h3>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground mt-1">
-                              <span>{formatDate(session.tour_date)}</span>
-                              <span>&middot;</span>
-                              <span>{session.start_time || '—'}</span>
-                              <span>&middot;</span>
-                              <span className="text-gold font-bold">{sessionPax.get(sg.session_id) || 0} pax</span>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => openReassign(sg.session_id)}
-                            className="text-[10px] font-bold uppercase text-muted-foreground hover:text-gold border border-border hover:border-gold/30 rounded-lg px-2.5 py-1.5 shrink-0 transition-colors"
-                          >
-                            Give to another guide
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-            </>
+                ))}
+              </div>
+            </section>
           )}
         </>
       )}
@@ -371,28 +320,7 @@ export default function GuideHome() {
 
           <section className="space-y-4">
             <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Performance</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="aurelia-card p-5 border-l-[3px] border-l-gold">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Average Rating</p>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold">{ratingStats.avgRating != null ? ratingStats.avgRating.toFixed(1) : '—'}</span>
-                  {ratingStats.avgRating != null && <Star size={18} className="text-gold fill-gold" />}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {ratingStats.verifiedReviewCount} verified review{ratingStats.verifiedReviewCount !== 1 ? 's' : ''}
-                </p>
-              </div>
-              <div className="aurelia-card p-5 border-l-[3px] border-l-blue-500">
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Review Rate</p>
-                <span className="text-3xl font-extrabold">
-                  {ratingStats.reviewRatePct != null ? `${ratingStats.reviewRatePct.toFixed(0)}%` : '—'}
-                </span>
-                <p className="text-xs text-muted-foreground mt-1">guests who reviewed</p>
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground italic">
-              Punctuality tracking begins with live check-ins.
-            </p>
+            <GuideScoreCard score={guideScore} />
           </section>
         </>
       )}

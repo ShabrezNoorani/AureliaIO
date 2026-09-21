@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
 import type { Booking } from '@/lib/useBookings';
 import { EMPTY_BOOKING, COMMISSION_DEFAULTS } from '@/lib/useBookings';
+import { computeDerivedBookingFields } from '@/lib/bookingCalc';
 
 interface BookingPanelProps {
   booking: Booking | null; // null = new booking
@@ -10,17 +11,18 @@ interface BookingPanelProps {
   onClose: () => void;
 }
 
+// Recomputes total_pax/commission_amount/net_revenue/net_profit on the way in, not just on the
+// next edit — a legacy row saved before total_pax existed (or one a sync wrote without it) would
+// otherwise show a stale/blank total the moment the panel opens, before the owner has touched
+// anything.
+const withFreshTotals = (b: Booking): Booking => ({ ...b, ...computeDerivedBookingFields(b) });
+
 export default function BookingPanel({ booking, productNames, onSave, onClose }: BookingPanelProps) {
-  const [draft, setDraft] = useState<Booking>(() => booking ? { ...booking } : { ...EMPTY_BOOKING });
+  const [draft, setDraft] = useState<Booking>(() => withFreshTotals(booking ? { ...booking } : { ...EMPTY_BOOKING }));
 
   useEffect(() => {
-    setDraft(booking ? { ...booking } : { ...EMPTY_BOOKING });
+    setDraft(withFreshTotals(booking ? { ...booking } : { ...EMPTY_BOOKING }));
   }, [booking]);
-
-  // A field left blank by the owner (or never filled in by a sync) is null, not 0 — this treats
-  // it as 0 for the purposes of the live calculated-fields preview only, without ever writing
-  // that 0 back into the still-blank field itself.
-  const numOrZero = (v: number | null) => v ?? 0;
 
   const update = <K extends keyof Booking>(field: K, value: Booking[K]) => {
     setDraft((prev) => {
@@ -31,41 +33,18 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
         next.commission_rate = COMMISSION_DEFAULTS[value as string] ?? 0;
       }
 
-      // Auto-calculate financials — treats any still-blank input as 0 for this preview, but that
-      // never mutates the blank field itself; it stays null (needs input) until the owner enters
-      // a value for it directly.
-      const gross = numOrZero(next.gross_revenue);
-      next.commission_amount = +(gross * next.commission_rate / 100).toFixed(2);
-      next.net_revenue = +(gross - next.commission_amount).toFixed(2);
-      // net_profit = gross_revenue - ticket_cost - guide_cost - extra_cost - gyg_cost -
-      // commission_amount - marketplace_fee. Subtracts commission/marketplace directly off gross
-      // (not via net_revenue) so channels that charge both are never double- or under-counted.
-      next.net_profit = +(
-        gross
-        - numOrZero(next.ticket_cost)
-        - numOrZero(next.guide_cost)
-        - numOrZero(next.extra_cost)
-        - numOrZero(next.gyg_cost)
-        - next.commission_amount
-        - numOrZero(next.marketplace_fee)
-      ).toFixed(2);
-
-      // Cancelled early: zero out revenue + ticket cost
+      // Cancelled early: zero out revenue + ticket cost — before the recompute below, so those
+      // zeros flow straight into commission/net figures rather than needing a second branch there.
       if (next.status === 'CANCELLED_EARLY') {
         next.gross_revenue = 0;
         next.ticket_cost = 0;
-        next.commission_amount = 0;
-        next.net_revenue = 0;
-        next.net_profit = +(
-          0
-          - numOrZero(next.guide_cost)
-          - numOrZero(next.extra_cost)
-          - numOrZero(next.gyg_cost)
-          - numOrZero(next.marketplace_fee)
-        ).toFixed(2);
       }
 
-      return next;
+      // Auto-calculate financials — this preview and LedgerPage's actual save both run through
+      // the SAME function (lib/bookingCalc.ts), so what the owner sees here is exactly what gets
+      // persisted. Treats any still-blank input as 0 for the calculation only; never mutates the
+      // blank field itself, which stays null (needs input) until the owner enters a value.
+      return { ...next, ...computeDerivedBookingFields(next) };
     });
   };
 
@@ -75,8 +54,6 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
   const updateMoneyField = (field: 'gross_revenue' | 'ticket_cost' | 'guide_cost' | 'extra_cost' | 'gyg_cost', raw: string) => {
     update(field, raw === '' ? null : Math.max(0, Number(raw)));
   };
-
-  const totalPax = draft.pax_adult + draft.pax_youth + draft.pax_child + draft.pax_infant;
 
   // Product autocomplete
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -163,12 +140,36 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
                 )}
               </div>
               <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Product Code</label>
+                <input
+                  className="aurelia-input"
+                  value={draft.product_code ?? ''}
+                  onChange={(e) => update('product_code', e.target.value === '' ? null : e.target.value)}
+                  placeholder="e.g. P13 or 5591586P13"
+                />
+              </div>
+              <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Option Name</label>
                 <input className="aurelia-input" value={draft.option_name} onChange={(e) => update('option_name', e.target.value)} placeholder="e.g. Exterior Only" />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Notes</label>
                 <textarea className="aurelia-input min-h-[50px] resize-none" value={draft.notes} onChange={(e) => update('notes', e.target.value)} />
+              </div>
+            </div>
+          </section>
+
+          {/* Customer */}
+          <section className="mb-8">
+            <h3 className="aurelia-section-title mb-4">Customer</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Customer Name</label>
+                <input className="aurelia-input" value={draft.customer_name} onChange={(e) => update('customer_name', e.target.value)} placeholder="Full name" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Customer Phone</label>
+                <input className="aurelia-input" value={draft.customer_phone} onChange={(e) => update('customer_phone', e.target.value)} placeholder="Optional" />
               </div>
             </div>
           </section>
@@ -210,7 +211,7 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
                 </div>
               ))}
             </div>
-            <p className="text-xs text-muted-foreground mt-2 tabular-nums">Total: {totalPax} pax</p>
+            <p className="text-xs text-muted-foreground mt-2 tabular-nums">Total: {draft.total_pax ?? 0} pax</p>
           </section>
 
           {/* Financials */}
