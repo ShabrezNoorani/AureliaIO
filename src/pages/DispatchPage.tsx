@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat } from 'lucide-react';
 import { buildGuideInviteLinks } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
-import { localDateStr } from '@/lib/utils';
+import { localDateStr, shortProductCode } from '@/lib/utils';
 
 interface Booking {
   id: string;
@@ -59,14 +59,23 @@ interface Guide {
 interface NaturalGroup {
   key: string;
   travel_time: string;
-  product_code: string;
-  product_name: string;
+  // RAW booking.product_code — may be null when a booking genuinely has none. Never the long
+  // product_name; always run through shortProductCode() (see groupLabel below) before display.
+  product_code: string | null;
   option_name: string;
   bookings: Booking[];
 }
 
 const paxTotal = (b: Booking) =>
   (Number(b.pax_adult) || 0) + (Number(b.pax_youth) || 0) + (Number(b.pax_child) || 0) + (Number(b.pax_infant) || 0);
+
+// The ONE way a tour/group/session gets labeled on this page: short product code (never the long
+// product_name) + " — " + option name. shortProductCode() already falls back to the raw
+// product_code when it doesn't match the trailing P/G+digits pattern — 'Unknown' only covers a
+// genuinely missing product_code, never a substitution of product_name for the code. Exported
+// purely so it's independently testable (see DispatchPage.groupLabel.test.ts).
+export const groupLabel = (g: { product_code: string | null; option_name: string }) =>
+  `${shortProductCode(g.product_code) || 'Unknown'} — ${g.option_name}`;
 
 // Any status starting with CANCELLED (CANCELLED_EARLY, CANCELLED_LATE, bare CANCELLED, ...) is
 // treated as cancelled — shown so nothing looks like it silently vanished, but never selectable,
@@ -208,11 +217,15 @@ export default function DispatchPage() {
     const map = new Map<string, NaturalGroup>();
     bookings.forEach(b => {
       const time = b.travel_time || 'No Time';
-      const code = b.product_code || b.product_name || 'Unknown';
+      // The GROUPING key still falls back to product_name when product_code is missing, purely so
+      // two genuinely different tours that both lack a code don't get merged into one "Unknown"
+      // bucket — but the group's own product_code field (below, what actually gets displayed) is
+      // always the raw value, never product_name.
+      const groupingKeyCode = b.product_code || b.product_name || 'Unknown';
       const opt = b.option_name || 'Standard';
-      const key = `${time}|${code}|${opt}`;
+      const key = `${time}|${groupingKeyCode}|${opt}`;
       if (!map.has(key)) {
-        map.set(key, { key, travel_time: time, product_code: code, product_name: b.product_name || code, option_name: opt, bookings: [] });
+        map.set(key, { key, travel_time: time, product_code: b.product_code || null, option_name: opt, bookings: [] });
       }
       map.get(key)!.bookings.push(b);
     });
@@ -288,15 +301,14 @@ export default function DispatchPage() {
   const selectedBookingsFlat = selectedGroups.flatMap(g => g.bookings.filter(b => !isCancelledStatus(b.status)));
   const selectedTotalPax = selectedBookingsFlat.reduce((s, b) => s + paxTotal(b), 0);
   const selectedDistinctTimes = new Set(selectedGroups.map(g => g.travel_time));
-  const selectedDistinctProducts = new Set(selectedGroups.map(g => `${g.product_name} — ${g.option_name}`));
+  const selectedDistinctProducts = new Set(selectedGroups.map(g => groupLabel(g)));
 
   const defaultLabel = useMemo(() => {
     if (selectedGroups.length === 0) return '';
     if (selectedGroups.length === 1) {
-      const g = selectedGroups[0];
-      return `${g.product_name} — ${g.option_name}`;
+      return groupLabel(selectedGroups[0]);
     }
-    return selectedGroups.map(g => g.product_name).join(' + ');
+    return selectedGroups.map(g => shortProductCode(g.product_code) || 'Unknown').join(' + ');
   }, [selectedGroups]);
 
   const reassignBookings = async (refs: string[], targetSessionId: string | null) => {
@@ -464,7 +476,7 @@ export default function DispatchPage() {
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-xs font-bold text-gold bg-gold/10 px-2 py-0.5 rounded-full border border-gold/20">{group.travel_time}</span>
                               <span className="font-bold text-sm">
-                                {group.product_name} <span className="text-muted-foreground font-normal">—</span> <span className="text-gold">{group.option_name}</span>
+                                {shortProductCode(group.product_code) || 'Unknown'} <span className="text-muted-foreground font-normal">—</span> <span className="text-gold">{group.option_name}</span>
                               </span>
                             </div>
                             {info.assignableCount === 0 ? (
