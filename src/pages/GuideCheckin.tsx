@@ -17,6 +17,8 @@ import {
   ARRIVAL_COLUMNS, ArrivalRow, arrivalRetryKey, buildArrivalPayload, formatArrivalStatus,
   getArrivalCoords, mergeArrivalsGuardingPending, saveArrival, sessionIdFromArrivalKey,
 } from '@/lib/guideArrivals';
+import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
+import TransferTourModal from '@/components/guide/TransferTourModal';
 
 interface Booking {
   id: string;
@@ -101,6 +103,14 @@ export default function GuideCheckin() {
   const [showConfirm, setShowConfirm] = useState<Booking | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
+  // "Transfer to another guide" — hands one of this guide's OWN sessions off to a teammate via
+  // reassign_my_slot (see lib/guideTransfer.ts). Same flow GuideHome.tsx offers on every upcoming
+  // tour; this is the today-only, check-in-page equivalent.
+  const [otherGuides, setOtherGuides] = useState<CompanyGuide[]>([]);
+  const [transferSessionId, setTransferSessionId] = useState<string | null>(null);
+  const [transferTargetId, setTransferTargetId] = useState('');
+  const [transferring, setTransferring] = useState(false);
+
   // Guards every setState below against firing after this page has unmounted.
   const mountedRef = useRef(true);
 
@@ -121,21 +131,25 @@ export default function GuideCheckin() {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
   });
 
-  const loadData = async () => {
+  // `silent` skips the setLoading toggle — used by the realtime effect below so an incoming
+  // session_guides change (this guide gaining/losing a session, or a teammate's roster changing
+  // on a shared one) quietly re-derives state instead of flashing the full-page spinner. The
+  // initial mount load and the manual refresh button both want the spinner, so they leave it false.
+  const loadData = async (silent = false) => {
     if (!guideId || !guideUserId) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
 
     // Only sessions this guide has actually ACCEPTED show up for check-in — offered-but-unanswered
     // and declined/reassigned sessions must never appear here.
-    const { data: sgData } = await supabase
-      .from('session_guides')
-      .select('session_id')
-      .eq('user_id', guideUserId)
-      .eq('guide_id', guideId)
-      .eq('status', 'accepted');
+    const [sgRes, otherGuidesData] = await Promise.all([
+      supabase.from('session_guides').select('session_id')
+        .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted'),
+      fetchCompanyGuides(supabase, guideId),
+    ]);
     if (!mountedRef.current) return;
+    setOtherGuides(otherGuidesData);
 
-    const acceptedSessionIds = (sgData || []).map(sg => sg.session_id);
+    const acceptedSessionIds = (sgRes.data || []).map(sg => sg.session_id);
     if (acceptedSessionIds.length === 0) {
       setSessions([]);
       setSessionBookings([]);
@@ -144,7 +158,7 @@ export default function GuideCheckin() {
       setBookings([]);
       setCheckins([]);
       setArrivals([]);
-      setLoading(false);
+      if (!silent) setLoading(false);
       return;
     }
 
@@ -168,7 +182,7 @@ export default function GuideCheckin() {
       setBookings([]);
       setCheckins([]);
       setArrivals([]);
-      setLoading(false);
+      if (!silent) setLoading(false);
       return;
     }
 
@@ -199,7 +213,7 @@ export default function GuideCheckin() {
       setBookings([]);
       setCheckins([]);
       setGuideProfiles([]);
-      setLoading(false);
+      if (!silent) setLoading(false);
       return;
     }
 
@@ -216,7 +230,7 @@ export default function GuideCheckin() {
     setBookings(bRes.data || []);
     setCheckins(prev => mergeGuardingPending(cRes.data || [], prev, pendingBookingRefs));
     setGuideProfiles((gRes.data as GuideProfile[]) || []);
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
 
   // Lightweight, silent refreshes of just one table's worth of state — used both after this
@@ -270,6 +284,12 @@ export default function GuideCheckin() {
   refreshSessionBookingsRef.current = refreshSessionBookings;
   const refreshArrivalsRef = useRef(refreshArrivals);
   refreshArrivalsRef.current = refreshArrivals;
+  // loadData itself closes over queuedArrivalSessionIds/pendingBookingRefs (both recomputed from
+  // the retry queue on every render), so it needs the same "always latest" ref treatment as the
+  // lighter refreshers above — the session_guides listener below can fire long after this effect
+  // last ran.
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
@@ -292,6 +312,11 @@ export default function GuideCheckin() {
   // The filter below is broad (scoped to the owner's user_id, not this guide specifically) because
   // RLS (my_session_booking_refs()) is what actually restricts which events this guide receives —
   // Realtime enforces RLS per-connection, so a guide never sees another session's events.
+  //
+  // session_guides also listens here (unlike checkins/session_bookings, it triggers a full
+  // silent loadData() rather than a targeted refresher) — an assignment, reassignment or
+  // guide-to-guide transfer can change WHICH sessions this guide even has, not just details on
+  // sessions already known, so only re-deriving the whole accepted-session set is correct.
   useEffect(() => {
     if (!guideUserId) return;
 
@@ -301,6 +326,8 @@ export default function GuideCheckin() {
         () => { refreshCheckinsRef.current(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'session_bookings', filter: `user_id=eq.${guideUserId}` },
         () => { refreshSessionBookingsRef.current(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_guides', filter: `user_id=eq.${guideUserId}` },
+        () => { loadDataRef.current(true); })
       .subscribe();
 
     return () => {
@@ -535,7 +562,32 @@ export default function GuideCheckin() {
     });
   };
 
+  const openTransfer = (sessionId: string) => {
+    setTransferSessionId(sessionId);
+    setTransferTargetId('');
+  };
+
+  const handleTransfer = async () => {
+    if (!transferSessionId || !transferTargetId) return;
+    setTransferring(true);
+    try {
+      const { error } = await transferTourToGuide(supabase, transferSessionId, transferTargetId);
+      if (error) throw new Error(error);
+      setTransferSessionId(null);
+      // The realtime listener above will also pick this up, but an explicit reload here means
+      // the tour is gone from this guide's list the instant the confirm button resolves, not
+      // whenever the Postgres change notification happens to arrive.
+      await loadData();
+    } catch (e) {
+      console.error('Failed to transfer tour:', e);
+      alert('Failed to transfer. Please try again.');
+    } finally {
+      setTransferring(false);
+    }
+  };
+
   const sessionsWithBookings = sessions.filter(s => (sessionBookingsMap.get(s.id) || []).length > 0);
+  const sessionById = useMemo(() => new Map(sessions.map(s => [s.id, s])), [sessions]);
 
   const arrivalStatusBySession = useMemo(() => {
     const m = new Map<string, string>();
@@ -586,6 +638,16 @@ export default function GuideCheckin() {
 
             return (
               <div key={session.id} className="space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="font-bold text-base truncate">{session.label || 'Untitled Session'}</h3>
+                  <button
+                    onClick={() => openTransfer(session.id)}
+                    className="text-[10px] font-bold uppercase text-muted-foreground hover:text-gold border border-border hover:border-gold/30 rounded-lg px-2.5 py-1.5 shrink-0 transition-colors"
+                  >
+                    Transfer to another guide
+                  </button>
+                </div>
+
                 <GuideArrivalCard
                   status={arrivalStatusBySession.get(session.id) ?? null}
                   pending={arrivingSessionIds.has(session.id)}
@@ -647,6 +709,18 @@ export default function GuideCheckin() {
           pax={{ adult: showConfirm.pax_adult, youth: showConfirm.pax_youth, child: showConfirm.pax_child, infant: showConfirm.pax_infant }}
           onConfirm={handleConfirmCheckin}
           onCancel={() => setShowConfirm(null)}
+        />
+      )}
+
+      {transferSessionId && (
+        <TransferTourModal
+          sessionLabel={sessionById.get(transferSessionId)?.label || 'This tour'}
+          guides={otherGuides}
+          targetId={transferTargetId}
+          onTargetChange={setTransferTargetId}
+          onConfirm={handleTransfer}
+          onCancel={() => setTransferSessionId(null)}
+          submitting={transferring}
         />
       )}
     </div>

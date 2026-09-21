@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle } from 'lucide-react';
-import { buildGoogleCalendarUrl, buildWhatsAppUrl } from '@/lib/tourInvites';
+import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat } from 'lucide-react';
+import { buildGuideInviteLinks } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
 import { localDateStr } from '@/lib/utils';
 
@@ -74,9 +74,13 @@ const paxTotal = (b: Booking) =>
 const isCancelledStatus = (status: string | null | undefined) =>
   !!status && status.toUpperCase().startsWith('CANCELLED');
 
-// 'offered'/'declined' can still appear on rows created before assignment became immediate —
-// kept here purely so any such historical row still renders sensibly, never produced by this
-// page anymore.
+// 'offered'/'declined'/'reassigned' can still appear as a STATUS on rows created before
+// assignment became immediate — kept here purely so any such historical row still renders
+// sensibly, never produced by this page anymore. A row this page DOES produce can still carry
+// reassigned_from (set by handleReassignGuide, or by a guide's own reassign_my_slot transfer)
+// while its status stays 'accepted' — every other page filters strictly on status === 'accepted'
+// to mean "actively assigned", so a status of 'reassigned' would make the new guide invisible to
+// their own dashboard. See the reassigned_from check below the badge for how that's shown instead.
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   offered: { label: 'Offered', className: 'bg-amber-600/15 text-amber-700' },
   accepted: { label: 'Assigned', className: 'bg-green-600/15 text-green-700' },
@@ -103,6 +107,14 @@ export default function DispatchPage() {
   const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
   const [labelDraft, setLabelDraft] = useState('');
 
+  // Which guide row currently has its inline "Reassign to…" picker open — keyed
+  // `${sessionId}:${guideId}` so two sessions' rows never collide.
+  const [reassigningKey, setReassigningKey] = useState<string | null>(null);
+
+  // Guards every setState below against firing after this page has unmounted, or after the
+  // selected date has moved on mid-fetch.
+  const mountedRef = useRef(true);
+
   const loadData = async () => {
     if (!user) return;
     setLoading(true);
@@ -119,6 +131,7 @@ export default function DispatchPage() {
       supabase.from('guides').select('id, name, guide_number, status, whatsapp')
         .eq('user_id', user.id).eq('status', 'active').order('name'),
     ]);
+    if (!mountedRef.current) return;
 
     setBookings(bRes.data || []);
     const sessionsData = sRes.data || [];
@@ -131,6 +144,7 @@ export default function DispatchPage() {
         supabase.from('session_bookings').select('*').eq('user_id', user.id).in('session_id', sessionIds),
         supabase.from('session_guides').select('*').eq('user_id', user.id).in('session_id', sessionIds),
       ]);
+      if (!mountedRef.current) return;
       setSessionBookings(sbRes.data || []);
       setSessionGuides(sgRes.data || []);
     } else {
@@ -141,11 +155,54 @@ export default function DispatchPage() {
     setLoading(false);
   };
 
+  // Lightweight, silent refresh of just the guide roster — used as the target of the realtime
+  // subscription below. Session composition (which sessions exist) never depends on
+  // session_guides, only on tour_sessions/bookings, so a targeted refetch is correct here (unlike
+  // the guide-facing pages, where a guide's own session SET can change).
+  const refreshSessionGuides = async () => {
+    if (!user) return;
+    const sessionIds = sessions.map(s => s.id);
+    if (sessionIds.length === 0) {
+      setSessionGuides([]);
+      return;
+    }
+    const { data } = await supabase.from('session_guides').select('*').eq('user_id', user.id).in('session_id', sessionIds);
+    if (!mountedRef.current) return;
+    setSessionGuides(data || []);
+  };
+
+  // Keeps the realtime subscription below always calling the LATEST refresher — it closes over
+  // `sessions`, which changes on every date switch, far more often than the subscription itself
+  // needs to re-establish.
+  const refreshSessionGuidesRef = useRef(refreshSessionGuides);
+  refreshSessionGuidesRef.current = refreshSessionGuides;
+
   useEffect(() => {
+    mountedRef.current = true;
     loadData();
     setSelectedGroupKeys(new Set());
     setExpandedGroups(new Set());
+    return () => {
+      mountedRef.current = false;
+    };
   }, [user, selectedDate]);
+
+  // Live: an assignment, reassignment or guide-initiated transfer (reassign_my_slot) reflects
+  // here without a manual refresh — whether it came from this owner, another browser tab, or a
+  // guide transferring their own tour away.
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`dispatch-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_guides', filter: `user_id=eq.${user.id}` },
+        () => { refreshSessionGuidesRef.current(); })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
 
   const naturalGroups = useMemo<NaturalGroup[]>(() => {
     const map = new Map<string, NaturalGroup>();
@@ -328,28 +385,29 @@ export default function DispatchPage() {
     await loadData();
   };
 
-  // Builds the calendar invite + a matching WhatsApp confirmation for a confirmed ('accepted') guide.
-  // Pure client-side link generation — nothing is sent automatically, no customer names or money involved.
-  const buildInviteLinks = (session: TourSession, guide: Guide | undefined, pax: number) => {
-    const sessionLabel = session.label || 'your tour';
-    const timeLabel = session.start_time || 'time TBD';
-    const paxLabel = `${pax} guest${pax !== 1 ? 's' : ''}`;
-
-    const calendarUrl = buildGoogleCalendarUrl({
-      title: sessionLabel,
-      details: `${sessionLabel} — ${timeLabel} — ${paxLabel}`,
-      location: sessionLabel,
-      tourDate: session.tour_date,
-      startTime: session.start_time,
+  // Moves a session from one guide straight to another in one action — remove-then-add would
+  // leave a moment where the session shows no guide at all, and would need two separate confirms.
+  // The new row lands with status 'accepted' just like a fresh assignment, so the calendar/
+  // WhatsApp send below renders for the new guide immediately, no extra step required.
+  const handleReassignGuide = async (sessionId: string, fromGuideId: string, toGuideId: string) => {
+    if (!user || fromGuideId === toGuideId) return;
+    await supabase.from('session_guides').delete().eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', fromGuideId);
+    await supabase.from('session_guides').insert({
+      session_id: sessionId,
+      guide_id: toGuideId,
+      user_id: user.id,
+      status: 'accepted',
+      responded_at: new Date().toISOString(),
+      reassigned_from: fromGuideId,
     });
-
-    const formattedDate = new Date(`${session.tour_date}T00:00:00`).toLocaleDateString(undefined, {
-      weekday: 'short', day: 'numeric', month: 'short',
-    });
-    const message = `Hi ${guide?.name || 'there'}, you're confirmed for ${sessionLabel} on ${formattedDate} at ${timeLabel} (${paxLabel}) with ${profile?.company_name || 'us'}. Calendar invite: ${calendarUrl}`;
-
-    return { calendarUrl, whatsappUrl: buildWhatsAppUrl(guide?.whatsapp, message) };
+    await loadData();
   };
+
+  // Builds the calendar invite + a matching WhatsApp confirmation for a confirmed ('accepted')
+  // guide — thin wrapper around the shared builder (lib/tourInvites.ts) so TodayToursPage.tsx
+  // sends the exact same wording/links from its own assigned-guide view.
+  const buildInviteLinks = (session: TourSession, guide: Guide | undefined, pax: number) =>
+    buildGuideInviteLinks(session, guide, pax, profile?.company_name);
 
   return (
     <div className="p-4 md:p-8 pb-32 max-w-6xl mx-auto space-y-8 animate-fade-in">
@@ -615,10 +673,17 @@ export default function DispatchPage() {
                                 <div className="flex items-center gap-2 min-w-0 flex-wrap">
                                   <span className="text-sm font-bold text-foreground truncate">{guide?.name || 'Unknown guide'}</span>
                                   <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${badge.className}`}>
-                                    {badge.label}{sg.status === 'reassigned' ? ` from ${fromGuide?.name || 'another guide'}` : ''}
+                                    {badge.label}{sg.reassigned_from ? ` — from ${fromGuide?.name || 'another guide'}` : ''}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={() => setReassigningKey(reassigningKey === `${session.id}:${sg.guide_id}` ? null : `${session.id}:${sg.guide_id}`)}
+                                    title="Reassign to another guide"
+                                    className="text-muted-foreground hover:text-gold p-1"
+                                  >
+                                    <Repeat size={13} />
+                                  </button>
                                   <button
                                     onClick={() => handleRemoveGuide(session.id, sg.guide_id)}
                                     title="Remove guide"
@@ -627,6 +692,23 @@ export default function DispatchPage() {
                                     <X size={13} />
                                   </button>
                                 </div>
+                                {reassigningKey === `${session.id}:${sg.guide_id}` && (
+                                  <select
+                                    autoFocus
+                                    value=""
+                                    onChange={e => {
+                                      const v = e.target.value;
+                                      setReassigningKey(null);
+                                      if (v) handleReassignGuide(session.id, sg.guide_id, v);
+                                    }}
+                                    className="aurelia-input w-full text-xs py-1.5"
+                                  >
+                                    <option value="">-- Reassign {guide?.name || 'this guide'} to… --</option>
+                                    {guides.filter(g => g.id !== sg.guide_id && !assignedGuideIds.includes(g.id)).map(g => (
+                                      <option key={g.id} value={g.id}>{g.name}</option>
+                                    ))}
+                                  </select>
+                                )}
                                 {sg.status === 'accepted' && (
                                   <div className="w-full flex flex-wrap items-center gap-2 pt-1.5 mt-0.5 border-t border-border">
                                     <a

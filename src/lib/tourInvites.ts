@@ -71,3 +71,52 @@ export function buildWhatsAppUrl(phone: string | null | undefined, message: stri
   if (digits.length < 7) return null;
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
 }
+
+export interface GuideInviteSession {
+  label: string | null;
+  start_time: string | null;
+  /** YYYY-MM-DD */
+  tour_date: string;
+}
+
+export interface GuideInviteTarget {
+  name?: string | null;
+  whatsapp?: string | null;
+}
+
+export interface GuideInviteLinks {
+  calendarUrl: string;
+  /** null when the guide has no usable WhatsApp number on file. */
+  whatsappUrl: string | null;
+}
+
+/**
+ * The ONE place that builds a guide's "you're confirmed" calendar + WhatsApp links, for any
+ * surface that assigns/reassigns a guide to a session (DispatchPage, TodayToursPage) — so an
+ * owner sees the exact same wording and links no matter where they send them from.
+ */
+export function buildGuideInviteLinks(
+  session: GuideInviteSession,
+  guide: GuideInviteTarget | null | undefined,
+  pax: number,
+  companyName?: string | null
+): GuideInviteLinks {
+  const sessionLabel = session.label || 'your tour';
+  const timeLabel = session.start_time || 'time TBD';
+  const paxLabel = `${pax} guest${pax !== 1 ? 's' : ''}`;
+
+  const calendarUrl = buildGoogleCalendarUrl({
+    title: sessionLabel,
+    details: `${sessionLabel} — ${timeLabel} — ${paxLabel}`,
+    location: sessionLabel,
+    tourDate: session.tour_date,
+    startTime: session.start_time,
+  });
+
+  const formattedDate = new Date(`${session.tour_date}T00:00:00`).toLocaleDateString(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short',
+  });
+  const message = `Hi ${guide?.name || 'there'}, you're confirmed for ${sessionLabel} on ${formattedDate} at ${timeLabel} (${paxLabel}) with ${companyName || 'us'}. Calendar invite: ${calendarUrl}`;
+
+  return { calendarUrl, whatsappUrl: buildWhatsAppUrl(guide?.whatsapp, message) };
+}

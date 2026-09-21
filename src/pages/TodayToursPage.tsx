@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw, MapPin } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw, MapPin, CalendarPlus, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
@@ -15,6 +15,7 @@ import { enqueueRetry, useRetryQueueItems } from '@/lib/retryQueue';
 import { findCheckinRow, writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
 import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
 import { ARRIVAL_COLUMNS, ArrivalRow, formatArrivalStatus } from '@/lib/guideArrivals';
+import { buildGuideInviteLinks, type GuideInviteTarget } from '@/lib/tourInvites';
 
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
@@ -31,7 +32,7 @@ interface SessionGuestRow {
 }
 
 export default function TodayToursPage() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
 
   const [bookings, setBookings] = useState<any[]>([]);
   const [guides, setGuides] = useState<any[]>([]);
@@ -128,8 +129,8 @@ export default function TodayToursPage() {
     setSessionBookings(prev => mergeGuardingPending(data || [], prev, pendingBookingRefs));
   };
 
-  // session_guides isn't realtime-subscribed (out of this task's scope) — just a targeted
-  // refetch after a lock toggle instead of a full page reload.
+  // Targeted refetch — used both after a lock toggle and as the target of the session_guides
+  // realtime listener below (an assignment, reassignment, or a guide's own transfer).
   const refreshSessionGuides = async () => {
     if (!user) return;
     const sessionIds = sessions.map((s: any) => s.id);
@@ -149,6 +150,8 @@ export default function TodayToursPage() {
   refreshCheckinsRef.current = refreshCheckins;
   const refreshSessionBookingsRef = useRef(refreshSessionBookings);
   refreshSessionBookingsRef.current = refreshSessionBookings;
+  const refreshSessionGuidesRef = useRef(refreshSessionGuides);
+  refreshSessionGuidesRef.current = refreshSessionGuides;
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
@@ -166,8 +169,10 @@ export default function TodayToursPage() {
 
   // Realtime replaces the old interval poll: instead of reloading the whole page every 60s (which
   // visibly refreshed the screen and could interrupt a guide mid-check-in), quietly refresh just
-  // the affected slice of state whenever a checkins or session_bookings row actually changes —
-  // whether that change came from this owner, a guide, or another browser tab.
+  // the affected slice of state whenever a checkins, session_bookings or session_guides row
+  // actually changes — whether that change came from this owner, a guide, or another browser tab.
+  // session_guides covers an assignment, a reassignment made here or on Dispatch, and a guide's
+  // own reassign_my_slot transfer — all land here the same way, live.
   useEffect(() => {
     if (!user) return;
 
@@ -177,6 +182,8 @@ export default function TodayToursPage() {
         () => { refreshCheckinsRef.current(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'session_bookings', filter: `user_id=eq.${user.id}` },
         () => { refreshSessionBookingsRef.current(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_guides', filter: `user_id=eq.${user.id}` },
+        () => { refreshSessionGuidesRef.current(); })
       .subscribe();
 
     return () => {
@@ -208,6 +215,10 @@ export default function TodayToursPage() {
     sessionBookings.forEach((sb: any) => m.set(sb.booking_ref, sb.session_id));
     return m;
   }, [sessionBookings]);
+
+  // Full guide rows (incl. whatsapp) by id — the allocation board's own AllocationGuide shape
+  // only carries id/name/locked, so this is looked up separately for the calendar/WhatsApp send.
+  const guideById = useMemo(() => new Map(guides.map((g) => [g.id, g])), [guides]);
 
   // Accepted guides per session, for the allocation board — only guides actually working the
   // tour get a column.
@@ -614,6 +625,8 @@ export default function TodayToursPage() {
                 session={session}
                 guests={sessionIdToGuests.get(session.id) || []}
                 team={sessionIdToTeam.get(session.id) || []}
+                guideById={guideById}
+                companyName={profile?.company_name}
                 arrivalStatusByGuide={arrivalStatusBySessionGuide}
                 checkedInGuests={sessionIdToCheckedInGuests.get(session.id) || []}
                 onCheckInClick={(b: any) => setShowConfirm(b)}
@@ -650,6 +663,8 @@ function SessionBoard({
   session,
   guests,
   team,
+  guideById,
+  companyName,
   arrivalStatusByGuide,
   checkedInGuests,
   onCheckInClick,
@@ -665,6 +680,9 @@ function SessionBoard({
   session: any;
   guests: SessionGuestRow[];
   team: AllocationGuide[];
+  /** Full guide rows (incl. whatsapp) by id, for the calendar/WhatsApp send below. */
+  guideById: Map<string, GuideInviteTarget>;
+  companyName?: string | null;
   /** Read-only arrival text keyed `${session_id}:${guide_id}`; absent = not yet arrived. */
   arrivalStatusByGuide: Map<string, string>;
   checkedInGuests: AllocationGuest[];
@@ -684,6 +702,9 @@ function SessionBoard({
   const totalGuests = guests.length;
   const checkedInCount = guests.filter(g => g.isCheckedIn).length;
   const pct = totalGuests > 0 ? Math.round((checkedInCount / totalGuests) * 100) : 0;
+  // Unfiltered session total — the search box below only narrows the guest LIST, the invite
+  // message below must always quote the whole session's pax, same as Dispatch's sPax.
+  const sessionPax = guests.reduce((s, g) => s + g.pax, 0);
 
   const filteredGuests = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -702,17 +723,43 @@ function SessionBoard({
             <Clock size={12} /> {session.start_time || '—'}
           </p>
           {team.length > 0 && (
-            <div className="mt-2 space-y-0.5">
+            <div className="mt-2 space-y-1.5">
               {team.map(g => {
                 const arrival = arrivalStatusByGuide.get(`${session.id}:${g.id}`);
+                const guide = guideById.get(g.id);
+                const { calendarUrl, whatsappUrl } = buildGuideInviteLinks(session, guide, sessionPax, companyName);
                 return (
-                  <p key={g.id} className="text-[11px] flex items-center gap-1.5">
-                    <MapPin size={11} className={arrival ? 'text-green-700 shrink-0' : 'text-muted-foreground/50 shrink-0'} />
-                    <span className="font-bold text-foreground">{g.name}</span>
-                    <span className={arrival ? 'text-green-700 font-medium' : 'text-muted-foreground'}>
-                      {arrival || 'Not yet arrived'}
-                    </span>
-                  </p>
+                  <div key={g.id} className="text-[11px]">
+                    <p className="flex items-center gap-1.5">
+                      <MapPin size={11} className={arrival ? 'text-green-700 shrink-0' : 'text-muted-foreground/50 shrink-0'} />
+                      <span className="font-bold text-foreground">{g.name}</span>
+                      <span className={arrival ? 'text-green-700 font-medium' : 'text-muted-foreground'}>
+                        {arrival || 'Not yet arrived'}
+                      </span>
+                    </p>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1 pl-[17px]">
+                      <a
+                        href={calendarUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-lg border border-border text-muted-foreground hover:text-gold hover:border-gold/30 transition-colors inline-flex items-center gap-1"
+                      >
+                        <CalendarPlus size={10} /> Add to Calendar
+                      </a>
+                      {whatsappUrl ? (
+                        <a
+                          href={whatsappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] font-bold px-2 py-0.5 rounded-lg border border-green-600/20 text-green-700 hover:bg-green-600/10 transition-colors inline-flex items-center gap-1"
+                        >
+                          <MessageCircle size={10} /> Send WhatsApp
+                        </a>
+                      ) : (
+                        <span className="text-[9px] text-muted-foreground italic">no WhatsApp number</span>
+                      )}
+                    </div>
+                  </div>
                 );
               })}
             </div>

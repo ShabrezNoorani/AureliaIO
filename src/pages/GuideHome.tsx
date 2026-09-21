@@ -1,18 +1,20 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Calendar as CalendarIcon, Compass, Users, X } from 'lucide-react';
+import { Calendar as CalendarIcon, Compass, Users } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
 import {
   computeAssignmentStats, computeRatingStats, computePunctualityStats, computeGuideScore,
   groupMonthlyEarnings,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type ArrivalPunctualityRow,
 } from '@/lib/guidePerformance';
+import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import GuideEarningsChart from '@/components/guide/GuideEarningsChart';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
 import GuideScoreCard from '@/components/guide/GuideScoreCard';
+import TransferTourModal from '@/components/guide/TransferTourModal';
 
 interface SessionGuideRow {
   session_id: string;
@@ -43,12 +45,6 @@ interface Booking {
   pax_infant: number | null;
 }
 
-interface Guide {
-  id: string;
-  name: string;
-  guide_number: string;
-}
-
 const paxTotal = (b: Booking) =>
   (Number(b.pax_adult) || 0) + (Number(b.pax_youth) || 0) + (Number(b.pax_child) || 0) + (Number(b.pax_infant) || 0);
 
@@ -62,12 +58,16 @@ export default function GuideHome() {
   const [sessions, setSessions] = useState<TourSession[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingRow[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [otherGuides, setOtherGuides] = useState<Guide[]>([]);
+  const [otherGuides, setOtherGuides] = useState<CompanyGuide[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [reassignSessionId, setReassignSessionId] = useState<string | null>(null);
   const [reassignTargetId, setReassignTargetId] = useState('');
   const [reassigning, setReassigning] = useState(false);
+
+  // Guards every setState below against firing after this page has unmounted — relevant once a
+  // realtime-triggered silent reload can be in flight alongside the initial mount load.
+  const mountedRef = useRef(true);
 
   // "How am I doing" performance data — a separate fetch/effect from the offers/sessions data
   // above, scoped to this guide's own rows only (RLS: guide_id IN (SELECT id FROM guides WHERE
@@ -86,15 +86,20 @@ export default function GuideHome() {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
   });
 
-  const loadData = async () => {
+  // `silent` skips the setLoading toggle — used by the realtime effect below so an incoming
+  // session_guides change (an assignment gained or lost) quietly re-derives this guide's session
+  // set instead of flashing the full-page spinner. The initial mount load and the manual "pull to
+  // refresh" equivalent both want the spinner, so they call this with silent left false.
+  const loadData = async (silent = false) => {
     if (!guideId || !guideUserId) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
 
     const { data: sgData } = await supabase
       .from('session_guides')
       .select('session_id, guide_id, status, offered_at, responded_at, reassigned_from')
       .eq('user_id', guideUserId)
       .eq('guide_id', guideId);
+    if (!mountedRef.current) return;
 
     const mine = sgData || [];
     setSessionGuides(mine);
@@ -105,31 +110,29 @@ export default function GuideHome() {
       setSessionBookings([]);
       setBookings([]);
       setOtherGuides([]);
-      setLoading(false);
+      if (!silent) setLoading(false);
       return;
     }
 
-    const [sessRes, sbRes, guidesRes] = await Promise.all([
+    const [sessRes, sbRes, otherGuidesData] = await Promise.all([
       supabase.from('tour_sessions').select('id, label, start_time, tour_date')
         .eq('user_id', guideUserId).in('id', sessionIds).gte('tour_date', today)
         .order('tour_date', { ascending: true }).order('start_time', { ascending: true }),
       supabase.from('session_bookings').select('session_id, booking_ref')
         .eq('user_id', guideUserId).in('session_id', sessionIds),
-      // RLS only lets a guide see their OWN guides row, so a direct select from `guides` here
-      // always comes back empty. my_company_guides() is a security-definer RPC returning the
-      // other active guides in the same company — not yet in the generated types, hence the cast.
-      (supabase.rpc as any)('my_company_guides'),
+      fetchCompanyGuides(supabase, guideId),
     ]);
+    if (!mountedRef.current) return;
 
     setSessions(sessRes.data || []);
     const mySessionBookings = sbRes.data || [];
     setSessionBookings(mySessionBookings);
-    setOtherGuides(((guidesRes.data as Guide[]) || []).filter(g => g.id !== guideId));
+    setOtherGuides(otherGuidesData);
 
     const refs = Array.from(new Set(mySessionBookings.map(sb => sb.booking_ref)));
     if (refs.length === 0) {
       setBookings([]);
-      setLoading(false);
+      if (!silent) setLoading(false);
       return;
     }
 
@@ -137,14 +140,38 @@ export default function GuideHome() {
       .from('bookings')
       .select('booking_ref, pax_adult, pax_youth, pax_child, pax_infant')
       .eq('user_id', guideUserId).in('booking_ref', refs);
+    if (!mountedRef.current) return;
 
     setBookings(bData || []);
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
 
   useEffect(() => {
+    mountedRef.current = true;
     loadData();
+    return () => {
+      mountedRef.current = false;
+    };
   }, [guideId, guideUserId]);
+
+  // Live: a session_guides change reflects here without a manual refresh — whether it's this
+  // guide gaining/losing a tour (an owner assign/reassign, or either side of a guide-to-guide
+  // transfer) or a teammate's assignment changing on a session this guide is also on. Filtered
+  // broadly by the company's user_id (not this guide specifically) because RLS is what actually
+  // restricts which rows this guide can see — same convention GuideCheckin.tsx's realtime uses.
+  useEffect(() => {
+    if (!guideUserId) return;
+
+    const channel = supabase
+      .channel(`guide-home-${guideUserId}-${guideId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_guides', filter: `user_id=eq.${guideUserId}` },
+        () => { loadData(true); })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [guideUserId, guideId]);
 
   useEffect(() => {
     const loadPerformance = async () => {
@@ -216,9 +243,12 @@ export default function GuideHome() {
     if (!reassignSessionId || !reassignTargetId) return;
     setReassigning(true);
     try {
-      const { error } = await supabase.rpc('reassign_my_slot', { p_session_id: reassignSessionId, p_to_guide: reassignTargetId });
-      if (error) throw error;
+      const { error } = await transferTourToGuide(supabase, reassignSessionId, reassignTargetId);
+      if (error) throw new Error(error);
       setReassignSessionId(null);
+      // The realtime listener above will also pick this up, but awaiting an explicit reload here
+      // means the tour is gone from "My Tours" the instant the confirm button resolves, not
+      // whenever the Postgres change notification happens to arrive.
       await loadData();
     } catch (e) {
       console.error('Failed to reassign slot:', e);
@@ -288,7 +318,7 @@ export default function GuideHome() {
                         onClick={() => openReassign(sg.session_id)}
                         className="text-[10px] font-bold uppercase text-muted-foreground hover:text-gold border border-border hover:border-gold/30 rounded-lg px-2.5 py-1.5 shrink-0 transition-colors"
                       >
-                        Give to another guide
+                        Transfer to another guide
                       </button>
                     </div>
                   </div>
@@ -326,39 +356,15 @@ export default function GuideHome() {
       )}
 
       {reassignSessionId && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-card border border-border rounded-[2rem] w-full max-w-sm shadow-2xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-border flex items-center justify-between bg-muted">
-              <h2 className="font-black text-lg text-foreground">Give to another guide</h2>
-              <button onClick={() => setReassignSessionId(null)} className="text-muted-foreground hover:text-foreground"><X size={20} /></button>
-            </div>
-            <div className="p-6 space-y-4">
-              <p className="text-sm text-muted-foreground">
-                {sessionById.get(reassignSessionId)?.label || 'This tour'} will be offered to the guide you pick.
-              </p>
-              <select
-                value={reassignTargetId}
-                onChange={e => setReassignTargetId(e.target.value)}
-                className="aurelia-input w-full bg-muted text-foreground"
-              >
-                <option value="">-- Choose a guide --</option>
-                {otherGuides.map(g => (
-                  <option key={g.id} value={g.id}>{g.name}{g.guide_number ? ` (${g.guide_number})` : ''}</option>
-                ))}
-              </select>
-            </div>
-            <div className="p-6 border-t border-border bg-muted flex justify-end gap-3">
-              <button onClick={() => setReassignSessionId(null)} className="aurelia-ghost-btn px-5 py-2 border border-border text-foreground/80">Cancel</button>
-              <button
-                onClick={handleReassign}
-                disabled={!reassignTargetId || reassigning}
-                className="bg-gold text-black px-5 py-2 rounded-xl font-black text-xs uppercase tracking-widest disabled:opacity-50"
-              >
-                {reassigning ? 'Reassigning…' : 'Confirm'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <TransferTourModal
+          sessionLabel={sessionById.get(reassignSessionId)?.label || 'This tour'}
+          guides={otherGuides}
+          targetId={reassignTargetId}
+          onTargetChange={setReassignTargetId}
+          onConfirm={handleReassign}
+          onCancel={() => setReassignSessionId(null)}
+          submitting={reassigning}
+        />
       )}
     </div>
   );
