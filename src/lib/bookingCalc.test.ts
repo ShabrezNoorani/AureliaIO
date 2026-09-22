@@ -53,4 +53,17 @@ describe('computeDerivedBookingFields', () => {
     expect(result.commission_amount).toBeCloseTo(33.33, 2);
     expect(Number.isInteger(result.commission_amount * 100)).toBe(true);
   });
+
+  // This function takes no `status` — a CANCELLED booking is summed exactly like any other (see
+  // BookingPanel.tsx, which no longer auto-zeroes anything for a cancelled booking). A
+  // cancellation with real costs and no revenue must compute as a genuine negative contribution,
+  // never silently reduced to zero.
+  it('a cancelled booking with costs and no revenue computes a negative net_profit (a real loss)', () => {
+    const result = computeDerivedBookingFields({
+      pax_adult: 2, pax_youth: 0, pax_child: 0, pax_infant: 0,
+      gross_revenue: 0, commission_rate: 30,
+      ticket_cost: 120, guide_cost: 50, extra_cost: 0, gyg_cost: 0, marketplace_fee: 0,
+    });
+    expect(result.net_profit).toBe(-170);
+  });
 });

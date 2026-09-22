@@ -3,6 +3,8 @@
 // month) with optional admin-cost allocation. No Supabase calls here; the page owns fetching
 // bookings/admin_costs and passes the already-loaded arrays in.
 
+import { isCancelled } from './utils';
+
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const ymd = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const lastDayOfMonth = (year: number, month0: number) => new Date(year, month0 + 1, 0);
@@ -66,16 +68,17 @@ export function computePresetRange(preset: PnlDatePreset, today: Date = new Date
 }
 
 // ── STATUS ──────────────────────────────────────────────────────────────────────────────────
-// bookings.status stores UPCOMING / DONE / NO_SHOW / CANCELLED_EARLY / CANCELLED_LATE. This
-// filter presents a single CANCELLED bucket (per the product spec) that matches either cancelled
-// variant — the schema keeps the split, the filter UI doesn't need to expose it.
+// bookings.status stores UPCOMING / DONE / NO_SHOW / CANCELLED. A cancelled tour can still carry
+// real costs (tickets bought, a guide paid) against little or no revenue — a genuine loss the
+// owner needs to see — so CANCELLED is selected BY DEFAULT here, same as every other status; the
+// filter UI still lets the owner narrow it out deliberately, same as any other status.
 export const PNL_STATUS_BUCKETS = ['UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED'] as const;
 export type PnlStatusBucket = typeof PNL_STATUS_BUCKETS[number];
-export const DEFAULT_PNL_STATUSES: PnlStatusBucket[] = ['UPCOMING', 'DONE', 'NO_SHOW'];
+export const DEFAULT_PNL_STATUSES: PnlStatusBucket[] = ['UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED'];
 
 export function statusBucket(status: string | null): PnlStatusBucket | null {
   if (!status) return null;
-  if (status.startsWith('CANCELLED')) return 'CANCELLED';
+  if (isCancelled(status)) return 'CANCELLED';
   if (status === 'UPCOMING' || status === 'DONE' || status === 'NO_SHOW') return status;
   return null;
 }

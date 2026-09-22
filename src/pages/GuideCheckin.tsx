@@ -8,7 +8,7 @@ import TourGroup from '@/components/checkin/TourGroup';
 import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/checkin/AllocationBoard';
 import SyncStatusIndicator from '@/components/checkin/SyncStatusIndicator';
 import GuideArrivalCard from '@/components/checkin/GuideArrivalCard';
-import { localDateStr } from '@/lib/utils';
+import { localDateStr, isCancelled } from '@/lib/utils';
 import { logChange } from '@/lib/changeLog';
 import { enqueueRetry, useRetryQueueItems, type QueueItem } from '@/lib/retryQueue';
 import { writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
@@ -72,11 +72,6 @@ interface GuideProfile {
 
 const paxTotal = (b: Booking) =>
   (Number(b.pax_adult) || 0) + (Number(b.pax_youth) || 0) + (Number(b.pax_child) || 0) + (Number(b.pax_infant) || 0);
-
-// Any status starting with CANCELLED — shown struck-through, never checkinable, never counted
-// toward a session's pax total.
-const isCancelledStatus = (status: string | null | undefined) =>
-  !!status && status.toUpperCase().startsWith('CANCELLED');
 
 // The session ids among queued writes that are ARRIVALS (the queue also carries check-in writes,
 // which are keyed by booking_ref and yield null here).
@@ -376,7 +371,7 @@ export default function GuideCheckin() {
       const cRecord = checkins.find(c => c.booking_ref === sb.booking_ref);
       if (cRecord?.status !== 'checked_in') return;
       const b = bookings.find(bk => bk.booking_ref === sb.booking_ref);
-      if (!b || isCancelledStatus(b.status)) return;
+      if (!b || isCancelled(b.status)) return;
       const arr = m.get(sb.session_id) || [];
       arr.push({
         bookingRef: sb.booking_ref,
@@ -408,7 +403,7 @@ export default function GuideCheckin() {
   // loses or delays the check-in itself; the check-in is already durably saved by then.
   const recordCheckin = (b: Booking, status: 'checked_in' | 'no_show', photo: Blob | null = null) => {
     if (!guideUserId) return;
-    if (isCancelledStatus(b.status)) return;
+    if (isCancelled(b.status)) return;
 
     const already = checkins.find(c => c.booking_ref === b.booking_ref);
     if (already?.status === 'checked_in' || already?.status === 'no_show') return;
@@ -631,7 +626,7 @@ export default function GuideCheckin() {
           sessionsWithBookings.map(session => {
             const sessionBookingsList = sessionBookingsMap.get(session.id) || [];
             // A cancelled guest never counts toward the pax total used for allocation/balancing.
-            const totalPax = sessionBookingsList.reduce((sum, b) => sum + (isCancelledStatus(b.status) ? 0 : paxTotal(b)), 0);
+            const totalPax = sessionBookingsList.reduce((sum, b) => sum + (isCancelled(b.status) ? 0 : paxTotal(b)), 0);
 
             const teamGuides = sessionIdToTeam.get(session.id) || [];
             const checkedInGuests = sessionIdToCheckedInGuests.get(session.id) || [];
@@ -678,7 +673,7 @@ export default function GuideCheckin() {
                         onNoShow={() => recordCheckin(b, 'no_show')}
                         onReset={isDone ? () => handleResetCheckin(b) : undefined}
                         syncStuck={stuckBookingRefs.has(b.booking_ref)}
-                        isCancelled={isCancelledStatus(b.status)}
+                        isCancelled={isCancelled(b.status)}
                         ticketPhoto={cRecord?.ticket_photo}
                       />
                     );

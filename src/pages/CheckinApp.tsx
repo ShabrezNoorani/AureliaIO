@@ -128,7 +128,7 @@ export default function CheckinApp() {
       supabase.from('bookings').select('*')
         .eq('user_id', companyUserId)
         .eq('travel_date', dateParam)
-        .not('status', 'in', '("CANCELLED_EARLY")')
+        .not('status', 'eq', 'CANCELLED')
         .order('travel_time', { ascending: true }),
       supabase.from('checkins').select('booking_ref, status, checked_in_at, ticket_photo')
         .eq('user_id', companyUserId)

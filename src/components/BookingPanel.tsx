@@ -33,12 +33,11 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
         next.commission_rate = COMMISSION_DEFAULTS[value as string] ?? 0;
       }
 
-      // Cancelled early: zero out revenue + ticket cost — before the recompute below, so those
-      // zeros flow straight into commission/net figures rather than needing a second branch there.
-      if (next.status === 'CANCELLED_EARLY') {
-        next.gross_revenue = 0;
-        next.ticket_cost = 0;
-      }
+      // Cancelled bookings are fully owner-editable, same as any other status — some
+      // cancellations are a clean full refund (€0 revenue, €0 cost), others still carry real
+      // costs (tickets already bought, a guide already paid) with little or no revenue. Nothing
+      // here auto-zeroes or locks a field; the owner enters whatever actually happened, and a
+      // cancellation with costs and no revenue correctly shows as a loss in net_profit below.
 
       // Auto-calculate financials — this preview and LedgerPage's actual save both run through
       // the SAME function (lib/bookingCalc.ts), so what the owner sees here is exactly what gets
@@ -227,8 +226,7 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
                 <input type="number" min={0} placeholder="Needs input"
                   className={`aurelia-input ${draft.gross_revenue === null ? 'border-amber-600/50 placeholder:text-amber-700/70' : ''}`}
                   value={draft.gross_revenue ?? ''}
-                  onChange={(e) => updateMoneyField('gross_revenue', e.target.value)}
-                  disabled={draft.status === 'CANCELLED_EARLY'} />
+                  onChange={(e) => updateMoneyField('gross_revenue', e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Commission %</label>
@@ -248,8 +246,7 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
                 <input type="number" min={0} placeholder="Needs input"
                   className={`aurelia-input ${draft.ticket_cost === null ? 'border-amber-600/50 placeholder:text-amber-700/70' : ''}`}
                   value={draft.ticket_cost ?? ''}
-                  onChange={(e) => updateMoneyField('ticket_cost', e.target.value)}
-                  disabled={draft.status === 'CANCELLED_EARLY'} />
+                  onChange={(e) => updateMoneyField('ticket_cost', e.target.value)} />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Guide Cost €</label>
@@ -298,17 +295,13 @@ export default function BookingPanel({ booking, productNames, onSave, onClose }:
               <option value="UPCOMING">UPCOMING</option>
               <option value="DONE">DONE</option>
               <option value="NO_SHOW">NO SHOW</option>
-              <option value="CANCELLED_EARLY">CANCELLED EARLY</option>
-              <option value="CANCELLED_LATE">CANCELLED LATE</option>
+              <option value="CANCELLED">CANCELLED</option>
             </select>
-            {draft.status === 'CANCELLED_EARLY' && (
-              <div className="mt-3 p-3 rounded-lg bg-blue-600/10 border border-blue-600/20 text-xs text-blue-700">
-                ℹ Revenue = €0. Ticket costs = €0 (refunded).
-              </div>
-            )}
-            {draft.status === 'CANCELLED_LATE' && (
+            {draft.status === 'CANCELLED' && (
               <div className="mt-3 p-3 rounded-lg bg-orange-600/10 border border-orange-600/20 text-xs text-orange-700">
-                ⚠ Revenue kept. Ticket costs are a loss.
+                ⚠ Enter the actual revenue and costs for this cancellation — a full refund is €0/€0,
+                but any costs already incurred (tickets, guide pay) with little or no revenue will
+                show as a loss.
               </div>
             )}
           </section>

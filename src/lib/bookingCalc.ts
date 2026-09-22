@@ -23,9 +23,9 @@ type BookingCalcInput = Pick<Booking,
  *
  * gross_revenue/ticket_cost/guide_cost/extra_cost/gyg_cost can each be null ("needs input" — see
  * lib/useBookings.ts) — treated as 0 for this calculation only, never mutated back into the field
- * itself. A CANCELLED_EARLY booking's gross_revenue/ticket_cost are expected to already be zeroed
- * by the caller (BookingPanel does this on every status change) before reaching here — this
- * function has no status of its own to branch on, it just sums whatever it's given.
+ * itself. This function has no status of its own to branch on — a CANCELLED booking is summed
+ * exactly like any other, so whatever the owner actually entered for it (including €0 for a full
+ * refund, or real costs against little/no revenue for a genuine loss) flows straight through.
  */
 export function computeDerivedBookingFields(b: BookingCalcInput): DerivedBookingFields {
   const total_pax = numOrZero(b.pax_adult) + numOrZero(b.pax_youth) + numOrZero(b.pax_child) + numOrZero(b.pax_infant);

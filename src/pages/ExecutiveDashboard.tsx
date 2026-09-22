@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { useEffect } from 'react';
 import { TrendingUp, TrendingDown, Calendar, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useChartColors } from '@/lib/theme';
-import { localDateStr, shortProductCode } from '@/lib/utils';
+import { localDateStr, shortProductCode, isCancelled } from '@/lib/utils';
 
 const CHANNELS = ['All', 'Viator', 'GYG', 'Airbnb', 'Website', 'Other'];
 const QUICK_RANGES = ['YTD', '6M', '3M', '1M', 'Custom'];
@@ -95,7 +95,7 @@ export default function ExecutiveDashboard() {
     let bFiltered = bookings;
     if (productFilter !== 'All') bFiltered = bFiltered.filter(b => shortProductCode(b.product_code) === productFilter);
     if (channelFilter !== 'All') bFiltered = bFiltered.filter(b => b.channel === channelFilter);
-    if (!includeCancelled) bFiltered = bFiltered.filter(b => !['CANCELLED_EARLY', 'CANCELLED_LATE'].includes(b.status));
+    if (!includeCancelled) bFiltered = bFiltered.filter(b => !isCancelled(b.status));
 
     const currentData = bFiltered.filter(b => {
       const d = new Date(dateMode === 'travel' ? b.travel_date : b.booking_date).getTime();
@@ -211,7 +211,7 @@ export default function ExecutiveDashboard() {
       map[code].gross += (b.gross_revenue || 0);
       map[code].opProfit += calcOpProfit(b);
       
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status)) {
+      if (isCancelled(b.status) || b.status === 'NO_SHOW') {
         map[code].cancelLoss += (b.ticket_cost || 0);
       }
     });
@@ -224,7 +224,7 @@ export default function ExecutiveDashboard() {
   }, [currentData]);
 
   // Total Cancellations
-  const totalCancelLoss = currentData.filter(b => ['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b.status)).reduce((s,b) => s + (b.ticket_cost || 0), 0);
+  const totalCancelLoss = currentData.filter(b => isCancelled(b.status) || b.status === 'NO_SHOW').reduce((s,b) => s + (b.ticket_cost || 0), 0);
 
   // ALERTS LOGIC
   const alerts = useMemo(() => {

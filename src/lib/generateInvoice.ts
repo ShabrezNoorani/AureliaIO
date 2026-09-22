@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
-import { shortProductCode } from './utils';
+import { shortProductCode, isCancelled } from './utils';
 
 interface Guide {
   name: string;
@@ -171,7 +171,7 @@ export function generateBookingInvoice(
 
   const finalY = (doc as any).lastAutoTable.finalY + 15;
   doc.setFontSize(12);
-  const statusColor = booking.status === 'DONE' ? [34, 197, 94] : booking.status === 'CANCELLED_EARLY' ? [239, 68, 68] : [197, 165, 114];
+  const statusColor = booking.status === 'DONE' ? [34, 197, 94] : isCancelled(booking.status) ? [239, 68, 68] : [197, 165, 114];
   doc.setTextColor(statusColor[0], statusColor[1], statusColor[2]);
   doc.text(`STATUS: ${booking.status}`, 105, finalY, { align: 'center' });
 

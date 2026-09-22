@@ -9,9 +9,15 @@ import {
 import { Filter, Calendar, TrendingUp, AlertTriangle, ArrowLeft, Package } from 'lucide-react';
 
 import { useChartColors } from '@/lib/theme';
-import { shortProductCode } from '@/lib/utils';
+import { shortProductCode, isCancelled } from '@/lib/utils';
 
 // const COLORS = ['#3b82f6', '#10b981', '#f5a623', '#8b5cf6', '#64748b', '#f43f5e', '#06b6d4'];
+
+// NO_SHOW alone is excluded from revenue/cost/profit below (a guest who never showed up isn't a
+// completed sale) — unrelated to this task. CANCELLED bookings, by contrast, now count everywhere
+// below: they can carry real costs (tickets bought, a guide paid) against little or no revenue,
+// which is a genuine loss the owner needs to see, not a row hidden from the totals.
+const isNoShow = (status: string | null | undefined) => status === 'NO_SHOW';
 
 class AnalyticsErrorBoundary extends Component<{children: ReactNode, resetError: () => void, navigate: any}, {hasError: boolean, error: any}> {
   constructor(props: any) {
@@ -147,7 +153,7 @@ function AnalyticsPage() {
     let net = 0;
     const items = filteredBookings || [];
     items.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
+      if (isNoShow(b?.status)) return;
       totBk++;
       totPax += (b?.pax_adult||0) + (b?.pax_youth||0) + (b?.pax_child||0) + (b?.pax_infant||0);
       gross += (b?.gross_revenue||0);
@@ -163,7 +169,7 @@ function AnalyticsPage() {
     const map: Record<string, any> = {};
     const items = filteredBookings || [];
     items.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
+      if (isNoShow(b?.status)) return;
       try {
         const dStr = dateMode === 'travel' ? b?.travel_date : b?.booking_date;
         const d = new Date(dStr);
@@ -210,7 +216,7 @@ function AnalyticsPage() {
     const map: Record<string, {Gross: number, Net: number}> = {};
     const items = filteredBookings || [];
     items.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
+      if (isNoShow(b?.status)) return;
       const c = b?.channel || 'Unknown';
       if (!map[c]) map[c] = {Gross:0, Net:0};
       map[c].Gross += (b?.gross_revenue||0);
@@ -231,11 +237,12 @@ function AnalyticsPage() {
         const monStr = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]} ${d.getFullYear()}`;
         
         if (!map[monStr]) map[monStr] = { month: monStr, sort: d.getTime(), bk: 0, pax: 0, gross: 0, comm: 0, netr: 0, costs: 0, netp: 0, cancLoss: 0 };
-        
-        const isCanc = ['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '');
-        if (isCanc) {
-          map[monStr].cancLoss += (b?.ticket_cost||0);
-        } else {
+
+        // No-shows never count toward the main P&L columns (a guest who didn't show up isn't a
+        // completed sale) — unchanged by this task. Cancelled bookings, by contrast, now flow
+        // through these SAME columns like any other booking: a cancellation with costs and
+        // little/no revenue shows up as a real loss in gross/costs/netp, not hidden from the total.
+        if (!isNoShow(b?.status)) {
           map[monStr].bk++;
           map[monStr].pax += (b?.pax_adult||0) + (b?.pax_youth||0) + (b?.pax_child||0) + (b?.pax_infant||0);
           map[monStr].gross += (b?.gross_revenue||0);
@@ -243,6 +250,13 @@ function AnalyticsPage() {
           map[monStr].netr += (b?.net_revenue||0);
           map[monStr].costs += (b?.ticket_cost||0) + (b?.guide_cost||0) + (b?.extra_cost||0);
           map[monStr].netp += (b?.net_profit||0);
+        }
+
+        // Cancel Loss: a dedicated call-out of ticket cost specifically lost to cancellations —
+        // already counted within the columns above too (a highlight on top of the total, not an
+        // addition to it — same pattern the Cancellation Intelligence section below uses).
+        if (isCancelled(b?.status)) {
+          map[monStr].cancLoss += (b?.ticket_cost||0);
         }
       } catch (e) {}
     });
@@ -272,7 +286,7 @@ function AnalyticsPage() {
     const map: Record<string, {bk: number, gross: number, net: number}> = {};
     const items = filteredBookings || [];
     items.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
+      if (isNoShow(b?.status)) return;
       const p = shortProductCode(b?.product_code) || 'Unknown';
       if (!map[p]) map[p] = {bk: 0, gross: 0, net: 0};
       map[p].bk++;
@@ -287,7 +301,7 @@ function AnalyticsPage() {
   const activeProductData = useMemo(() => {
     if (!productDrilldown) return null;
     const items = filteredBookings || [];
-    const prodBks = items.filter(b => shortProductCode(b?.product_code) === productDrilldown && !['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || ''));
+    const prodBks = items.filter(b => shortProductCode(b?.product_code) === productDrilldown && !isNoShow(b?.status));
     if (prodBks.length === 0) return null;
     
     const monMap: Record<string, number> = {};
@@ -328,7 +342,7 @@ function AnalyticsPage() {
     const arr: any[] = [];
     const items = filteredBookings || [];
     items.forEach(b => {
-      if (['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || '')) return;
+      if (isNoShow(b?.status)) return;
       if (!b?.booking_date || !b?.travel_date) return;
       try {
         const bd = new Date(b.booking_date).getTime();
@@ -366,10 +380,14 @@ function AnalyticsPage() {
     return { avg: Math.round(sum / scatterData.length), max, mostCommon: mostFreq.days };
   }, [scatterData]);
 
-  // 7. CANCELLATION ANALYSIS
+  // 7. CANCELLATION ANALYSIS — a dedicated "how much did we lose to cancellations/no-shows" lens,
+  // deliberately bundling both together (unrelated to this task, and unlike every other exclusion
+  // on this page above, which now only excludes NO_SHOW). This section's numbers already overlap
+  // with what's now counted in the main P&L totals above — that's intentional, a highlight of
+  // what's inside the total, not money counted twice.
   const cancelData = useMemo(() => {
     const bks = bookings || [];
-    const cancs = bks.filter(b => ['CANCELLED_EARLY', 'CANCELLED_LATE', 'NO_SHOW'].includes(b?.status || ''));
+    const cancs = bks.filter(b => isCancelled(b?.status) || isNoShow(b?.status));
     const totBk = bks.length;
     
     let revLost = 0;

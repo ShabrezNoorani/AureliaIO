@@ -16,6 +16,17 @@ export const localDateStr = (d: Date = new Date()) => {
   return `${y}-${m}-${day}`;
 };
 
+// The ONE definition of "is this booking cancelled?" — bookings.status only ever stores the bare
+// "CANCELLED" value now (the old CANCELLED_EARLY/CANCELLED_LATE split was normalized away at the
+// DB level), matched case-insensitively so a stray lowercase value can't silently slip through.
+// startsWith (not an exact match) stays defensive against any not-yet-normalized legacy row
+// still carrying "CANCELLED_EARLY"/"CANCELLED_LATE" — functionally identical to an exact match
+// for the bare value, zero behavior difference either way. Use this everywhere the app asks "is
+// this cancelled?" — never compare a status string directly.
+export function isCancelled(status: string | null | undefined): boolean {
+  return !!status && status.toUpperCase().startsWith('CANCELLED');
+}
+
 // bookings.product_code comes in two shapes depending on source: older gsheet rows store just the
 // short OTA code ("P13"), newer bokun_email rows store it prefixed with the numeric Bokun product
 // id ("5591586P13"). Always display the trailing short code — never the raw column value or

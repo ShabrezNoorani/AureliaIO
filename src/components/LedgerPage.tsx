@@ -13,7 +13,7 @@ import CsvUploadModal from './CsvUploadModal';
 import MultiSelect from './MultiSelect';
 
 const CHANNELS = ['All', 'Viator', 'GYG', 'Airbnb', 'Website', 'Agent', 'Other'];
-const STATUSES = ['All', 'UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED_EARLY', 'CANCELLED_LATE'];
+const STATUSES = ['All', 'UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED'];
 const MONTHS = ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const PER_PAGE = 50;
 
@@ -50,8 +50,7 @@ const STATUS_STYLES: Record<string, string> = {
   UPCOMING: 'bg-blue-600/15 text-blue-700 border-blue-600/20',
   DONE: 'bg-green-600/15 text-green-700 border-green-600/20',
   NO_SHOW: 'bg-orange-600/15 text-orange-700 border-orange-600/20', // override to orange as requested
-  CANCELLED_EARLY: 'bg-red-600/15 text-red-700 border-red-600/20',
-  CANCELLED_LATE: 'bg-red-600/10 text-orange-700 border-orange-600/20',
+  CANCELLED: 'bg-red-600/15 text-red-700 border-red-600/20',
 };
 
 function StatusBadge({ status }: { status: string }) {

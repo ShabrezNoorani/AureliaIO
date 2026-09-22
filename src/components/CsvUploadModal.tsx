@@ -124,7 +124,7 @@ export default function CsvUploadModal({ onImport, onClose }: CsvUploadModalProp
       b.commission_amount = +(b.gross_revenue * b.commission_rate / 100).toFixed(2);
       b.net_revenue = +(b.gross_revenue - b.commission_amount).toFixed(2);
       b.net_profit = +(b.net_revenue - b.ticket_cost - b.guide_cost - b.extra_cost).toFixed(2);
-      if (!b.status || !['UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED_EARLY', 'CANCELLED_LATE'].includes(b.status)) {
+      if (!b.status || !['UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED'].includes(b.status)) {
         b.status = 'UPCOMING';
       }
       if (!b.channel) b.channel = 'Other';

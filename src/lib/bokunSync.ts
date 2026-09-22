@@ -111,7 +111,7 @@ export async function syncBokunBookings(
         total_pax: total_pax || (pax_adult + pax_youth + pax_child + pax_infant),
         status: b.status === 'CONFIRMED' ? 'UPCOMING' :
                 (b.status === 'DONE' || b.status === 'COMPLETED') ? 'DONE' :
-                b.status === 'CANCELLED' ? 'CANCELLED_EARLY' :
+                b.status === 'CANCELLED' ? 'CANCELLED' :
                 b.status === 'NO_SHOW' ? 'NO_SHOW' : 'UPCOMING',
         user_id: userId,
         sync_source: 'bokun'

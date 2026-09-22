@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat } from 'lucide-react';
 import { buildGuideInviteLinks } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
-import { localDateStr, shortProductCode } from '@/lib/utils';
+import { localDateStr, shortProductCode, isCancelled } from '@/lib/utils';
 
 interface Booking {
   id: string;
@@ -76,12 +76,6 @@ const paxTotal = (b: Booking) =>
 // purely so it's independently testable (see DispatchPage.groupLabel.test.ts).
 export const groupLabel = (g: { product_code: string | null; option_name: string }) =>
   `${shortProductCode(g.product_code) || 'Unknown'} — ${g.option_name}`;
-
-// Any status starting with CANCELLED (CANCELLED_EARLY, CANCELLED_LATE, bare CANCELLED, ...) is
-// treated as cancelled — shown so nothing looks like it silently vanished, but never selectable,
-// never assignable to a session or guide, and never counted in pax totals used for allocation.
-const isCancelledStatus = (status: string | null | undefined) =>
-  !!status && status.toUpperCase().startsWith('CANCELLED');
 
 // 'offered'/'declined'/'reassigned' can still appear as a STATUS on rows created before
 // assignment became immediate — kept here purely so any such historical row still renders
@@ -272,7 +266,7 @@ export default function DispatchPage() {
   const getGroupAssignmentInfo = (group: NaturalGroup) => {
     // Assignment status is computed over assignable (non-cancelled) bookings only, so a group
     // that's fully assigned except for a cancelled guest still reads as fully assigned.
-    const assignableBookings = group.bookings.filter(b => !isCancelledStatus(b.status));
+    const assignableBookings = group.bookings.filter(b => !isCancelled(b.status));
     const assignedSessionIds = assignableBookings.map(b => bookingRefToSessionId.get(b.booking_ref));
     const assignedCount = assignedSessionIds.filter(Boolean).length;
     const uniqueSessionIds = Array.from(new Set(assignedSessionIds.filter(Boolean))) as string[];
@@ -298,7 +292,7 @@ export default function DispatchPage() {
   const selectedGroups = naturalGroups.filter(g => selectedGroupKeys.has(g.key));
   // Cancelled bookings never get built into a session — filtered out here so both the "create
   // session" refs and the displayed total pax exclude them.
-  const selectedBookingsFlat = selectedGroups.flatMap(g => g.bookings.filter(b => !isCancelledStatus(b.status)));
+  const selectedBookingsFlat = selectedGroups.flatMap(g => g.bookings.filter(b => !isCancelled(b.status)));
   const selectedTotalPax = selectedBookingsFlat.reduce((s, b) => s + paxTotal(b), 0);
   const selectedDistinctTimes = new Set(selectedGroups.map(g => g.travel_time));
   const selectedDistinctProducts = new Set(selectedGroups.map(g => groupLabel(g)));
@@ -353,7 +347,7 @@ export default function DispatchPage() {
     // Assigning to a session excludes cancelled bookings (never added); unassigning clears the
     // whole group, including any cancelled booking left over from before it was cancelled.
     const refs = targetSessionId
-      ? group.bookings.filter(b => !isCancelledStatus(b.status)).map(b => b.booking_ref)
+      ? group.bookings.filter(b => !isCancelled(b.status)).map(b => b.booking_ref)
       : group.bookings.map(b => b.booking_ref);
     await reassignBookings(refs, targetSessionId);
     await loadData();
@@ -455,9 +449,9 @@ export default function DispatchPage() {
                   const info = getGroupAssignmentInfo(group);
                   const isSelected = selectedGroupKeys.has(group.key);
                   const isExpanded = expandedGroups.has(group.key);
-                  const cancelledCount = group.bookings.filter(b => isCancelledStatus(b.status)).length;
+                  const cancelledCount = group.bookings.filter(b => isCancelled(b.status)).length;
                   // Cancelled pax never counts toward the total used to build/balance a session.
-                  const groupPax = group.bookings.reduce((s, b) => s + (isCancelledStatus(b.status) ? 0 : paxTotal(b)), 0);
+                  const groupPax = group.bookings.reduce((s, b) => s + (isCancelled(b.status) ? 0 : paxTotal(b)), 0);
                   const groupSelectable = info.assignableCount > 0;
 
                   return (
@@ -530,7 +524,7 @@ export default function DispatchPage() {
                             <div className="mt-3 space-y-2 border-t border-border pt-3">
                               {group.bookings.map(b => {
                                 const sid = bookingRefToSessionId.get(b.booking_ref) || '';
-                                const cancelled = isCancelledStatus(b.status);
+                                const cancelled = isCancelled(b.status);
                                 return (
                                   <div key={b.id} className={`flex flex-wrap items-center justify-between gap-2 text-xs rounded-lg p-2 ${cancelled ? 'bg-muted/50' : 'bg-muted'}`}>
                                     <div className="min-w-0 truncate flex items-center gap-2">
@@ -618,7 +612,7 @@ export default function DispatchPage() {
                   const sBookings = sessionIdToBookings.get(session.id) || [];
                   // Defensive: a booking assigned before being cancelled must not count toward
                   // the pax total used to balance/offer guides for this session.
-                  const sPax = sBookings.reduce((s, b) => s + (isCancelledStatus(b.status) ? 0 : paxTotal(b)), 0);
+                  const sPax = sBookings.reduce((s, b) => s + (isCancelled(b.status) ? 0 : paxTotal(b)), 0);
                   const sGuideRows = sessionIdToGuideRows.get(session.id) || [];
                   const assignedGuideIds = sGuideRows.map(r => r.guide_id);
                   const isEditingLabel = editingLabelId === session.id;
@@ -775,7 +769,7 @@ export default function DispatchPage() {
                         {sBookings.length === 0 ? (
                           <p className="text-xs text-muted-foreground italic">No bookings in this session.</p>
                         ) : sBookings.map(b => {
-                          const cancelled = isCancelledStatus(b.status);
+                          const cancelled = isCancelled(b.status);
                           return (
                           <div key={b.id} className={`flex items-center justify-between gap-2 text-xs rounded-lg p-2 ${cancelled ? 'bg-muted/50' : 'bg-muted'}`}>
                             <div className="min-w-0 truncate flex items-center gap-2">

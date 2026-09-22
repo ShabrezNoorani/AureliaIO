@@ -13,7 +13,7 @@ const CHANNEL_MAP: Record<string, string> = {
 
 const STATUS_MAP: Record<string, string> = {
   DONE: 'DONE',
-  CANCELLED: 'CANCELLED_EARLY',
+  CANCELLED: 'CANCELLED',
   UPCOMING: 'UPCOMING',
   'NO SHOW': 'NO_SHOW',
   'No Show': 'NO_SHOW',

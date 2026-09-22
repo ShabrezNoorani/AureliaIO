@@ -46,7 +46,7 @@ export interface Booking {
   // going forward; display code should still prefer summing the four pax fields directly for any
   // row that predates this.
   total_pax?: number;
-  status: 'UPCOMING' | 'DONE' | 'NO_SHOW' | 'CANCELLED_EARLY' | 'CANCELLED_LATE';
+  status: 'UPCOMING' | 'DONE' | 'NO_SHOW' | 'CANCELLED';
   notes: string;
   created_at?: string;
   // Field names (from PROTECTABLE_BOOKING_FIELDS, lib/bookingOverrides.ts) the owner has hand-
