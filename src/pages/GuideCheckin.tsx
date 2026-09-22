@@ -150,12 +150,20 @@ export default function GuideCheckin() {
     if (!mountedRef.current) return;
     setOtherGuides(otherGuidesData);
 
+    // Every guide's display name for the allocation board — sourced from the company-wide RPC
+    // (guideName for self, otherGuidesData, itself RLS-safe via my_company_guides()) rather than a
+    // direct `guides` table read, because RLS only lets a guide SELECT their OWN row there. Set
+    // once, independent of which sessions/bookings exist below, so it's never stale-cleared.
+    setGuideProfiles([
+      ...(guideId && guideName ? [{ id: guideId, name: guideName }] : []),
+      ...otherGuidesData.map(g => ({ id: g.id, name: g.name })),
+    ]);
+
     const acceptedSessionIds = (sgRes.data || []).map(sg => sg.session_id);
     if (acceptedSessionIds.length === 0) {
       setSessions([]);
       setSessionBookings([]);
       setTeamSessionGuides([]);
-      setGuideProfiles([]);
       setBookings([]);
       setCheckins([]);
       setArrivals([]);
@@ -179,7 +187,6 @@ export default function GuideCheckin() {
     if (sessionIds.length === 0) {
       setSessionBookings([]);
       setTeamSessionGuides([]);
-      setGuideProfiles([]);
       setBookings([]);
       setCheckins([]);
       setArrivals([]);
@@ -208,29 +215,23 @@ export default function GuideCheckin() {
     setArrivals(prev => mergeArrivalsGuardingPending(arrRes.data || [], prev, queuedArrivalSessionIds));
 
     const refs = Array.from(new Set(mySessionBookings.map(sb => sb.booking_ref)));
-    const teamGuideIds = Array.from(new Set(teamGuides.map(tg => tg.guide_id)));
 
     if (refs.length === 0) {
       setBookings([]);
       setCheckins([]);
-      setGuideProfiles([]);
       if (!silent) setLoading(false);
       return;
     }
 
-    const [bRes, cRes, gRes] = await Promise.all([
+    const [bRes, cRes] = await Promise.all([
       supabase.from('bookings').select('*').eq('user_id', guideUserId).in('booking_ref', refs),
       supabase.from('checkins').select('booking_ref, status, checked_in_at, display_name_override, ticket_photo')
         .eq('user_id', guideUserId).eq('travel_date', today).in('booking_ref', refs),
-      teamGuideIds.length > 0
-        ? supabase.from('guides').select('id, name').eq('user_id', guideUserId).in('id', teamGuideIds)
-        : Promise.resolve({ data: [] as GuideProfile[] }),
     ]);
     if (!mountedRef.current) return;
 
     setBookings(bRes.data || []);
     setCheckins(prev => mergeGuardingPending(cRes.data || [], prev, pendingBookingRefs));
-    setGuideProfiles((gRes.data as GuideProfile[]) || []);
     if (!silent) setLoading(false);
   };
 
