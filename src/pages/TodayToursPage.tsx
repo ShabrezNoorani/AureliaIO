@@ -840,7 +840,7 @@ function SessionBoard({
           <AllocationBoard
             guides={team}
             guests={checkedInGuests}
-            isOwner
+            canControl
             onMoveGuest={onMoveGuest}
             onToggleLock={(guideId, locked) => onToggleLock(session.id, guideId, locked)}
             onBalance={() => onBalance(session.id)}

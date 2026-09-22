@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
+import { toast } from 'sonner';
 import { Calendar as CalendarIcon, RefreshCw } from 'lucide-react';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
@@ -10,6 +11,7 @@ import SyncStatusIndicator from '@/components/checkin/SyncStatusIndicator';
 import GuideArrivalCard from '@/components/checkin/GuideArrivalCard';
 import { localDateStr, isCancelled } from '@/lib/utils';
 import { logChange } from '@/lib/changeLog';
+import { computeBalance } from '@/lib/allocationBalance';
 import { enqueueRetry, useRetryQueueItems, type QueueItem } from '@/lib/retryQueue';
 import { writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
 import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
@@ -97,6 +99,10 @@ export default function GuideCheckin() {
   const [loading, setLoading] = useState(true);
   const [showConfirm, setShowConfirm] = useState<Booking | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  // Allocation board controls — a guide gets the exact same move/lock/balance capability the
+  // owner has on TodayToursPage, for ANY guide on the session (not just themselves). RLS is what
+  // actually enforces "session member" scope server-side; the writes below are unrestricted here.
+  const [balancingSessionId, setBalancingSessionId] = useState<string | null>(null);
 
   // "Transfer to another guide" — hands one of this guide's OWN sessions off to a teammate via
   // reassign_my_slot (see lib/guideTransfer.ts). Same flow GuideHome.tsx offers on every upcoming
@@ -268,6 +274,22 @@ export default function GuideCheckin() {
       .eq('user_id', guideUserId).eq('guide_id', guideId).in('session_id', sessionIds);
     if (!mountedRef.current) return;
     setArrivals(prev => mergeArrivalsGuardingPending(data || [], prev, queuedArrivalSessionIds));
+  };
+
+  // Targeted refetch of just the team roster (incl. shuffle_locked) — mirrors TodayToursPage's
+  // refreshSessionGuides, used right after this guide's own lock toggle so the actor sees it land
+  // immediately rather than waiting on the broader session_guides realtime round-trip below.
+  const refreshTeamSessionGuides = async () => {
+    if (!guideUserId) return;
+    const sessionIds = sessions.map(s => s.id);
+    if (sessionIds.length === 0) {
+      setTeamSessionGuides([]);
+      return;
+    }
+    const { data } = await supabase.from('session_guides').select('session_id, guide_id, shuffle_locked')
+      .eq('user_id', guideUserId).eq('status', 'accepted').in('session_id', sessionIds);
+    if (!mountedRef.current) return;
+    setTeamSessionGuides(data || []);
   };
 
   // Keeps the long-lived realtime subscription (set up once per guide, below) always calling the
@@ -557,6 +579,85 @@ export default function GuideCheckin() {
     });
   };
 
+  // Allocation board — identical to TodayToursPage's owner handlers (same tables, same fields,
+  // same retry/resilience pattern), just scoped through guideUserId instead of the owner's own
+  // `user.id`. Any guide on the session can move/lock/balance every guide's column, not only
+  // their own — RLS on session_bookings/session_guides is what actually authorizes that for a
+  // session member; nothing here restricts it to "my own allotment".
+  const handleMoveGuest = (bookingRef: string, newGuideId: string | null) => {
+    if (!guideUserId) return;
+
+    setSessionBookings(prev => prev.map(sb => (
+      sb.booking_ref === bookingRef ? { ...sb, allotted_guide_id: newGuideId } : sb
+    )));
+
+    enqueueRetry(bookingRef, 'Move guide', async () => {
+      const { error } = await supabase.from('session_bookings')
+        .update({ allotted_guide_id: newGuideId })
+        .eq('user_id', guideUserId)
+        .eq('booking_ref', bookingRef);
+      if (error) throw error;
+      await refreshSessionBookingsRef.current();
+    });
+  };
+
+  // Lock/unlock a guide on a session — locked guides and their guests are excluded from Balance
+  // entirely. Not queued (same as the owner's version): small, single-row write, awaited directly
+  // so the confirm state on the button itself is the only feedback needed.
+  const handleToggleLock = async (sessionId: string, guideId: string, locked: boolean) => {
+    if (!guideUserId) return;
+    await supabase.from('session_guides')
+      .update({ shuffle_locked: locked })
+      .eq('user_id', guideUserId)
+      .eq('session_id', sessionId)
+      .eq('guide_id', guideId);
+    await refreshTeamSessionGuides();
+  };
+
+  // Runs the shared Balance algorithm (lib/allocationBalance.ts — same function TodayToursPage
+  // calls, never forked) for one session and persists the resulting moves.
+  const handleBalance = async (sessionId: string) => {
+    if (!guideUserId) return;
+    const teamGuides = sessionIdToTeam.get(sessionId) || [];
+    const checkedInGuests = sessionIdToCheckedInGuests.get(sessionId) || [];
+
+    const result = computeBalance(
+      teamGuides.map(g => ({ id: g.id, locked: g.locked })),
+      checkedInGuests.map(g => ({ bookingRef: g.bookingRef, pax: g.pax, allottedGuideId: g.allottedGuideId }))
+    );
+
+    if ('error' in result) {
+      toast.error(result.error);
+      return;
+    }
+
+    if (result.moves.length === 0) {
+      toast.success('Already balanced — no changes needed.');
+      return;
+    }
+
+    setBalancingSessionId(sessionId);
+    try {
+      // session_bookings has no single-column primary key — every row is scoped by (user_id, booking_ref).
+      await Promise.all(result.moves.map(m =>
+        supabase.from('session_bookings')
+          .update({ allotted_guide_id: m.newGuideId })
+          .eq('user_id', guideUserId)
+          .eq('booking_ref', m.bookingRef)
+      ));
+
+      const summary = teamGuides
+        .filter(g => !g.locked)
+        .map(g => `${g.name}: ${result.totalsByGuideId[g.id] ?? 0} pax`)
+        .join(' · ');
+      toast.success(`Balanced ${result.moves.length} guest${result.moves.length !== 1 ? 's' : ''} — ${summary}`);
+
+      await refreshSessionBookings();
+    } finally {
+      setBalancingSessionId(null);
+    }
+  };
+
   const openTransfer = (sessionId: string) => {
     setTransferSessionId(sessionId);
     setTransferTargetId('');
@@ -688,6 +789,11 @@ export default function GuideCheckin() {
                     <AllocationBoard
                       guides={teamGuides}
                       guests={checkedInGuests}
+                      canControl
+                      onMoveGuest={handleMoveGuest}
+                      onToggleLock={(gId, locked) => handleToggleLock(session.id, gId, locked)}
+                      onBalance={() => handleBalance(session.id)}
+                      balancing={balancingSessionId === session.id}
                       highlightGuideId={guideId || undefined}
                     />
                   </div>

@@ -19,8 +19,10 @@ interface AllocationBoardProps {
   guides: AllocationGuide[];
   /** Checked-in guests only — callers must pre-filter to checked-in bookings. */
   guests: AllocationGuest[];
-  /** Owner-only controls (move / lock / balance) — omit entirely for a guide's read-only view. */
-  isOwner?: boolean;
+  /** Full move / lock / balance controls — true for the owner AND for any guide who's a member of
+      this session (both get identical capabilities, per session_guides RLS); omit/false for a
+      read-only view. */
+  canControl?: boolean;
   onMoveGuest?: (bookingRef: string, newGuideId: string | null) => void;
   onToggleLock?: (guideId: string, locked: boolean) => void;
   onBalance?: () => void;
@@ -32,7 +34,7 @@ interface AllocationBoardProps {
 export default function AllocationBoard({
   guides,
   guests,
-  isOwner,
+  canControl,
   onMoveGuest,
   onToggleLock,
   onBalance,
@@ -44,7 +46,7 @@ export default function AllocationBoard({
   // each guest keeps working the same way alongside this — neither interaction excludes the other.
   const [selectedRef, setSelectedRef] = useState<string | null>(null);
 
-  const canMove = !!(isOwner && onMoveGuest);
+  const canMove = !!(canControl && onMoveGuest);
 
   const { byGuide, holding } = useMemo(() => {
     const m = new Map<string, AllocationGuest[]>();
@@ -114,7 +116,7 @@ export default function AllocationBoard({
 
   return (
     <div className="space-y-3">
-      {isOwner && onBalance && (
+      {canControl && onBalance && (
         <div className="flex justify-end">
           <button
             onClick={onBalance}
@@ -155,7 +157,7 @@ export default function AllocationBoard({
                   <span className="font-bold text-sm truncate text-foreground">{guide.name}</span>
                   {isSelf && <span className="text-[9px] font-black uppercase text-gold shrink-0">You</span>}
                 </div>
-                {isOwner && onToggleLock && (
+                {canControl && onToggleLock && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onToggleLock(guide.id, !guide.locked); }}
                     title={guide.locked ? 'Unlock (include in Balance)' : 'Lock (exclude from Balance)'}
