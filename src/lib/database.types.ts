@@ -1047,6 +1047,15 @@ export type Database = {
       my_company_owner_id: { Args: never; Returns: string }
       my_guide_session_ids: { Args: never; Returns: string[] }
       my_session_booking_refs: { Args: never; Returns: string[] }
+      my_session_team: {
+        Args: never
+        Returns: {
+          guide_number: string
+          id: string
+          name: string
+          session_id: string
+        }[]
+      }
       reassign_my_slot: {
         Args: { p_session_id: string; p_to_guide: string }
         Returns: undefined

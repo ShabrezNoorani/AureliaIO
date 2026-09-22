@@ -67,9 +67,14 @@ interface SessionGuideRow {
   shuffle_locked: boolean;
 }
 
-interface GuideProfile {
+// One row per (session, guide) pair, returned by the my_session_team() RPC for every session the
+// logged-in guide belongs to — includes the guide's own row and is not status-case-sensitive
+// (unlike my_company_guides(), which filters status = 'Active' and excludes the caller — correct
+// for the transfer picker, wrong for the allocation board's name lookup).
+interface SessionTeamRow {
   id: string;
   name: string;
+  session_id: string;
 }
 
 const paxTotal = (b: Booking) =>
@@ -89,7 +94,7 @@ export default function GuideCheckin() {
   const [sessions, setSessions] = useState<TourSession[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingRow[]>([]);
   const [teamSessionGuides, setTeamSessionGuides] = useState<SessionGuideRow[]>([]);
-  const [guideProfiles, setGuideProfiles] = useState<GuideProfile[]>([]);
+  const [sessionTeamRows, setSessionTeamRows] = useState<SessionTeamRow[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [checkins, setCheckins] = useState<Checkin[]>([]);
   const [arrivals, setArrivals] = useState<ArrivalRow[]>([]);
@@ -142,22 +147,20 @@ export default function GuideCheckin() {
 
     // Only sessions this guide has actually ACCEPTED show up for check-in — offered-but-unanswered
     // and declined/reassigned sessions must never appear here.
-    const [sgRes, otherGuidesData] = await Promise.all([
+    const [sgRes, otherGuidesData, sessionTeamRes] = await Promise.all([
       supabase.from('session_guides').select('session_id')
         .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted'),
+      // Transfer picker only — deliberately excludes self and is fine being case-sensitive on
+      // status, since it's just "everyone else at the company".
       fetchCompanyGuides(supabase, guideId),
+      // Allocation board's name lookup — every guide on any session this guide belongs to
+      // (including themself), not status-case-sensitive. my_company_guides() is wrong here: it
+      // excludes the caller and filters status = 'Active' against rows stored as 'active'.
+      supabase.rpc('my_session_team'),
     ]);
     if (!mountedRef.current) return;
     setOtherGuides(otherGuidesData);
-
-    // Every guide's display name for the allocation board — sourced from the company-wide RPC
-    // (guideName for self, otherGuidesData, itself RLS-safe via my_company_guides()) rather than a
-    // direct `guides` table read, because RLS only lets a guide SELECT their OWN row there. Set
-    // once, independent of which sessions/bookings exist below, so it's never stale-cleared.
-    setGuideProfiles([
-      ...(guideId && guideName ? [{ id: guideId, name: guideName }] : []),
-      ...otherGuidesData.map(g => ({ id: g.id, name: g.name })),
-    ]);
+    setSessionTeamRows(sessionTeamRes.data || []);
 
     const acceptedSessionIds = (sgRes.data || []).map(sg => sg.session_id);
     if (acceptedSessionIds.length === 0) {
@@ -368,17 +371,29 @@ export default function GuideCheckin() {
     return map;
   }, [sessionBookings, bookings]);
 
+  // guide_id -> name, scoped per session (not a single flat lookup) — matches my_session_team()'s
+  // own (session_id, guide_id) grain rather than assuming a guide's name lookup is session-agnostic.
+  const sessionTeamNames = useMemo(() => {
+    const m = new Map<string, Map<string, string>>();
+    sessionTeamRows.forEach(r => {
+      const inner = m.get(r.session_id) || new Map<string, string>();
+      inner.set(r.id, r.name);
+      m.set(r.session_id, inner);
+    });
+    return m;
+  }, [sessionTeamRows]);
+
   const sessionIdToTeam = useMemo(() => {
     const m = new Map<string, AllocationGuide[]>();
     teamSessionGuides.forEach(tg => {
-      const profile = guideProfiles.find(g => g.id === tg.guide_id);
-      if (!profile) return;
+      const name = sessionTeamNames.get(tg.session_id)?.get(tg.guide_id);
+      if (!name) return;
       const arr = m.get(tg.session_id) || [];
-      arr.push({ id: tg.guide_id, name: profile.name, locked: tg.shuffle_locked });
+      arr.push({ id: tg.guide_id, name, locked: tg.shuffle_locked });
       m.set(tg.session_id, arr);
     });
     return m;
-  }, [teamSessionGuides, guideProfiles]);
+  }, [teamSessionGuides, sessionTeamNames]);
 
   const getDisplayName = (b: Booking) => {
     const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
