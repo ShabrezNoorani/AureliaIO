@@ -94,6 +94,12 @@ export default {
           from: { opacity: "0", transform: "translateX(-8px)" },
           to: { opacity: "1", transform: "translateX(0)" },
         },
+        // A new item easing up into a live notification stream (Live Board) — slower and gentler
+        // than slide-in/fade-in, meant to read as a calm drift rather than a popup.
+        "rise-in": {
+          from: { opacity: "0", transform: "translateY(18px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
         // Slow, gentle drift for the landing-page hero's background glow — the only place in the
         // app with a looping animation. Kept subtle: small travel distance, long duration.
         "blob-drift": {
@@ -107,6 +113,7 @@ export default {
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.3s ease-out",
         "slide-in": "slide-in 0.3s ease-out",
+        "rise-in": "rise-in 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
         "blob-drift-a": "blob-drift 22s ease-in-out infinite",
         "blob-drift-b": "blob-drift 28s ease-in-out infinite reverse",
       },

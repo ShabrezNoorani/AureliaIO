@@ -1045,6 +1045,47 @@ export type Database = {
         }[]
       }
       my_company_owner_id: { Args: never; Returns: string }
+      my_company_unsessioned_bookings: {
+        Args: { p_date: string }
+        Returns: {
+          assigned_guide: string | null
+          booking_date: string | null
+          booking_ref: string | null
+          cancellation_type: string | null
+          channel: string | null
+          commission_amount: number | null
+          commission_rate: number | null
+          created_at: string | null
+          customer_name: string | null
+          customer_phone: string | null
+          ext_ref: string | null
+          extra_cost: number | null
+          gross_revenue: number | null
+          guide_cost: number | null
+          gyg_cost: number | null
+          id: string
+          manual_overrides: string[] | null
+          marketplace_fee: number | null
+          net_profit: number | null
+          net_revenue: number | null
+          notes: string | null
+          option_name: string | null
+          pax_adult: number | null
+          pax_child: number | null
+          pax_infant: number | null
+          pax_youth: number | null
+          product_code: string | null
+          product_name: string | null
+          promo_code: string | null
+          status: string | null
+          sync_source: string | null
+          ticket_cost: number | null
+          total_pax: number | null
+          travel_date: string | null
+          travel_time: string | null
+          user_id: string | null
+        }[]
+      }
       my_guide_session_ids: { Args: never; Returns: string[] }
       my_session_booking_refs: { Args: never; Returns: string[] }
       my_session_team: {

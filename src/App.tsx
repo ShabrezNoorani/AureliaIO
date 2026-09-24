@@ -21,6 +21,7 @@ import GuideLayout from "./pages/GuideLayout";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import BreakdownPnlPage from "./pages/BreakdownPnlPage";
 import TodayToursPage from "./pages/TodayToursPage";
+import LiveDashboardPage from "./pages/LiveDashboardPage";
 import DispatchPage from "./pages/DispatchPage";
 import ChangeLogPage from "./pages/ChangeLogPage";
 import CheckinApp from "./pages/CheckinApp";
@@ -97,6 +98,7 @@ const AppContent = () => {
             <Route path="guides" element={<GuidesPage />} />
             <Route path="guide-dashboard" element={<GuideDashboard />} />
             <Route path="today" element={<TodayToursPage />} />
+            <Route path="live" element={<LiveDashboardPage />} />
             <Route path="dispatch" element={<DispatchPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="breakdown-pnl" element={<BreakdownPnlPage />} />

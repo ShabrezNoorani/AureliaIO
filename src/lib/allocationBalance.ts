@@ -11,6 +11,10 @@ export interface BalanceGuestInput {
   bookingRef: string;
   pax: number;
   allottedGuideId: string | null;
+  /** A checked-in guest is locked to whoever checked them in — Balance must never move them
+      (safety rule: check-in = ownership). Still counts toward that guide's running total below,
+      just never enters the movable pool. */
+  isCheckedIn: boolean;
 }
 
 export interface BalanceMove {
@@ -51,6 +55,16 @@ export function pickLeastLoadedGuide(
   return best.id;
 }
 
+// Balance only ever fills GAPS — it never reshuffles a guest someone (a check-in, a manual move,
+// or an earlier Balance run) already placed. Given `guests` covering an ENTIRE session (checked-in
+// and not, per the auto-population feature — a session can now hold not-yet-arrived guests too):
+//   - A checked-in guest is locked to their current guide: excluded from the pool, but their pax
+//     still seeds that guide's running total, so Balance never piles more guests onto a guide
+//     who's already carrying a full checked-in load.
+//   - An already-allotted-but-not-yet-checked-in guest (placed manually, or by an earlier Balance
+//     run) is left exactly where it is too — same seeding, same pool exclusion.
+//   - The pool is genuinely UNALLOTTED, not-checked-in guests only — auto-populated bookings sit
+//     here until a human checks them in or runs Balance.
 export function computeBalance(
   guides: BalanceGuideInput[],
   guests: BalanceGuestInput[]
@@ -60,27 +74,30 @@ export function computeBalance(
     return { error: 'No unlocked guides to balance across.' };
   }
 
-  const lockedGuideIds = new Set(guides.filter(g => g.locked).map(g => g.id));
+  const totalsByGuideId: Record<string, number> = {};
+  unlockedGuides.forEach(g => { totalsByGuideId[g.id] = 0; });
 
-  // Pool = every checked-in guest NOT currently allotted to a locked guide — i.e. guests on an
-  // unlocked guide (unlocked guides are emptied first) plus anyone not yet allotted at all.
-  const pool = guests.filter(g => !g.allottedGuideId || !lockedGuideIds.has(g.allottedGuideId));
+  // Seed every unlocked guide's total from whichever guests are ALREADY on them (checked in or
+  // not) — a locked guide's guests aren't tracked here at all (no key for them), matching how
+  // totalsByGuideId has only ever covered unlocked guides.
+  guests.forEach(g => {
+    if (g.allottedGuideId && totalsByGuideId[g.allottedGuideId] !== undefined) {
+      totalsByGuideId[g.allottedGuideId] += g.pax;
+    }
+  });
+
+  const pool = guests.filter(g => !g.isCheckedIn && !g.allottedGuideId);
 
   // Largest group first — never split a group, so the biggest groups need to be placed while
   // the most "room" is still available across guides.
   const sortedPool = [...pool].sort((a, b) => b.pax - a.pax);
-
-  const totalsByGuideId: Record<string, number> = {};
-  unlockedGuides.forEach(g => { totalsByGuideId[g.id] = 0; });
 
   const moves: BalanceMove[] = [];
 
   for (const guest of sortedPool) {
     const targetId = pickLeastLoadedGuide(unlockedGuides, totalsByGuideId)!; // unlockedGuides is non-empty (checked above)
     totalsByGuideId[targetId] = (totalsByGuideId[targetId] ?? 0) + guest.pax;
-    if (guest.allottedGuideId !== targetId) {
-      moves.push({ bookingRef: guest.bookingRef, newGuideId: targetId });
-    }
+    moves.push({ bookingRef: guest.bookingRef, newGuideId: targetId });
   }
 
   return { moves, totalsByGuideId };

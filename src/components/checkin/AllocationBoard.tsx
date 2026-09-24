@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Lock, Unlock, Users, Shuffle } from 'lucide-react';
+import { Lock, Unlock, Users, Shuffle, CheckCircle2 } from 'lucide-react';
 
 export interface AllocationGuide {
   id: string;
@@ -13,11 +13,17 @@ export interface AllocationGuest {
   pax: number;
   /** Current guide this guest is allotted to, or null while sitting in the holding area. */
   allottedGuideId: string | null;
+  /** Checked-in guests are locked to their current guide (safety rule: check-in = ownership) —
+      Balance skips them entirely, and this renders a badge so it's clear at a glance why. Manual
+      move/unassign still works on them, same as any other guest. */
+  isCheckedIn: boolean;
 }
 
 interface AllocationBoardProps {
   guides: AllocationGuide[];
-  /** Checked-in guests only — callers must pre-filter to checked-in bookings. */
+  /** Every guest currently in the session — checked-in AND not (auto-populated / pre-allotted
+      guests included), so Balance has the not-yet-arrived pool to distribute and the board shows
+      the full picture. Callers must still exclude cancelled bookings. */
   guests: AllocationGuest[];
   /** Full move / lock / balance controls — true for the owner AND for any guide who's a member of
       this session (both get identical capabilities, per session_guides RLS); omit/false for a
@@ -95,7 +101,10 @@ export default function AllocationBoard({
           isSelected ? 'bg-gold/20 ring-2 ring-gold' : 'bg-muted'
         } ${canMove ? 'cursor-pointer active:scale-[0.98]' : ''}`}
       >
-        <span className="font-semibold truncate text-foreground">{g.displayName}</span>
+        <span className="flex items-center gap-1 min-w-0">
+          {g.isCheckedIn && <CheckCircle2 size={12} className="text-green-700 shrink-0" />}
+          <span className="font-semibold truncate text-foreground">{g.displayName}</span>
+        </span>
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-gold font-bold">{g.pax}</span>
           {canMove && (
@@ -190,7 +199,9 @@ export default function AllocationBoard({
           );
         })}
 
-        {/* HOLDING COLUMN — checked-in guests not yet allotted to any guide */}
+        {/* HOLDING COLUMN — every guest not yet allotted to a guide, checked in or not (e.g. a
+            freshly auto-populated late booking, sitting here until someone checks them in or runs
+            Balance) */}
         <div
           onClick={() => handleColumnTap(null)}
           className={`w-[250px] shrink-0 snap-start flex flex-col rounded-2xl p-4 space-y-2.5 border border-dashed transition-all ${
@@ -205,7 +216,7 @@ export default function AllocationBoard({
           </div>
           <div className="space-y-1.5 overflow-y-auto max-h-[420px] aurelia-scrollbar">
             {holding.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground italic">Everyone checked in is allotted.</p>
+              <p className="text-[11px] text-muted-foreground italic">Nobody unallotted right now.</p>
             ) : (
               holding.map(g => renderGuestRow(g, null))
             )}

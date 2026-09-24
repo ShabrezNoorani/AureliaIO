@@ -8,6 +8,7 @@ import LedgerPage from '@/components/LedgerPage';
 import AdminCostsPage from '@/components/AdminCostsPage';
 import SettingsPage from '@/components/SettingsPage';
 import TodayToursPage from '@/pages/TodayToursPage';
+import LiveDashboardPage from '@/pages/LiveDashboardPage';
 import DispatchPage from '@/pages/DispatchPage';
 import ExecutiveDashboard from '@/pages/ExecutiveDashboard';
 import AnalyticsPage from '@/pages/AnalyticsPage';
@@ -23,7 +24,7 @@ import { syncMasterData } from '@/lib/gsheetSync';
 import { syncFromBokun } from '@/lib/bokunSync';
 import { localDateStr } from '@/lib/utils';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'live' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 const AppLayout = () => {
   const { user, profile } = useAuth();
@@ -53,12 +54,28 @@ const AppLayout = () => {
   const [view, setView] = useState<View>('executive');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Desktop-only sidebar collapse — persisted so it survives a reload. Read synchronously at init
+  // (not in a useEffect) so <main>'s margin is correct on the very first paint, no layout jump.
+  const SIDEBAR_COLLAPSED_KEY = 'aurelia_sidebar_collapsed';
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+  });
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+      return next;
+    });
+  };
+
   useEffect(() => {
     const path = window.location.pathname;
     if (path.includes('/guides')) setView('guides');
     else if (path.includes('/guide-dashboard')) setView('guide-dashboard');
     else if (path.includes('/marketplace')) setView('marketplace');
     else if (path.includes('/today')) setView('today');
+    else if (path.includes('/live')) setView('live');
     else if (path.includes('/dispatch')) setView('dispatch');
     else if (path.includes('/ledger')) setView('ledger');
     else if (path.includes('/admin-costs')) setView('admin-costs');
@@ -232,9 +249,11 @@ const AppLayout = () => {
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
         newBookingsCount={newBookingsCount}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
       />
 
-      <main className="flex-1 min-w-0 ml-0 md:ml-[240px]">
+      <main className={`flex-1 min-w-0 ml-0 transition-[margin] duration-300 ease-in-out ${sidebarCollapsed ? 'md:ml-[80px]' : 'md:ml-[240px]'}`}>
         {view === 'simulator' && (
           <Dashboard
             data={data}
@@ -291,6 +310,7 @@ const AppLayout = () => {
           />
         )}
         {view === 'today' && <TodayToursPage />}
+        {view === 'live' && <LiveDashboardPage />}
         {view === 'dispatch' && <DispatchPage />}
         {view === 'executive' && <ExecutiveDashboard />}
         {view === 'analytics' && <AnalyticsPage />}

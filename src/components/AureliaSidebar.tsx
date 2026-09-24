@@ -1,12 +1,12 @@
-import { useState } from 'react';
-import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart, Send, LineChart } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart, Send, LineChart, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, Profile } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'live' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -16,6 +16,12 @@ interface AureliaSidebarProps {
   mobileOpen?: boolean;
   onCloseMobile?: () => void;
   newBookingsCount?: number;
+  /** Desktop-only icon-rail mode — mobile always shows the full sidebar regardless of this, since
+      mobile already has its own show/hide via `mobileOpen`. Both the collapsed state and its
+      localStorage persistence live in AppLayout (it also needs the value, to size <main>'s
+      margin), so this component is purely controlled. */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 interface SidebarItemProps {
@@ -27,12 +33,17 @@ interface SidebarItemProps {
   indent?: boolean;
   title?: string;
   badge?: number;
+  /** Icon-only: hides the label and shows it as a title tooltip instead, centers the icon, and
+      swaps the numbered badge pill for a small dot (a count wouldn't fit next to nothing). */
+  collapsed?: boolean;
 }
 
-const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, title, badge }: SidebarItemProps) => {
+const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, title, badge, collapsed }: SidebarItemProps) => {
   const [isHovered, setIsHovered] = useState(false);
 
-  const baseClasses = `w-full flex items-center space-x-3 py-2.5 rounded-lg transition-all duration-200 font-medium ${indent ? 'pl-[28px] pr-4 text-[12px]' : 'px-4 text-sm'}`;
+  const baseClasses = collapsed
+    ? 'w-full relative flex items-center justify-center py-3 rounded-lg transition-all duration-200 font-medium'
+    : `w-full flex items-center space-x-3 py-2.5 rounded-lg transition-all duration-200 font-medium ${indent ? 'pl-[28px] pr-4 text-[12px]' : 'px-4 text-sm'}`;
 
   const activeBg = 'hsl(var(--theme-accent) / 0.15)';
   const activeColor = 'hsl(var(--theme-accent))';
@@ -43,25 +54,32 @@ const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, tit
     <button
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
-      title={disabled && title ? title : undefined}
+      title={collapsed ? label : (disabled && title ? title : undefined)}
       onMouseEnter={() => !disabled && setIsHovered(true)}
       onMouseLeave={() => !disabled && setIsHovered(false)}
       className={`${baseClasses} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
       style={{
         backgroundColor: active ? activeBg : (isHovered && !disabled ? 'rgba(255,255,255,0.05)' : 'transparent'),
-        borderLeft: active ? `3px solid ${activeColor}` : '3px solid transparent',
+        borderLeft: collapsed ? 'none' : (active ? `3px solid ${activeColor}` : '3px solid transparent'),
         color: active ? activeColor : (isHovered && !disabled ? hoverColor : inactiveColor)
       }}
     >
-      <Icon size={indent ? 16 : 18} strokeWidth={active ? 2.5 : 1.8} />
-      <span className="flex-1 min-w-0 text-left truncate">{label}</span>
+      <Icon size={collapsed ? 20 : (indent ? 16 : 18)} strokeWidth={active ? 2.5 : 1.8} />
+      {!collapsed && <span className="flex-1 min-w-0 text-left truncate">{label}</span>}
       {!!badge && badge > 0 && (
-        <span
-          className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center"
-          style={{ backgroundColor: 'hsl(var(--theme-accent))', color: 'hsl(var(--theme-sidebar))' }}
-        >
-          {badge > 99 ? '99+' : badge}
-        </span>
+        collapsed ? (
+          <span
+            className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full"
+            style={{ backgroundColor: 'hsl(var(--theme-accent))' }}
+          />
+        ) : (
+          <span
+            className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold flex items-center justify-center"
+            style={{ backgroundColor: 'hsl(var(--theme-accent))', color: 'hsl(var(--theme-sidebar))' }}
+          >
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )
       )}
     </button>
   );
@@ -102,12 +120,30 @@ function TrialStatusPill({ profile }: { profile: Profile | null }) {
   );
 }
 
-export default function AureliaSidebar({ activeView, companyName, onNavigate, onNewProduct, mobileOpen = false, onCloseMobile = () => {}, newBookingsCount = 0 }: AureliaSidebarProps) {
+export default function AureliaSidebar({
+  activeView, companyName, onNavigate, onNewProduct,
+  mobileOpen = false, onCloseMobile = () => {}, newBookingsCount = 0,
+  collapsed = false, onToggleCollapsed = () => {},
+}: AureliaSidebarProps) {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
 
   const [overviewExpanded, setOverviewExpanded] = useState(true);
   const [operationsExpanded, setOperationsExpanded] = useState(true);
+
+  // `collapsed` is a desktop-only concept — mobile always shows the full sidebar (it already has
+  // its own show/hide via mobileOpen). Tracks the md breakpoint live so resizing/rotating a window
+  // past it immediately falls back to the full mobile layout, never a half-collapsed one.
+  const [isDesktop, setIsDesktop] = useState(() => (
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 768px)').matches : true
+  ));
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  const iconOnly = collapsed && isDesktop;
 
   const handleNavigate = (view: View, path?: string) => {
     onNavigate(view);
@@ -141,7 +177,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
       )}
 
       <aside
-        className={`w-[240px] flex flex-col fixed h-full z-50 border-r transition-transform duration-300 ease-in-out ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}
+        className={`w-[240px] ${collapsed ? 'md:w-[80px]' : 'md:w-[240px]'} flex flex-col fixed h-full z-50 border-r transition-all duration-300 ease-in-out ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}
         style={{ backgroundColor: 'hsl(var(--theme-sidebar))', borderColor: 'hsl(var(--theme-border))' }}
       >
       {/* Mobile close button */}
@@ -153,14 +189,44 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
         <X size={18} />
       </button>
 
-      {/* Logo */}
-      <div className="px-6 pt-8 pb-6">
-        <Logo size="md" light />
+      {/* Logo + desktop collapse toggle */}
+      <div className={`pt-8 pb-6 flex items-center ${iconOnly ? 'flex-col gap-3 px-3' : 'justify-between px-6'}`}>
+        <Logo size="md" light iconOnly={iconOnly} />
+        <button
+          onClick={onToggleCollapsed}
+          className="hidden md:flex p-1.5 rounded-lg text-muted-foreground hover:text-gold hover:bg-muted transition-colors shrink-0"
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        </button>
       </div>
 
       {/* Navigation */}
       <div className="flex-1 overflow-y-auto px-3 space-y-1 pb-4 aurelia-scrollbar">
-        
+        {iconOnly ? (
+          /* Flat icon rail — every item, no group headers/dividers (nothing to expand when
+             there's no room for a group label anyway). Same items, same order, same handlers as
+             the grouped view below — just presented flat. */
+          <div className="flex flex-col space-y-0.5">
+            <SidebarItem icon={Home} label="Home" active={activeView === 'executive'} onClick={() => handleNavigate('executive')} collapsed />
+            <SidebarItem icon={TrendingUp} label="Simulator" active={activeView === 'simulator'} onClick={() => handleNavigate('simulator')} collapsed />
+            <SidebarItem icon={BarChart3} label="Analytics" active={activeView === 'analytics'} onClick={() => handleNavigate('analytics')} collapsed />
+            <SidebarItem icon={LineChart} label="Breakdown P&L" active={activeView === 'breakdown-pnl'} onClick={() => handleNavigate('breakdown-pnl', '/app/breakdown-pnl')} collapsed />
+            <SidebarItem icon={Package} label="Products & Pricing" active={activeView === 'products' || activeView === 'editor'} onClick={() => handleNavigate('products')} collapsed />
+            <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => handleNavigate('ledger')} badge={newBookingsCount} collapsed />
+            <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => handleNavigate('admin-costs')} collapsed />
+            <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => handleNavigate('today')} collapsed />
+            <SidebarItem icon={Activity} label="Live Board" active={activeView === 'live'} onClick={() => handleNavigate('live', '/app/live')} collapsed />
+            <SidebarItem icon={Send} label="Dispatch" active={activeView === 'dispatch'} onClick={() => handleNavigate('dispatch', '/app/dispatch')} collapsed />
+            <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => handleNavigate('guides', '/app/guides')} collapsed />
+            <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => handleNavigate('guide-dashboard', '/app/guide-dashboard')} collapsed />
+            <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => handleNavigate('marketplace', '/app/marketplace')} collapsed />
+            <SidebarItem icon={List} label="Change Log" active={activeView === 'changelog'} onClick={() => handleNavigate('changelog', '/app/changelog')} collapsed />
+            <SidebarItem icon={Plus} label="New Product" active={false} onClick={() => { onNewProduct(); onCloseMobile(); }} collapsed />
+          </div>
+        ) : (
+        <>
         {/* GROUP 1: OVERVIEW */}
         <div>
           <button
@@ -216,6 +282,7 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
               <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => handleNavigate('ledger')} indent badge={newBookingsCount} />
               <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => handleNavigate('admin-costs')} indent />
               <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => handleNavigate('today')} indent />
+              <SidebarItem icon={Activity} label="Live Board" active={activeView === 'live'} onClick={() => handleNavigate('live', '/app/live')} indent />
               <SidebarItem icon={Send} label="Dispatch" active={activeView === 'dispatch'} onClick={() => handleNavigate('dispatch', '/app/dispatch')} indent />
               <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => handleNavigate('guides', '/app/guides')} indent />
                <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => handleNavigate('guide-dashboard', '/app/guide-dashboard')} indent />
@@ -229,6 +296,8 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
 
         {/* SINGLE: NEW PRODUCT */}
         <SidebarItem icon={Plus} label="New Product" active={false} onClick={() => { onNewProduct(); onCloseMobile(); }} />
+        </>
+        )}
       </div>
 
       {/* Settings above bottom info */}
@@ -238,43 +307,57 @@ export default function AureliaSidebar({ activeView, companyName, onNavigate, on
           label="Settings"
           active={activeView === 'settings'}
           onClick={() => handleNavigate('settings')}
+          collapsed={iconOnly}
         />
       </div>
 
       {/* Bottom section */}
       <div className="p-3 border-t border-border/30">
-        <TrialStatusPill profile={profile} />
+        {!iconOnly && <TrialStatusPill profile={profile} />}
 
-        <div className="px-4 py-2 flex items-start justify-between">
-          <div className="flex-1 truncate pr-2">
-            <p className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">Company</p>
-            <p className="text-xs font-medium text-foreground mt-0.5 truncate">
-              {profile?.company_name || companyName}
-            </p>
-            {user?.email && (
-              <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
-                {user.email}
-              </p>
-            )}
+        {iconOnly ? (
+          <div className="flex justify-center pb-2">
+            <button
+              onClick={cycleTheme}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-gold hover:bg-muted transition-colors"
+              title={`Current Theme: ${currentThemeObj?.name}`}
+            >
+              <Palette size={16} />
+            </button>
           </div>
-          
-          {/* Theme Palette Toggle */}
-          <button 
-            onClick={cycleTheme}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-gold hover:bg-muted transition-colors"
-            title={`Current Theme: ${currentThemeObj?.name}`}
-          >
-            <Palette size={16} />
-          </button>
-        </div>
+        ) : (
+          <div className="px-4 py-2 flex items-start justify-between">
+            <div className="flex-1 truncate pr-2">
+              <p className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">Company</p>
+              <p className="text-xs font-medium text-foreground mt-0.5 truncate">
+                {profile?.company_name || companyName}
+              </p>
+              {user?.email && (
+                <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                  {user.email}
+                </p>
+              )}
+            </div>
+
+            {/* Theme Palette Toggle */}
+            <button
+              onClick={cycleTheme}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-gold hover:bg-muted transition-colors"
+              title={`Current Theme: ${currentThemeObj?.name}`}
+            >
+              <Palette size={16} />
+            </button>
+          </div>
+        )}
 
         {/* Logout */}
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-4 py-2.5 mt-2 rounded-lg text-sm font-medium text-red-700/70 hover:text-red-700 hover:bg-red-600/10 transition-all duration-200"
+          className={`w-full flex items-center py-2.5 mt-2 rounded-lg text-sm font-medium text-red-700/70 hover:text-red-700 hover:bg-red-600/10 transition-all duration-200 ${iconOnly ? 'justify-center' : 'gap-3 px-4'}`}
+          title={iconOnly ? 'Logout' : undefined}
         >
           <LogOut size={16} />
-          <span>Logout</span>
+          {!iconOnly && <span>Logout</span>}
         </button>
       </div>
       </aside>

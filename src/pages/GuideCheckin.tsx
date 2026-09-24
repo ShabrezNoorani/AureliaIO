@@ -2,16 +2,18 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { Calendar as CalendarIcon, RefreshCw } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, RefreshCw, AlertTriangle } from 'lucide-react';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
-import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/checkin/AllocationBoard';
+import type { AllocationGuide, AllocationGuest } from '@/components/checkin/AllocationBoard';
+import GuideAllocationBoard, { GuideAllocationGuest } from '@/components/checkin/GuideAllocationBoard';
 import SyncStatusIndicator from '@/components/checkin/SyncStatusIndicator';
 import GuideArrivalCard from '@/components/checkin/GuideArrivalCard';
 import { localDateStr, isCancelled } from '@/lib/utils';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance } from '@/lib/allocationBalance';
+import { matchBookingsToSessions, autoPopulateSessionBookings, pickBestSessionForBooking } from '@/lib/sessionAutoPopulate';
 import { enqueueRetry, useRetryQueueItems, type QueueItem } from '@/lib/retryQueue';
 import { writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
 import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
@@ -95,6 +97,12 @@ export default function GuideCheckin() {
   const [sessionBookings, setSessionBookings] = useState<SessionBookingRow[]>([]);
   const [teamSessionGuides, setTeamSessionGuides] = useState<SessionGuideRow[]>([]);
   const [sessionTeamRows, setSessionTeamRows] = useState<SessionTeamRow[]>([]);
+  // Today's non-cancelled bookings matching NO session at all, company-wide (via the
+  // my_company_unsessioned_bookings() RPC — RLS otherwise only lets a guide read bookings already
+  // linked to one of their own sessions, so this is the one company-wide exception). Shown as
+  // "Unassigned — last-minute" so a guide can still check one in even though Dispatch never built
+  // a session for it. Empty (not broken) if that RPC isn't deployed yet — see lib error handling.
+  const [unsessionedBookings, setUnsessionedBookings] = useState<Booking[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [checkins, setCheckins] = useState<Checkin[]>([]);
   const [arrivals, setArrivals] = useState<ArrivalRow[]>([]);
@@ -147,7 +155,7 @@ export default function GuideCheckin() {
 
     // Only sessions this guide has actually ACCEPTED show up for check-in — offered-but-unanswered
     // and declined/reassigned sessions must never appear here.
-    const [sgRes, otherGuidesData, sessionTeamRes] = await Promise.all([
+    const [sgRes, otherGuidesData, sessionTeamRes, unsessionedRes] = await Promise.all([
       supabase.from('session_guides').select('session_id')
         .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted'),
       // Transfer picker only — deliberately excludes self and is fine being case-sensitive on
@@ -157,10 +165,16 @@ export default function GuideCheckin() {
       // (including themself), not status-case-sensitive. my_company_guides() is wrong here: it
       // excludes the caller and filters status = 'Active' against rows stored as 'active'.
       supabase.rpc('my_session_team'),
+      // "Unassigned — last-minute" candidates — see the my_company_unsessioned_bookings() SQL
+      // handed over separately; RLS otherwise never lets a guide see a booking with no session at
+      // all. A missing RPC just yields an error here (data: null), so this degrades to an empty
+      // list rather than breaking the page.
+      supabase.rpc('my_company_unsessioned_bookings', { p_date: today }),
     ]);
     if (!mountedRef.current) return;
     setOtherGuides(otherGuidesData);
     setSessionTeamRows(sessionTeamRes.data || []);
+    setUnsessionedBookings((unsessionedRes.data as unknown as Booking[]) || []);
 
     const acceptedSessionIds = (sgRes.data || []).map(sg => sg.session_id);
     if (acceptedSessionIds.length === 0) {
@@ -212,12 +226,27 @@ export default function GuideCheckin() {
     if (!mountedRef.current) return;
 
     const mySessionBookings = sbRes.data || [];
-    setSessionBookings(mySessionBookings);
     const teamGuides = teamRes.data || [];
     setTeamSessionGuides(teamGuides);
     setArrivals(prev => mergeArrivalsGuardingPending(arrRes.data || [], prev, queuedArrivalSessionIds));
 
-    const refs = Array.from(new Set(mySessionBookings.map(sb => sb.booking_ref)));
+    // Best-effort auto-population against THIS guide's own built sessions, using the company-wide
+    // unsessioned candidates fetched above. Owner-side (TodayToursPage) is the reliable path for a
+    // brand-new booking (their `bookings` read is never RLS-restricted); this is defense-in-depth
+    // for whenever a guide's own INSERT on session_bookings is permitted too — see the SQL handed
+    // over separately. Never touches allotted_guide_id, never runs Balance either way.
+    let finalLinks = mySessionBookings;
+    const autoMatches = matchBookingsToSessions(mySessions, mySessionBookings, unsessionedRes.data as unknown as Booking[] || []);
+    if (autoMatches.length > 0) {
+      await autoPopulateSessionBookings(supabase, guideUserId, autoMatches);
+      const { data: freshLinks } = await supabase.from('session_bookings')
+        .select('session_id, booking_ref, allotted_guide_id').eq('user_id', guideUserId).in('session_id', sessionIds);
+      if (!mountedRef.current) return;
+      finalLinks = freshLinks || mySessionBookings;
+    }
+    setSessionBookings(finalLinks);
+
+    const refs = Array.from(new Set(finalLinks.map(sb => sb.booking_ref)));
 
     if (refs.length === 0) {
       setBookings([]);
@@ -349,6 +378,12 @@ export default function GuideCheckin() {
         () => { refreshSessionBookingsRef.current(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'session_guides', filter: `user_id=eq.${guideUserId}` },
         () => { loadDataRef.current(true); })
+      // A booking arriving/changing — re-derive the unsessioned list and re-run auto-population
+      // against this guide's own sessions. Best-effort under today's RLS (see loadData's own
+      // comment on my_company_unsessioned_bookings()); harmless either way, and the owner's page
+      // performing the same write is the reliable path for a genuinely brand-new booking.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings', filter: `user_id=eq.${guideUserId}` },
+        () => { loadDataRef.current(true); })
       .subscribe();
 
     return () => {
@@ -356,10 +391,14 @@ export default function GuideCheckin() {
     };
   }, [guideUserId, guideId]);
 
+  // booking_ref -> Booking, reused below both to build sessionBookingsMap and to resolve a full
+  // Booking for the Allocation tab's "send back" control (which needs booking.id/status, not just
+  // the trimmed-down fields AllocationGuest carries).
+  const bookingByRef = useMemo(() => new Map(bookings.map(b => [b.booking_ref, b])), [bookings]);
+
   // Bookings grouped strictly by the session they belong to — a guide only ever sees the
   // sessions RLS returned for them, so two un-merged tours can never leak into each other.
   const sessionBookingsMap = useMemo(() => {
-    const bookingByRef = new Map(bookings.map(b => [b.booking_ref, b]));
     const map = new Map<string, Booking[]>();
     sessionBookings.forEach(sb => {
       const b = bookingByRef.get(sb.booking_ref);
@@ -369,7 +408,11 @@ export default function GuideCheckin() {
       map.set(sb.session_id, arr);
     });
     return map;
-  }, [sessionBookings, bookings]);
+  }, [sessionBookings, bookingByRef]);
+
+  // Every booking_ref already linked to one of THIS guide's own sessions — used to tell a normal
+  // check-in from a last-minute one in handleConfirmCheckin below.
+  const linkedBookingRefs = useMemo(() => new Set(sessionBookings.map(sb => sb.booking_ref)), [sessionBookings]);
 
   // guide_id -> name, scoped per session (not a single flat lookup) — matches my_session_team()'s
   // own (session_id, guide_id) grain rather than assuming a guide's name lookup is session-agnostic.
@@ -401,26 +444,46 @@ export default function GuideCheckin() {
     return override && String(override).trim() ? override : b.customer_name;
   };
 
-  // Checked-in guests only, grouped by their CURRENT session_bookings.allotted_guide_id — never
-  // the frozen checkins.checked_in_by — so a guest's shown guide always reflects live allotment.
-  const sessionIdToCheckedInGuests = useMemo(() => {
+  // EVERY guest in the session — checked-in AND not (auto-populated / pre-allotted guests
+  // included, now that a session can hold not-yet-arrived guests too) — grouped by their CURRENT
+  // session_bookings.allotted_guide_id, never the frozen checkins.checked_in_by, so a guest's
+  // shown guide always reflects live allotment. Feeds both the Allocation board (so the
+  // not-yet-arrived pool is visible/balanceable) and computeBalance, which needs isCheckedIn to
+  // lock checked-in guests to their guide (safety rule: check-in = ownership — Balance must never
+  // move them).
+  const sessionIdToBalanceGuests = useMemo(() => {
     const m = new Map<string, AllocationGuest[]>();
     sessionBookings.forEach(sb => {
-      const cRecord = checkins.find(c => c.booking_ref === sb.booking_ref);
-      if (cRecord?.status !== 'checked_in') return;
       const b = bookings.find(bk => bk.booking_ref === sb.booking_ref);
       if (!b || isCancelled(b.status)) return;
+      const cRecord = checkins.find(c => c.booking_ref === sb.booking_ref);
       const arr = m.get(sb.session_id) || [];
       arr.push({
         bookingRef: sb.booking_ref,
         displayName: getDisplayName(b),
         pax: paxTotal(b),
         allottedGuideId: sb.allotted_guide_id,
+        isCheckedIn: cRecord?.status === 'checked_in',
       });
       m.set(sb.session_id, arr);
     });
     return m;
   }, [sessionBookings, checkins, bookings]);
+
+  // Allocation tab's own render data — same guests as above, just with option_name added for
+  // display. Kept separate from sessionIdToBalanceGuests (which feeds computeBalance and must keep
+  // AllocationGuest's exact shape) so this presentational addition can never affect the balance
+  // algorithm's input.
+  const sessionIdToAllocationGuests = useMemo(() => {
+    const m = new Map<string, GuideAllocationGuest[]>();
+    sessionIdToBalanceGuests.forEach((list, sessionId) => {
+      m.set(sessionId, list.map(g => ({
+        ...g,
+        optionName: bookingByRef.get(g.bookingRef)?.option_name || '',
+      })));
+    });
+    return m;
+  }, [sessionIdToBalanceGuests, bookingByRef]);
 
   // Records a check-in or no-show. Only a checked-in confirmation also flips the booking to
   // DONE (matching the owner page's existing side effect) — nothing else ever touches bookings,
@@ -548,11 +611,55 @@ export default function GuideCheckin() {
     });
   };
 
+  // Last-minute check-in: this booking (from the "Unassigned — last-minute" list) matches no
+  // session at all yet. Attaches it to whichever of THIS GUIDE'S OWN sessions today BEST matches
+  // (same option+window ranking as auto-population — see pickBestSessionForBooking), e.g. a guide
+  // running a 9:00 Cathedral and an 11:00 Louvre must not have a last-minute Louvre guest dumped
+  // on the earlier Cathedral session just because it's earliest.
+  //
+  // Unlike the owner (who has Dispatch to fix this properly and so just blocks when nothing
+  // matches — see TodayToursPage), a guide in the field always needs somewhere to put a guest
+  // right now: when NOTHING matches, this falls back to their earliest session today. Either way
+  // the guest is correctable afterward via the existing manual move controls.
+  //
+  // Attaches as a normal, unallotted session_bookings row (same shape auto-population writes),
+  // then hands off to the ordinary recordCheckin, which already just allots straight to `guideId`
+  // on check-in (no session-scoped lookup needed there, unlike the owner's least-loaded-team
+  // logic). The link insert is retry-queued under the SAME booking_ref key as the check-in itself,
+  // so it's guaranteed to land first (same-key retry items run strictly in order).
+  const handleCheckInLastMinute = (b: Booking, photo: Blob | null = null) => {
+    if (!guideUserId) return;
+    if (sessions.length === 0) {
+      toast.error("You don't have a session today to attach this check-in to.");
+      return;
+    }
+    const bestSessionId = pickBestSessionForBooking(sessions, sessionBookings, bookings, b);
+    const targetSessionId = bestSessionId
+      ?? [...sessions].sort((a, b2) => (a.start_time || '').localeCompare(b2.start_time || ''))[0].id;
+
+    setSessionBookings(prev => [...prev, { session_id: targetSessionId, booking_ref: b.booking_ref, allotted_guide_id: null }]);
+
+    enqueueRetry(b.booking_ref, 'Link session', async () => {
+      const { error } = await supabase.from('session_bookings').insert({
+        user_id: guideUserId, session_id: targetSessionId, booking_ref: b.booking_ref, allotted_guide_id: null,
+      });
+      // A duplicate-key error just means this booking is already linked (auto-population may have
+      // beaten this to it, or a retry of this very step already landed) — nothing left to do.
+      if (error && error.code !== '23505') throw error;
+    });
+
+    recordCheckin(b, 'checked_in', photo);
+  };
+
   const handleConfirmCheckin = (photo: Blob | null) => {
     if (!showConfirm) return;
     const b = showConfirm;
     setShowConfirm(null);
-    recordCheckin(b, 'checked_in', photo);
+    if (linkedBookingRefs.has(b.booking_ref)) {
+      recordCheckin(b, 'checked_in', photo);
+    } else {
+      handleCheckInLastMinute(b, photo);
+    }
   };
 
   // Reverts a wrongly checked-in guest: deletes their checkins row for today, puts the booking
@@ -595,6 +702,14 @@ export default function GuideCheckin() {
     });
   };
 
+  // Allocation tab's "send back" control — same revert as the Check-in tab's Reset button, just
+  // resolved from a bookingRef (all the Allocation view carries) back to the full Booking object
+  // handleResetCheckin needs.
+  const handleUndoCheckin = (bookingRef: string) => {
+    const b = bookingByRef.get(bookingRef);
+    if (b) handleResetCheckin(b);
+  };
+
   // Allocation board — identical to TodayToursPage's owner handlers (same tables, same fields,
   // same retry/resilience pattern), just scoped through guideUserId instead of the owner's own
   // `user.id`. Any guide on the session can move/lock/balance every guide's column, not only
@@ -635,11 +750,11 @@ export default function GuideCheckin() {
   const handleBalance = async (sessionId: string) => {
     if (!guideUserId) return;
     const teamGuides = sessionIdToTeam.get(sessionId) || [];
-    const checkedInGuests = sessionIdToCheckedInGuests.get(sessionId) || [];
+    const balanceGuests = sessionIdToBalanceGuests.get(sessionId) || [];
 
     const result = computeBalance(
       teamGuides.map(g => ({ id: g.id, locked: g.locked })),
-      checkedInGuests.map(g => ({ bookingRef: g.bookingRef, pax: g.pax, allottedGuideId: g.allottedGuideId }))
+      balanceGuests.map(g => ({ bookingRef: g.bookingRef, pax: g.pax, allottedGuideId: g.allottedGuideId, isCheckedIn: g.isCheckedIn }))
     );
 
     if ('error' in result) {
@@ -709,7 +824,7 @@ export default function GuideCheckin() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="p-4 space-y-8 animate-fade-in max-w-[480px] mx-auto">
+      <div className="p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8 animate-fade-in max-w-[480px] sm:max-w-2xl lg:max-w-5xl mx-auto">
         <div className="pt-2 flex items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-black tracking-tight mb-1">Today's Check-in</h1>
@@ -723,11 +838,51 @@ export default function GuideCheckin() {
             onClick={handleManualRefresh}
             disabled={refreshing}
             title="Refresh"
-            className="p-2.5 bg-muted border border-border rounded-xl text-muted-foreground hover:text-gold hover:bg-muted/70 transition-all disabled:opacity-50 shrink-0"
+            className="min-h-11 min-w-11 flex items-center justify-center bg-muted border border-border rounded-xl text-muted-foreground hover:text-gold hover:bg-muted/70 transition-all disabled:opacity-50 shrink-0"
           >
             <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
         </div>
+
+        {/* UNASSIGNED — LAST-MINUTE: today's company bookings matching no session at all (see
+            my_company_unsessioned_bookings() — the SQL handed over separately; empty until that's
+            applied, never broken). Only shown once this guide has at least one session today —
+            checking one in attaches it to whichever of this guide's own sessions BEST matches, or
+            their earliest if none does (see handleCheckInLastMinute /
+            pickBestSessionForBooking). */}
+        {!loading && sessions.length > 0 && unsessionedBookings.length > 0 && (
+          <div className="border border-amber-600/20 bg-amber-600/5 rounded-2xl overflow-hidden">
+            <div className="flex items-start gap-3 text-sm text-amber-700 p-4 pb-2">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>
+                <strong>{unsessionedBookings.length}</strong> booking{unsessionedBookings.length !== 1 ? 's' : ''} today {unsessionedBookings.length !== 1 ? "don't match" : "doesn't match"} a built session — check {unsessionedBookings.length !== 1 ? 'them' : 'it'} in below.
+              </span>
+            </div>
+            <div className="px-4 pb-4 space-y-1.5">
+              {unsessionedBookings.map(b => {
+                const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
+                const isDone = cRecord?.status === 'checked_in';
+                const isNoShow = cRecord?.status === 'no_show';
+                return (
+                  <GuestCard
+                    key={b.id}
+                    booking={b}
+                    displayName={getDisplayName(b)}
+                    isCheckedIn={isDone}
+                    isNoShow={isNoShow}
+                    checkedInAt={cRecord?.checked_in_at}
+                    onCheckIn={() => setShowConfirm(b)}
+                    onNoShow={() => recordCheckin(b, 'no_show')}
+                    onReset={isDone ? () => handleResetCheckin(b) : undefined}
+                    syncStuck={stuckBookingRefs.has(b.booking_ref)}
+                    isCancelled={isCancelled(b.status)}
+                    ticketPhoto={cRecord?.ticket_photo}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4 opacity-50">
@@ -740,83 +895,44 @@ export default function GuideCheckin() {
             <p className="text-sm font-bold uppercase tracking-widest">No tours assigned today</p>
           </div>
         ) : (
-          sessionsWithBookings.map(session => {
-            const sessionBookingsList = sessionBookingsMap.get(session.id) || [];
-            // A cancelled guest never counts toward the pax total used for allocation/balancing.
-            const totalPax = sessionBookingsList.reduce((sum, b) => sum + (isCancelled(b.status) ? 0 : paxTotal(b)), 0);
+          <div className="space-y-6">
+            {sessionsWithBookings.map(session => {
+              const sessionBookingsList = sessionBookingsMap.get(session.id) || [];
+              // A cancelled guest never counts toward the pax total used for allocation/balancing.
+              const totalPax = sessionBookingsList.reduce((sum, b) => sum + (isCancelled(b.status) ? 0 : paxTotal(b)), 0);
 
-            const teamGuides = sessionIdToTeam.get(session.id) || [];
-            const checkedInGuests = sessionIdToCheckedInGuests.get(session.id) || [];
+              const teamGuides = sessionIdToTeam.get(session.id) || [];
+              const allocationGuests = sessionIdToAllocationGuests.get(session.id) || [];
 
-            return (
-              <div key={session.id} className="space-y-4">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="font-bold text-base truncate">{session.label || 'Untitled Session'}</h3>
-                  <button
-                    onClick={() => openTransfer(session.id)}
-                    className="text-[10px] font-bold uppercase text-muted-foreground hover:text-gold border border-border hover:border-gold/30 rounded-lg px-2.5 py-1.5 shrink-0 transition-colors"
-                  >
-                    Transfer to another guide
-                  </button>
-                </div>
-
-                <GuideArrivalCard
-                  status={arrivalStatusBySession.get(session.id) ?? null}
-                  pending={arrivingSessionIds.has(session.id)}
-                  syncStuck={stuckArrivalSessionIds.has(session.id)}
-                  onArrive={() => handleArrive(session)}
-                />
-
-                <TourGroup
-                  time={session.start_time || ''}
-                  code={session.label || 'Session'}
-                  bookingsCount={sessionBookingsList.length}
+              return (
+                <GuideSessionCard
+                  key={session.id}
+                  session={session}
+                  guideId={guideId}
+                  sessionBookingsList={sessionBookingsList}
                   totalPax={totalPax}
-                >
-                  {sessionBookingsList.map(b => {
-                    const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
-                    const isDone = cRecord?.status === 'checked_in';
-                    const isNoShow = cRecord?.status === 'no_show';
-
-                    return (
-                      <GuestCard
-                        key={b.id}
-                        booking={b}
-                        displayName={getDisplayName(b)}
-                        isCheckedIn={isDone}
-                        isNoShow={isNoShow}
-                        checkedInAt={cRecord?.checked_in_at}
-                        onCheckIn={() => setShowConfirm(b)}
-                        onNoShow={() => recordCheckin(b, 'no_show')}
-                        onReset={isDone ? () => handleResetCheckin(b) : undefined}
-                        syncStuck={stuckBookingRefs.has(b.booking_ref)}
-                        isCancelled={isCancelled(b.status)}
-                        ticketPhoto={cRecord?.ticket_photo}
-                      />
-                    );
-                  })}
-                </TourGroup>
-
-                {teamGuides.length > 0 && (
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-purple-700 mb-2 px-1">
-                      Team Allocation
-                    </p>
-                    <AllocationBoard
-                      guides={teamGuides}
-                      guests={checkedInGuests}
-                      canControl
-                      onMoveGuest={handleMoveGuest}
-                      onToggleLock={(gId, locked) => handleToggleLock(session.id, gId, locked)}
-                      onBalance={() => handleBalance(session.id)}
-                      balancing={balancingSessionId === session.id}
-                      highlightGuideId={guideId || undefined}
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })
+                  checkins={checkins}
+                  teamGuides={teamGuides}
+                  allocationGuests={allocationGuests}
+                  arrivalStatus={arrivalStatusBySession.get(session.id) ?? null}
+                  arriving={arrivingSessionIds.has(session.id)}
+                  arrivalSyncStuck={stuckArrivalSessionIds.has(session.id)}
+                  stuckBookingRefs={stuckBookingRefs}
+                  getDisplayName={getDisplayName}
+                  onArrive={() => handleArrive(session)}
+                  onTransfer={() => openTransfer(session.id)}
+                  onCheckInClick={(b) => setShowConfirm(b)}
+                  onNoShow={(b) => recordCheckin(b, 'no_show')}
+                  onReset={(b) => handleResetCheckin(b)}
+                  balancing={balancingSessionId === session.id}
+                  onMoveGuest={handleMoveGuest}
+                  onToggleLock={(gId, locked) => handleToggleLock(session.id, gId, locked)}
+                  onBalance={() => handleBalance(session.id)}
+                  onUndoCheckin={handleUndoCheckin}
+                />
+              );
+            })}
+          </div>
         )}
       </div>
 
@@ -840,6 +956,146 @@ export default function GuideCheckin() {
           submitting={transferring}
         />
       )}
+    </div>
+  );
+}
+
+// ────────── SESSION CARD (Check-in / Allocation tabs) — mirrors TodayToursPage's SessionBoard ──────────
+
+function GuideSessionCard({
+  session,
+  guideId,
+  sessionBookingsList,
+  totalPax,
+  checkins,
+  teamGuides,
+  allocationGuests,
+  arrivalStatus,
+  arriving,
+  arrivalSyncStuck,
+  stuckBookingRefs,
+  getDisplayName,
+  onArrive,
+  onTransfer,
+  onCheckInClick,
+  onNoShow,
+  onReset,
+  balancing,
+  onMoveGuest,
+  onToggleLock,
+  onBalance,
+  onUndoCheckin,
+}: {
+  session: TourSession;
+  guideId: string | null;
+  sessionBookingsList: Booking[];
+  totalPax: number;
+  checkins: Checkin[];
+  teamGuides: AllocationGuide[];
+  allocationGuests: GuideAllocationGuest[];
+  arrivalStatus: string | null;
+  arriving: boolean;
+  arrivalSyncStuck: boolean;
+  stuckBookingRefs: Set<string>;
+  getDisplayName: (b: Booking) => string;
+  onArrive: () => void;
+  onTransfer: () => void;
+  onCheckInClick: (b: Booking) => void;
+  onNoShow: (b: Booking) => void;
+  onReset: (b: Booking) => void;
+  balancing: boolean;
+  onMoveGuest: (bookingRef: string, newGuideId: string | null) => void;
+  onToggleLock: (guideId: string, locked: boolean) => void;
+  onBalance: () => void;
+  onUndoCheckin: (bookingRef: string) => void;
+}) {
+  const [tab, setTab] = useState<'checkin' | 'allocation'>('checkin');
+
+  return (
+    <div className="aurelia-card overflow-hidden border border-border">
+      <div className="bg-muted border-b border-border px-4 sm:px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="font-extrabold text-base sm:text-lg truncate">{session.label || 'Untitled Session'}</h3>
+          <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
+            <Clock size={12} /> {session.start_time || '—'}
+          </p>
+        </div>
+        <button
+          onClick={onTransfer}
+          className="min-h-11 text-[11px] font-bold uppercase text-muted-foreground hover:text-gold border border-border hover:border-gold/30 rounded-lg px-3 shrink-0 transition-colors"
+        >
+          Transfer to another guide
+        </button>
+      </div>
+
+      <div className="p-4 sm:p-5 space-y-4">
+        <GuideArrivalCard
+          status={arrivalStatus}
+          pending={arriving}
+          syncStuck={arrivalSyncStuck}
+          onArrive={onArrive}
+        />
+
+        {/* TABS — same pattern as the owner's Today's Tours board (pill buttons, gold = active),
+            sized min-h-11 (44px) so they're comfortably tappable on a 375px phone. */}
+        <div className="flex bg-background p-1 rounded-xl">
+          <button
+            onClick={() => setTab('checkin')}
+            className={`flex-1 min-h-11 text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${tab === 'checkin' ? 'bg-gold text-black' : 'text-muted-foreground'}`}
+          >
+            Check-in
+          </button>
+          <button
+            onClick={() => setTab('allocation')}
+            className={`flex-1 min-h-11 text-xs font-bold uppercase tracking-widest rounded-lg transition-all ${tab === 'allocation' ? 'bg-gold text-black' : 'text-muted-foreground'}`}
+          >
+            Allocation
+          </button>
+        </div>
+
+        {tab === 'checkin' ? (
+          <TourGroup
+            time={session.start_time || ''}
+            code={session.label || 'Session'}
+            bookingsCount={sessionBookingsList.length}
+            totalPax={totalPax}
+          >
+            {sessionBookingsList.map(b => {
+              const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
+              const isDone = cRecord?.status === 'checked_in';
+              const isNoShow = cRecord?.status === 'no_show';
+
+              return (
+                <GuestCard
+                  key={b.id}
+                  booking={b}
+                  displayName={getDisplayName(b)}
+                  isCheckedIn={isDone}
+                  isNoShow={isNoShow}
+                  checkedInAt={cRecord?.checked_in_at}
+                  onCheckIn={() => onCheckInClick(b)}
+                  onNoShow={() => onNoShow(b)}
+                  onReset={isDone ? () => onReset(b) : undefined}
+                  syncStuck={stuckBookingRefs.has(b.booking_ref)}
+                  isCancelled={isCancelled(b.status)}
+                  ticketPhoto={cRecord?.ticket_photo}
+                />
+              );
+            })}
+          </TourGroup>
+        ) : (
+          <GuideAllocationBoard
+            guides={teamGuides}
+            guests={allocationGuests}
+            highlightGuideId={guideId || undefined}
+            onMoveGuest={onMoveGuest}
+            onToggleLock={onToggleLock}
+            onBalance={onBalance}
+            balancing={balancing}
+            onUndoCheckin={onUndoCheckin}
+          />
+        )}
+      </div>
     </div>
   );
 }

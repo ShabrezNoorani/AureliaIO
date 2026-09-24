@@ -5,6 +5,7 @@ import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw, MapP
 import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
+import { matchBookingsToSessions, autoPopulateSessionBookings, pickBestSessionForBooking } from '@/lib/sessionAutoPopulate';
 import { localDateStr } from '@/lib/utils';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
@@ -92,7 +93,24 @@ export default function TodayToursPage() {
         supabase.from('guide_arrivals').select(ARRIVAL_COLUMNS).eq('user_id', user.id).in('session_id', sessionIds),
       ]);
       if (!mountedRef.current) return;
-      setSessionBookings(prev => mergeGuardingPending(sbRes.data || [], prev, pendingBookingRefs));
+
+      // Auto-populate: any of today's non-cancelled bookings matching a built session's (option +
+      // derived time window) that isn't already linked gets added as a normal, unallotted
+      // session_bookings row — see lib/sessionAutoPopulate.ts. Runs against the LOCAL values just
+      // fetched above, not state (sessions/bookings state wouldn't reflect this render's fetch
+      // yet). Never touches allotted_guide_id, never runs Balance.
+      const currentLinks = sbRes.data || [];
+      const matches = matchBookingsToSessions(sessionsData, currentLinks, bRes.data || []);
+      if (matches.length > 0) {
+        await autoPopulateSessionBookings(supabase, user.id, matches);
+        const { data: freshLinks } = await supabase.from('session_bookings')
+          .select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds);
+        if (!mountedRef.current) return;
+        setSessionBookings(prev => mergeGuardingPending(freshLinks || [], prev, pendingBookingRefs));
+      } else {
+        setSessionBookings(prev => mergeGuardingPending(currentLinks, prev, pendingBookingRefs));
+      }
+
       setSessionGuides(sgRes.data || []);
       setArrivals(arrRes.data || []);
     } else {
@@ -129,6 +147,27 @@ export default function TodayToursPage() {
     setSessionBookings(prev => mergeGuardingPending(data || [], prev, pendingBookingRefs));
   };
 
+  // Targeted refetch of today's bookings, then re-runs the auto-population matching pass against
+  // them — the target of the NEW bookings-table realtime listener below, so a late booking that
+  // arrives while this page is already open still auto-links without a manual refresh. Reads
+  // sessions/sessionBookings state directly (safe here: called via refreshBookingsRef from an
+  // event handler, not chained after a same-tick setState — see loadData for why THAT path reads
+  // local fetch results instead).
+  const refreshBookings = async () => {
+    if (!user) return;
+    const { data: freshBookings } = await supabase.from('bookings').select('*')
+      .eq('user_id', user.id).eq('travel_date', todayStrDate).not('status', 'eq', 'CANCELLED');
+    if (!mountedRef.current) return;
+    setBookings(freshBookings || []);
+
+    const sessionIds = sessions.map((s) => s.id);
+    if (sessionIds.length === 0) return;
+    const matches = matchBookingsToSessions(sessions, sessionBookings, freshBookings || []);
+    if (matches.length === 0) return;
+    await autoPopulateSessionBookings(supabase, user.id, matches);
+    await refreshSessionBookingsRef.current();
+  };
+
   // Targeted refetch — used both after a lock toggle and as the target of the session_guides
   // realtime listener below (an assignment, reassignment, or a guide's own transfer).
   const refreshSessionGuides = async () => {
@@ -152,6 +191,8 @@ export default function TodayToursPage() {
   refreshSessionBookingsRef.current = refreshSessionBookings;
   const refreshSessionGuidesRef = useRef(refreshSessionGuides);
   refreshSessionGuidesRef.current = refreshSessionGuides;
+  const refreshBookingsRef = useRef(refreshBookings);
+  refreshBookingsRef.current = refreshBookings;
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
@@ -184,6 +225,10 @@ export default function TodayToursPage() {
         () => { refreshSessionBookingsRef.current(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'session_guides', filter: `user_id=eq.${user.id}` },
         () => { refreshSessionGuidesRef.current(); })
+      // A booking arriving/changing after this page was opened — re-fetch and re-run the
+      // auto-population matching pass so a late booking still auto-links, live.
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings', filter: `user_id=eq.${user.id}` },
+        () => { refreshBookingsRef.current(); })
       .subscribe();
 
     return () => {
@@ -271,16 +316,21 @@ export default function TodayToursPage() {
     return m;
   }, [sessionBookings, bookings, checkins]);
 
-  // Checked-in guests only, grouped by their CURRENT session_bookings.allotted_guide_id — never
-  // a frozen "checked in by" name — so a guest's shown guide always reflects live allotment.
-  const sessionIdToCheckedInGuests = useMemo(() => {
+  // EVERY guest in the session — checked-in AND not (auto-populated / pre-allotted guests
+  // included, now that a session can hold not-yet-arrived guests too) — grouped by their CURRENT
+  // session_bookings.allotted_guide_id, never a frozen "checked in by" name, so a guest's shown
+  // guide always reflects live allotment. Feeds both the Allocation board (so the not-yet-arrived
+  // pool is visible/balanceable) and computeBalance, which needs isCheckedIn to lock checked-in
+  // guests to their guide (safety rule: check-in = ownership — Balance must never move them).
+  const sessionIdToAllocationGuests = useMemo(() => {
     const m = new Map<string, AllocationGuest[]>();
     sessionIdToGuests.forEach((rows, sessionId) => {
-      m.set(sessionId, rows.filter(r => r.isCheckedIn).map(r => ({
+      m.set(sessionId, rows.map(r => ({
         bookingRef: r.booking.booking_ref,
         displayName: r.displayName,
         pax: r.pax,
         allottedGuideId: r.allottedGuideId,
+        isCheckedIn: r.isCheckedIn,
       })));
     });
     return m;
@@ -316,7 +366,11 @@ export default function TodayToursPage() {
   // lib/retryQueue.ts), so the upload only starts once the check-in write has actually succeeded,
   // and never blocks or is bundled with it. A photo stuck retrying on bad signal never loses or
   // delays the check-in itself; the check-in is already durably saved by then.
-  const recordCheckin = (b: any, status: 'checked_in' | 'no_show', photo: Blob | null = null) => {
+  // `sessionIdOverride` — only ever passed by handleCheckInLastMinute below, for a booking that
+  // matched no built session at all: bookingRefToSessionId wouldn't have an entry for it yet at
+  // call time (the link is inserted separately, right before this runs), so the caller supplies
+  // the session explicitly instead of relying on the lookup.
+  const recordCheckin = (b: any, status: 'checked_in' | 'no_show', photo: Blob | null = null, sessionIdOverride?: string) => {
     if (!user) return;
 
     const already = checkins.find(c => c.booking_ref === b.booking_ref);
@@ -334,13 +388,18 @@ export default function TodayToursPage() {
     // total (same tie-break rule Balance uses). Decided once, at tap time, and baked into the
     // retried write — a delayed retry must apply the exact outcome already shown on screen, not
     // one recomputed from whatever state happens to exist whenever it finally runs.
+    //
+    // Safety rule (check-in = ownership): this IS the write that locks a checked-in guest to
+    // their guide — computeBalance/Balance treats allotted_guide_id + isCheckedIn=true as
+    // untouchable from here on, so whichever guide is picked below is who the guest stays with
+    // until someone manually moves or resets them.
     let targetGuideId: string | null = null;
     if (status === 'checked_in') {
-      const sessionId = bookingRefToSessionId.get(b.booking_ref);
+      const sessionId = sessionIdOverride ?? bookingRefToSessionId.get(b.booking_ref);
       if (sessionId) {
         const team = sessionIdToTeam.get(sessionId) || [];
         const unlockedTeam = team.filter(g => !g.locked);
-        const currentGuests = sessionIdToCheckedInGuests.get(sessionId) || [];
+        const currentGuests = sessionIdToAllocationGuests.get(sessionId) || [];
         const totals: Record<string, number> = {};
         unlockedTeam.forEach(g => { totals[g.id] = 0; });
         currentGuests.forEach(g => {
@@ -408,11 +467,52 @@ export default function TodayToursPage() {
     }
   };
 
+  // Last-minute check-in: this booking matched no built session (see unsessionedBookings below),
+  // so there's nowhere for the normal session-scoped auto-allot logic to look yet. Attaches it to
+  // the BEST-matching session first (same option+window ranking as auto-population — see
+  // pickBestSessionForBooking) — as a normal, unallotted session_bookings row, same shape
+  // auto-population writes — then hands off to the ordinary recordCheckin flow with that session
+  // explicit, so the exact same auto-allot-to-least-loaded-guide logic applies uniformly.
+  //
+  // Owner-specific: unlike a guide (who always has somewhere to put a guest — see GuideCheckin's
+  // version), the owner has Dispatch to fix this properly, so when NOTHING matches this just
+  // bails rather than dumping the guest on an arbitrary session — the guest stays visible in
+  // Unassigned/last-minute, uncheckable via this button until a matching session exists.
+  //
+  // The link insert is optimistic + retry-queued under the SAME booking_ref key as the check-in
+  // itself, so it's guaranteed to land first (same-key retry items run strictly in order — see
+  // lib/retryQueue.ts) before the check-in's own allot step tries to update that row.
+  const handleCheckInLastMinute = (b, photo: Blob | null = null) => {
+    if (!user) return;
+    const bestSessionId = pickBestSessionForBooking(sessions, sessionBookings, bookings, b);
+    if (!bestSessionId) {
+      toast.error('No matching session for this booking yet — build one in Dispatch, or move it there manually.');
+      return;
+    }
+
+    setSessionBookings(prev => [...prev, { session_id: bestSessionId, booking_ref: b.booking_ref, allotted_guide_id: null }]);
+
+    enqueueRetry(b.booking_ref, 'Link session', async () => {
+      const { error } = await supabase.from('session_bookings').insert({
+        user_id: user.id, session_id: bestSessionId, booking_ref: b.booking_ref, allotted_guide_id: null,
+      });
+      // A duplicate-key error just means this booking is already linked (auto-population may have
+      // beaten this to it, or a retry of this very step already landed) — nothing left to do.
+      if (error && error.code !== '23505') throw error;
+    });
+
+    recordCheckin(b, 'checked_in', photo, bestSessionId);
+  };
+
   const handleConfirmCheckin = (photo: Blob | null) => {
     if (!showConfirm) return;
     const b = showConfirm;
     setShowConfirm(null);
-    recordCheckin(b, 'checked_in', photo);
+    if (bookingRefToSessionId.has(b.booking_ref)) {
+      recordCheckin(b, 'checked_in', photo);
+    } else {
+      handleCheckInLastMinute(b, photo);
+    }
   };
 
   // Saves a display-only name correction to checkins.display_name_override.
@@ -510,11 +610,11 @@ export default function TodayToursPage() {
   const handleBalance = async (sessionId: string) => {
     if (!user) return;
     const teamGuides = sessionIdToTeam.get(sessionId) || [];
-    const checkedInGuests = sessionIdToCheckedInGuests.get(sessionId) || [];
+    const allocationGuests = sessionIdToAllocationGuests.get(sessionId) || [];
 
     const result = computeBalance(
       teamGuides.map(g => ({ id: g.id, locked: g.locked })),
-      checkedInGuests.map(g => ({ bookingRef: g.bookingRef, pax: g.pax, allottedGuideId: g.allottedGuideId }))
+      allocationGuests.map(g => ({ bookingRef: g.bookingRef, pax: g.pax, allottedGuideId: g.allottedGuideId, isCheckedIn: g.isCheckedIn }))
     );
 
     if ('error' in result) {
@@ -599,13 +699,46 @@ export default function TodayToursPage() {
           </div>
         </div>
 
+        {/* UNASSIGNED — LAST-MINUTE: today's bookings matching no built session (e.g. a genuinely
+            different product Dispatch never got a session for, or one auto-population hasn't
+            matched) — never invisible, and checkinable directly from here. Checking one in attaches
+            it to whichever session BEST matches (see handleCheckInLastMinute /
+            pickBestSessionForBooking); if nothing matches at all, the check-in is blocked with a
+            toast instead of guessing. */}
         {unsessionedBookings.length > 0 && (
-          <div className="flex items-start gap-3 text-sm bg-amber-600/10 border border-amber-600/20 text-amber-700 rounded-xl p-4">
-            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-            <span>
-              {unsessionedBookings.length} booking{unsessionedBookings.length !== 1 ? 's' : ''} today {unsessionedBookings.length !== 1 ? "aren't" : "isn't"} in a session yet
-              — build one in Dispatch to check {unsessionedBookings.length !== 1 ? 'them' : 'it'} in here.
-            </span>
+          <div className="border border-amber-600/20 bg-amber-600/5 rounded-2xl overflow-hidden">
+            <div className="flex items-start gap-3 text-sm text-amber-700 p-4 pb-2">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>
+                <strong>{unsessionedBookings.length}</strong> booking{unsessionedBookings.length !== 1 ? 's' : ''} today {unsessionedBookings.length !== 1 ? "don't match" : "doesn't match"} a built session
+                — check {unsessionedBookings.length !== 1 ? 'them' : 'it'} in below, or build a matching session in Dispatch.
+              </span>
+            </div>
+            <div className="px-4 pb-4 space-y-1.5">
+              {unsessionedBookings.map(b => {
+                const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
+                const isDone = cRecord?.status === 'checked_in';
+                const isNoShow = cRecord?.status === 'no_show';
+                return (
+                  <GuestCard
+                    key={b.id}
+                    booking={b}
+                    displayName={getDisplayName(b)}
+                    isCheckedIn={isDone}
+                    isNoShow={isNoShow}
+                    checkedInAt={cRecord?.checked_in_at}
+                    onCheckIn={() => setShowConfirm(b)}
+                    onNoShow={() => recordCheckin(b, 'no_show')}
+                    editableName
+                    isOwner
+                    onSaveName={(newName) => handleSaveNameOverride(b, newName)}
+                    onReset={isDone ? () => handleResetCheckin(b) : undefined}
+                    syncStuck={stuckBookingRefs.has(b.booking_ref)}
+                    ticketPhoto={cRecord?.ticket_photo}
+                  />
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -628,7 +761,7 @@ export default function TodayToursPage() {
                 guideById={guideById}
                 companyName={profile?.company_name}
                 arrivalStatusByGuide={arrivalStatusBySessionGuide}
-                checkedInGuests={sessionIdToCheckedInGuests.get(session.id) || []}
+                allocationGuests={sessionIdToAllocationGuests.get(session.id) || []}
                 onCheckInClick={(b: any) => setShowConfirm(b)}
                 onNoShow={(b: any) => recordCheckin(b, 'no_show')}
                 onSaveName={handleSaveNameOverride}
@@ -666,7 +799,7 @@ function SessionBoard({
   guideById,
   companyName,
   arrivalStatusByGuide,
-  checkedInGuests,
+  allocationGuests,
   onCheckInClick,
   onNoShow,
   onSaveName,
@@ -685,7 +818,8 @@ function SessionBoard({
   companyName?: string | null;
   /** Read-only arrival text keyed `${session_id}:${guide_id}`; absent = not yet arrived. */
   arrivalStatusByGuide: Map<string, string>;
-  checkedInGuests: AllocationGuest[];
+  /** Every guest in the session — checked-in and not — for the Allocation board. */
+  allocationGuests: AllocationGuest[];
   onCheckInClick: (b: any) => void;
   onNoShow: (b: any) => void;
   onSaveName: (b: any, newName: string) => void;
@@ -839,7 +973,7 @@ function SessionBoard({
         ) : (
           <AllocationBoard
             guides={team}
-            guests={checkedInGuests}
+            guests={allocationGuests}
             canControl
             onMoveGuest={onMoveGuest}
             onToggleLock={(guideId, locked) => onToggleLock(session.id, guideId, locked)}
