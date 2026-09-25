@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat } from 'lucide-react';
 import { buildGuideInviteLinks } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
-import { localDateStr, shortProductCode, isCancelled } from '@/lib/utils';
+import { localDateStr, shortProductCode, isCancelled, checkinTime } from '@/lib/utils';
 
 interface Booking {
   id: string;
@@ -46,6 +46,8 @@ interface SessionGuideRow {
   offered_at: string | null;
   responded_at: string | null;
   reassigned_from: string | null;
+  base_pay: number | null;
+  bonus: number | null;
 }
 
 interface Guide {
@@ -54,6 +56,8 @@ interface Guide {
   guide_number: string;
   status: string;
   whatsapp: string | null;
+  email: string | null;
+  base_rate: number | null;
 }
 
 interface NaturalGroup {
@@ -131,7 +135,7 @@ export default function DispatchPage() {
       supabase.from('tour_sessions').select('*')
         .eq('user_id', user.id).eq('tour_date', selectedDate)
         .order('start_time', { ascending: true }),
-      supabase.from('guides').select('id, name, guide_number, status, whatsapp')
+      supabase.from('guides').select('id, name, guide_number, status, whatsapp, email, base_rate')
         .eq('user_id', user.id).eq('status', 'active').order('name'),
     ]);
     if (!mountedRef.current) return;
@@ -370,34 +374,54 @@ export default function DispatchPage() {
     await loadData();
   };
 
+  // Clears any session_bookings.allotted_guide_id pointing at this guide, for this session —
+  // called whenever a guide leaves a session's roster (removed, or reassigned away) so no guest
+  // is ever left pointing at a guide who's no longer on the tour. The guest becomes unallotted,
+  // not deleted — still checkinable/re-allottable via the normal Allocation board afterward.
+  const unallotGuideFromSession = async (sessionId: string, guideId: string) => {
+    if (!user) return;
+    await supabase.from('session_bookings')
+      .update({ allotted_guide_id: null })
+      .eq('user_id', user.id).eq('session_id', sessionId).eq('allotted_guide_id', guideId);
+  };
+
   // Assignment is immediate — no accept/decline step. The guide is on the hook for this tour
   // the moment the owner picks them; 'accepted' is the status every other query (Today's Tours,
   // guide check-in, the guide dashboard) already treats as "actively working this session".
+  // base_pay pre-fills from the guide's own base_rate (0 if they don't have one set) — the owner
+  // can override it, and bonus, right there in the roster row afterward (see handleUpdateGuidePay).
   const handleAssignGuide = async (sessionId: string, guideId: string) => {
     if (!user) return;
+    const guide = guideById.get(guideId);
     await supabase.from('session_guides').insert({
       session_id: sessionId,
       guide_id: guideId,
       user_id: user.id,
       status: 'accepted',
       responded_at: new Date().toISOString(),
+      base_pay: guide?.base_rate ?? 0,
+      bonus: 0,
     });
     await loadData();
   };
 
   const handleRemoveGuide = async (sessionId: string, guideId: string) => {
     if (!user) return;
+    await unallotGuideFromSession(sessionId, guideId);
     await supabase.from('session_guides').delete().eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
     await loadData();
   };
 
   // Moves a session from one guide straight to another in one action — remove-then-add would
   // leave a moment where the session shows no guide at all, and would need two separate confirms.
-  // The new row lands with status 'accepted' just like a fresh assignment, so the calendar/
-  // WhatsApp send below renders for the new guide immediately, no extra step required.
+  // The new row lands with status 'accepted' just like a fresh assignment (base_pay pre-filled
+  // from the NEW guide's own base_rate, same as a plain assignment), so the calendar/WhatsApp send
+  // below renders for the new guide immediately, no extra step required.
   const handleReassignGuide = async (sessionId: string, fromGuideId: string, toGuideId: string) => {
     if (!user || fromGuideId === toGuideId) return;
+    await unallotGuideFromSession(sessionId, fromGuideId);
     await supabase.from('session_guides').delete().eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', fromGuideId);
+    const toGuide = guideById.get(toGuideId);
     await supabase.from('session_guides').insert({
       session_id: sessionId,
       guide_id: toGuideId,
@@ -405,8 +429,21 @@ export default function DispatchPage() {
       status: 'accepted',
       responded_at: new Date().toISOString(),
       reassigned_from: fromGuideId,
+      base_pay: toGuide?.base_rate ?? 0,
+      bonus: 0,
     });
     await loadData();
+  };
+
+  // Owner can edit a guide's pay at any time, not just at assignment — a small single-row write,
+  // awaited directly (same pattern as the lock toggle elsewhere in this app), then a targeted
+  // roster refetch so the edit reflects immediately without a full page reload.
+  const handleUpdateGuidePay = async (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number) => {
+    if (!user) return;
+    await supabase.from('session_guides')
+      .update({ [field]: value })
+      .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
+    await refreshSessionGuides();
   };
 
   // Builds the calendar invite + a matching WhatsApp confirmation for a confirmed ('accepted')
@@ -616,6 +653,9 @@ export default function DispatchPage() {
                   const sGuideRows = sessionIdToGuideRows.get(session.id) || [];
                   const assignedGuideIds = sGuideRows.map(r => r.guide_id);
                   const isEditingLabel = editingLabelId === session.id;
+                  // Owner-visible total (task 5: "show owner totals") — sum of every assigned
+                  // guide's base_pay+bonus on this session, regardless of status badge.
+                  const sGuideCost = sGuideRows.reduce((s, sg) => s + (Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0), 0);
 
                   return (
                     <div key={session.id} className="aurelia-card p-5 border border-border space-y-4">
@@ -650,11 +690,19 @@ export default function DispatchPage() {
                           )}
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground mt-1">
                             <Clock size={12} />
-                            <span>{session.start_time || '—'}</span>
+                            <span>Check-in {checkinTime(session.start_time) || '—'}</span>
+                            <span>&middot;</span>
+                            <span>Tour {session.start_time || '—'}</span>
                             <span>&middot;</span>
                             <span>{sBookings.length} booking{sBookings.length !== 1 ? 's' : ''}</span>
                             <span>&middot;</span>
                             <span className="text-gold font-bold">{sPax} pax</span>
+                            {sGuideCost > 0 && (
+                              <>
+                                <span>&middot;</span>
+                                <span className="text-muted-foreground font-bold" title="Total guide pay (base + bonus)">€{sGuideCost.toLocaleString()} guide cost</span>
+                              </>
+                            )}
                           </div>
                         </div>
                         <button onClick={() => handleDeleteSession(session)} className="text-muted-foreground hover:text-red-700 p-1.5 shrink-0" title="Delete session">
@@ -671,9 +719,9 @@ export default function DispatchPage() {
                             const guide = guideById.get(sg.guide_id);
                             const fromGuide = sg.reassigned_from ? guideById.get(sg.reassigned_from) : null;
                             const badge = STATUS_BADGE[sg.status] || STATUS_BADGE.offered;
-                            const { calendarUrl, whatsappUrl } = sg.status === 'accepted'
+                            const { calendarUrl, whatsappUrl, hasGuestEmail } = sg.status === 'accepted'
                               ? buildInviteLinks(session, guide, sPax)
-                              : { calendarUrl: '', whatsappUrl: null as string | null };
+                              : { calendarUrl: '', whatsappUrl: null as string | null, hasGuestEmail: false };
                             return (
                               <div key={sg.guide_id} className="flex flex-wrap items-center justify-between gap-2 bg-muted rounded-lg px-3 py-2">
                                 <div className="flex items-center gap-2 min-w-0 flex-wrap">
@@ -698,6 +746,39 @@ export default function DispatchPage() {
                                     <X size={13} />
                                   </button>
                                 </div>
+                                {/* Editable pay — pre-filled from guide.base_rate at assignment (see
+                                    handleAssignGuide), adjustable here anytime. Uncontrolled inputs
+                                    keyed off the current server value so an external change (e.g. a
+                                    realtime refresh) remounts them with the fresh figure instead of
+                                    silently going stale, without writing on every keystroke. */}
+                                <div className="w-full flex items-center gap-2 pt-1.5 mt-0.5 border-t border-border" onClick={e => e.stopPropagation()}>
+                                  <label className="text-[9px] font-bold text-muted-foreground uppercase shrink-0">Base</label>
+                                  <input
+                                    key={`base-${sg.guide_id}-${sg.base_pay}`}
+                                    type="number"
+                                    defaultValue={sg.base_pay ?? 0}
+                                    onBlur={e => {
+                                      const v = Number(e.target.value) || 0;
+                                      if (v !== (sg.base_pay ?? 0)) handleUpdateGuidePay(session.id, sg.guide_id, 'base_pay', v);
+                                    }}
+                                    className="aurelia-input w-20 text-xs py-1"
+                                  />
+                                  <label className="text-[9px] font-bold text-muted-foreground uppercase shrink-0">Bonus</label>
+                                  <input
+                                    key={`bonus-${sg.guide_id}-${sg.bonus}`}
+                                    type="number"
+                                    defaultValue={sg.bonus ?? 0}
+                                    onBlur={e => {
+                                      const v = Number(e.target.value) || 0;
+                                      if (v !== (sg.bonus ?? 0)) handleUpdateGuidePay(session.id, sg.guide_id, 'bonus', v);
+                                    }}
+                                    className="aurelia-input w-16 text-xs py-1"
+                                  />
+                                  <span className="text-xs font-bold text-gold ml-auto shrink-0">
+                                    €{((Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0)).toLocaleString()}
+                                  </span>
+                                </div>
+
                                 {reassigningKey === `${session.id}:${sg.guide_id}` && (
                                   <select
                                     autoFocus
@@ -725,6 +806,9 @@ export default function DispatchPage() {
                                     >
                                       <CalendarPlus size={11} /> Add to Calendar
                                     </a>
+                                    {!hasGuestEmail && (
+                                      <span className="text-[9px] text-muted-foreground italic">add guide email to auto-invite</span>
+                                    )}
                                     {whatsappUrl ? (
                                       <a
                                         href={whatsappUrl}

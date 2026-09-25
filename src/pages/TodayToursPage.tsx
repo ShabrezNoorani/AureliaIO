@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
 import { matchBookingsToSessions, autoPopulateSessionBookings, pickBestSessionForBooking } from '@/lib/sessionAutoPopulate';
-import { localDateStr } from '@/lib/utils';
+import { localDateStr, checkinTime } from '@/lib/utils';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
@@ -74,7 +74,7 @@ export default function TodayToursPage() {
       supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', today).not('status', 'eq', 'CANCELLED').order('travel_time', { ascending: true }),
       supabase.from('guides').select('*').eq('user_id', user.id).eq('status', 'active'),
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
-      supabase.from('tour_sessions').select('id, label, start_time, tour_date').eq('user_id', user.id).eq('tour_date', today).order('start_time', { ascending: true }),
+      supabase.from('tour_sessions').select('id, label, start_time, tour_date, notes').eq('user_id', user.id).eq('tour_date', today).order('start_time', { ascending: true }),
     ]);
     if (!mountedRef.current) return;
 
@@ -89,7 +89,7 @@ export default function TodayToursPage() {
     if (sessionIds.length > 0) {
       const [sbRes, sgRes, arrRes] = await Promise.all([
         supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
-        supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status').eq('user_id', user.id).in('session_id', sessionIds),
+        supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus').eq('user_id', user.id).in('session_id', sessionIds),
         supabase.from('guide_arrivals').select(ARRIVAL_COLUMNS).eq('user_id', user.id).in('session_id', sessionIds),
       ]);
       if (!mountedRef.current) return;
@@ -177,7 +177,7 @@ export default function TodayToursPage() {
       setSessionGuides([]);
       return;
     }
-    const { data } = await supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status').eq('user_id', user.id).in('session_id', sessionIds);
+    const { data } = await supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus').eq('user_id', user.id).in('session_id', sessionIds);
     if (!mountedRef.current) return;
     setSessionGuides(data || []);
   };
@@ -279,6 +279,18 @@ export default function TodayToursPage() {
     });
     return m;
   }, [sessionGuides, guides]);
+
+  // Pay per session+guide — owner-only, sourced straight from session_guides (never from
+  // my_session_team, which deliberately omits pay). Keyed `${session_id}:${guide_id}` so a guide
+  // working two sessions today gets independent figures for each.
+  const sessionGuidePay = useMemo(() => {
+    const m = new Map<string, { base_pay: number | null; bonus: number | null }>();
+    sessionGuides.forEach((sg: any) => {
+      if (sg.status !== 'accepted') return;
+      m.set(`${sg.session_id}:${sg.guide_id}`, { base_pay: sg.base_pay, bonus: sg.bonus });
+    });
+    return m;
+  }, [sessionGuides]);
 
   // Arrival status text per session+guide, ready to render — "Arrived 8:58, on time" / "Arrived
   // 9:07, 7 min late". A guide with no row simply isn't in the map ("Not yet arrived").
@@ -606,6 +618,19 @@ export default function TodayToursPage() {
     await refreshSessionGuides();
   };
 
+  // Owner-only: edit a guide's pay for this session (pre-filled from guides.base_rate at
+  // assignment time on Dispatch; editable here too, e.g. once the tour's actual pax turns out
+  // different from plan).
+  const handleUpdateGuidePay = async (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number) => {
+    if (!user) return;
+    await supabase.from('session_guides')
+      .update({ [field]: value })
+      .eq('user_id', user.id)
+      .eq('session_id', sessionId)
+      .eq('guide_id', guideId);
+    await refreshSessionGuides();
+  };
+
   // Owner-only: run the Balance algorithm for one session and persist the resulting moves.
   const handleBalance = async (sessionId: string) => {
     if (!user) return;
@@ -761,6 +786,7 @@ export default function TodayToursPage() {
                 guideById={guideById}
                 companyName={profile?.company_name}
                 arrivalStatusByGuide={arrivalStatusBySessionGuide}
+                guidePay={sessionGuidePay}
                 allocationGuests={sessionIdToAllocationGuests.get(session.id) || []}
                 onCheckInClick={(b: any) => setShowConfirm(b)}
                 onNoShow={(b: any) => recordCheckin(b, 'no_show')}
@@ -768,6 +794,7 @@ export default function TodayToursPage() {
                 onResetCheckin={handleResetCheckin}
                 onMoveGuest={handleMoveGuest}
                 onToggleLock={handleToggleLock}
+                onUpdateGuidePay={handleUpdateGuidePay}
                 onBalance={handleBalance}
                 balancing={balancingSessionId === session.id}
                 stuckBookingRefs={stuckBookingRefs}
@@ -799,6 +826,7 @@ function SessionBoard({
   guideById,
   companyName,
   arrivalStatusByGuide,
+  guidePay,
   allocationGuests,
   onCheckInClick,
   onNoShow,
@@ -806,6 +834,7 @@ function SessionBoard({
   onResetCheckin,
   onMoveGuest,
   onToggleLock,
+  onUpdateGuidePay,
   onBalance,
   balancing,
   stuckBookingRefs,
@@ -818,6 +847,8 @@ function SessionBoard({
   companyName?: string | null;
   /** Read-only arrival text keyed `${session_id}:${guide_id}`; absent = not yet arrived. */
   arrivalStatusByGuide: Map<string, string>;
+  /** Owner-only pay, keyed `${session_id}:${guide_id}` — never sourced for the guide side. */
+  guidePay: Map<string, { base_pay: number | null; bonus: number | null }>;
   /** Every guest in the session — checked-in and not — for the Allocation board. */
   allocationGuests: AllocationGuest[];
   onCheckInClick: (b: any) => void;
@@ -826,6 +857,7 @@ function SessionBoard({
   onResetCheckin: (b: any) => void;
   onMoveGuest: (bookingRef: string, newGuideId: string | null) => void;
   onToggleLock: (sessionId: string, guideId: string, locked: boolean) => void;
+  onUpdateGuidePay: (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number) => void;
   onBalance: (sessionId: string) => void;
   balancing: boolean;
   stuckBookingRefs: Set<string>;
@@ -854,14 +886,19 @@ function SessionBoard({
         <div className="min-w-0">
           <h3 className="font-extrabold text-lg truncate">{session.label || 'Untitled Session'}</h3>
           <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
-            <Clock size={12} /> {session.start_time || '—'}
+            <Clock size={12} />
+            {session.start_time
+              ? `Check-in ${checkinTime(session.start_time)} · Tour ${session.start_time}`
+              : '—'}
           </p>
           {team.length > 0 && (
             <div className="mt-2 space-y-1.5">
               {team.map(g => {
                 const arrival = arrivalStatusByGuide.get(`${session.id}:${g.id}`);
                 const guide = guideById.get(g.id);
-                const { calendarUrl, whatsappUrl } = buildGuideInviteLinks(session, guide, sessionPax, companyName);
+                const { calendarUrl, whatsappUrl, hasGuestEmail } = buildGuideInviteLinks(session, guide, sessionPax, companyName);
+                const pay = guidePay.get(`${session.id}:${g.id}`) || { base_pay: null, bonus: null };
+                const payTotal = (Number(pay.base_pay) || 0) + (Number(pay.bonus) || 0);
                 return (
                   <div key={g.id} className="text-[11px]">
                     <p className="flex items-center gap-1.5">
@@ -880,6 +917,9 @@ function SessionBoard({
                       >
                         <CalendarPlus size={10} /> Add to Calendar
                       </a>
+                      {!hasGuestEmail && (
+                        <span className="text-[9px] text-muted-foreground italic">add guide email to auto-invite</span>
+                      )}
                       {whatsappUrl ? (
                         <a
                           href={whatsappUrl}
@@ -892,6 +932,31 @@ function SessionBoard({
                       ) : (
                         <span className="text-[9px] text-muted-foreground italic">no WhatsApp number</span>
                       )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1 pl-[17px] text-[10px]">
+                      <span className="text-muted-foreground">Base</span>
+                      <input
+                        key={`base-${g.id}-${pay.base_pay}`}
+                        type="number"
+                        defaultValue={pay.base_pay ?? 0}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value) || 0;
+                          if (v !== (pay.base_pay ?? 0)) onUpdateGuidePay(session.id, g.id, 'base_pay', v);
+                        }}
+                        className="w-14 px-1 py-0.5 rounded border border-border bg-background text-right"
+                      />
+                      <span className="text-muted-foreground">Bonus</span>
+                      <input
+                        key={`bonus-${g.id}-${pay.bonus}`}
+                        type="number"
+                        defaultValue={pay.bonus ?? 0}
+                        onBlur={(e) => {
+                          const v = Number(e.target.value) || 0;
+                          if (v !== (pay.bonus ?? 0)) onUpdateGuidePay(session.id, g.id, 'bonus', v);
+                        }}
+                        className="w-14 px-1 py-0.5 rounded border border-border bg-background text-right"
+                      />
+                      <span className="font-bold text-foreground">€{payTotal}</span>
                     </div>
                   </div>
                 );

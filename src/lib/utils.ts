@@ -27,6 +27,22 @@ export function isCancelled(status: string | null | undefined): boolean {
   return !!status && status.toUpperCase().startsWith('CANCELLED');
 }
 
+// The standard guide check-in point — 15 minutes before a tour's start_time. Pure string/integer
+// math on "HH:MM" (never a Date), so it's immune to any timezone/DST edge case a Date-based
+// subtraction could introduce. Clamps at 00:00 rather than wrapping to the previous day for a
+// tour scheduled before 00:15 — an edge case that shouldn't occur in practice, but a wrapped
+// negative time would be a more confusing failure than a clamp. Reused everywhere a tour time is
+// shown (guide tour cards, session headers) so "check-in = tour − 15 min" is defined exactly once.
+export function checkinTime(startTime: string | null | undefined): string | null {
+  if (!startTime) return null;
+  const match = startTime.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const totalMinutes = Math.max(0, Number(match[1]) * 60 + Number(match[2]) - 15);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 // bookings.product_code comes in two shapes depending on source: older gsheet rows store just the
 // short OTA code ("P13"), newer bokun_email rows store it prefixed with the numeric Bokun product
 // id ("5591586P13"). Always display the trailing short code — never the raw column value or

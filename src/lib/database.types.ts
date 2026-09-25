@@ -937,6 +937,8 @@ export type Database = {
       }
       session_guides: {
         Row: {
+          base_pay: number | null
+          bonus: number | null
           guide_id: string
           offered_at: string | null
           reassigned_from: string | null
@@ -947,6 +949,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          base_pay?: number | null
+          bonus?: number | null
           guide_id: string
           offered_at?: string | null
           reassigned_from?: string | null
@@ -957,6 +961,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          base_pay?: number | null
+          bonus?: number | null
           guide_id?: string
           offered_at?: string | null
           reassigned_from?: string | null
@@ -1095,6 +1101,7 @@ export type Database = {
           id: string
           name: string
           session_id: string
+          shuffle_locked: boolean
         }[]
       }
       reassign_my_slot: {

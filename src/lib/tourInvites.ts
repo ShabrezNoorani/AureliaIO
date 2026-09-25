@@ -1,5 +1,7 @@
 // Pure, client-side link builders for confirming a guide's tour — no network calls, no state.
 
+import { checkinTime } from './utils';
+
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 
 const toGoogleDateUtc = (date: Date): string =>
@@ -49,9 +51,12 @@ export interface GoogleCalendarEventInput {
   tourDate: string;
   /** Free-text session start time; falls back to 9:00 local if unparsable. */
   startTime?: string | null;
+  /** Invited as a guest on the event (Google's `add` param) when present — lets the owner send
+   *  the invite in one click instead of typing the guide's email in manually. */
+  guestEmail?: string | null;
 }
 
-export function buildGoogleCalendarUrl({ title, details, location, tourDate, startTime }: GoogleCalendarEventInput): string {
+export function buildGoogleCalendarUrl({ title, details, location, tourDate, startTime, guestEmail }: GoogleCalendarEventInput): string {
   const start = deriveSessionStart(tourDate, startTime);
   const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
 
@@ -61,6 +66,7 @@ export function buildGoogleCalendarUrl({ title, details, location, tourDate, sta
   params.set('dates', `${toGoogleDateUtc(start)}/${toGoogleDateUtc(end)}`);
   if (details) params.set('details', details);
   if (location) params.set('location', location);
+  if (guestEmail) params.set('add', guestEmail);
 
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
@@ -77,17 +83,24 @@ export interface GuideInviteSession {
   start_time: string | null;
   /** YYYY-MM-DD */
   tour_date: string;
+  /** Session notes, if any — folded into the calendar event description alongside the option name. */
+  notes?: string | null;
 }
 
 export interface GuideInviteTarget {
   name?: string | null;
   whatsapp?: string | null;
+  /** Invited as a guest on the calendar event when present — see hasGuestEmail below. */
+  email?: string | null;
 }
 
 export interface GuideInviteLinks {
   calendarUrl: string;
   /** null when the guide has no usable WhatsApp number on file. */
   whatsappUrl: string | null;
+  /** false when the guide has no email on file — calendarUrl still opens, just without a
+   *  pre-filled guest; callers should show a small "add guide email to auto-invite" note. */
+  hasGuestEmail: boolean;
 }
 
 /**
@@ -105,12 +118,20 @@ export function buildGuideInviteLinks(
   const timeLabel = session.start_time || 'time TBD';
   const paxLabel = `${pax} guest${pax !== 1 ? 's' : ''}`;
 
+  // Check-in is always 15 min before the tour — same helper used everywhere else this pairing is
+  // shown (guide tour cards, session headers). Only appended when the start time actually parses;
+  // an unparsable/missing start time falls back to the plain session label, same as before.
+  const checkin = checkinTime(session.start_time);
+  const title = checkin ? `${sessionLabel} · Check-in ${checkin} (Tour ${timeLabel})` : sessionLabel;
+  const details = session.notes ? `${sessionLabel}\n${session.notes}` : sessionLabel;
+
   const calendarUrl = buildGoogleCalendarUrl({
-    title: sessionLabel,
-    details: `${sessionLabel} — ${timeLabel} — ${paxLabel}`,
+    title,
+    details,
     location: sessionLabel,
     tourDate: session.tour_date,
     startTime: session.start_time,
+    guestEmail: guide?.email,
   });
 
   const formattedDate = new Date(`${session.tour_date}T00:00:00`).toLocaleDateString(undefined, {
@@ -118,5 +139,9 @@ export function buildGuideInviteLinks(
   });
   const message = `Hi ${guide?.name || 'there'}, you're confirmed for ${sessionLabel} on ${formattedDate} at ${timeLabel} (${paxLabel}) with ${companyName || 'us'}. Calendar invite: ${calendarUrl}`;
 
-  return { calendarUrl, whatsappUrl: buildWhatsAppUrl(guide?.whatsapp, message) };
+  return {
+    calendarUrl,
+    whatsappUrl: buildWhatsAppUrl(guide?.whatsapp, message),
+    hasGuestEmail: !!guide?.email,
+  };
 }

@@ -10,7 +10,7 @@ import type { AllocationGuide, AllocationGuest } from '@/components/checkin/Allo
 import GuideAllocationBoard, { GuideAllocationGuest } from '@/components/checkin/GuideAllocationBoard';
 import SyncStatusIndicator from '@/components/checkin/SyncStatusIndicator';
 import GuideArrivalCard from '@/components/checkin/GuideArrivalCard';
-import { localDateStr, isCancelled } from '@/lib/utils';
+import { localDateStr, isCancelled, checkinTime } from '@/lib/utils';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance } from '@/lib/allocationBalance';
 import { matchBookingsToSessions, autoPopulateSessionBookings, pickBestSessionForBooking } from '@/lib/sessionAutoPopulate';
@@ -63,20 +63,28 @@ interface SessionBookingRow {
   allotted_guide_id: string | null;
 }
 
-interface SessionGuideRow {
-  session_id: string;
-  guide_id: string;
-  shuffle_locked: boolean;
-}
-
 // One row per (session, guide) pair, returned by the my_session_team() RPC for every session the
 // logged-in guide belongs to — includes the guide's own row and is not status-case-sensitive
 // (unlike my_company_guides(), which filters status = 'Active' and excludes the caller — correct
-// for the transfer picker, wrong for the allocation board's name lookup).
+// for the transfer picker, wrong for the allocation board's name lookup). Deliberately carries NO
+// pay fields — a guide's raw SELECT on session_guides is now restricted to their own row (pay
+// privacy), so this RPC is the ONLY source for co-guide info, and it only ever exposes
+// name/session/lock, never base_pay/bonus. This is what makes it safe to use here at all.
 interface SessionTeamRow {
   id: string;
   name: string;
   session_id: string;
+  shuffle_locked: boolean;
+}
+
+// This guide's OWN base_pay/bonus for one of their sessions today — read directly off their own
+// session_guides row (RLS permits a guide to SELECT their own row; co-guides' rows are invisible
+// to this same query, which is exactly why co-guide info above comes from my_session_team()
+// instead). Never fetched for, or shown alongside, any other guide.
+interface MyPayRow {
+  session_id: string;
+  base_pay: number | null;
+  bonus: number | null;
 }
 
 const paxTotal = (b: Booking) =>
@@ -95,8 +103,8 @@ export default function GuideCheckin() {
   // checkins reads to this guide's own sessions — no client-side guide_id filtering needed here.
   const [sessions, setSessions] = useState<TourSession[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingRow[]>([]);
-  const [teamSessionGuides, setTeamSessionGuides] = useState<SessionGuideRow[]>([]);
   const [sessionTeamRows, setSessionTeamRows] = useState<SessionTeamRow[]>([]);
+  const [myPay, setMyPay] = useState<MyPayRow[]>([]);
   // Today's non-cancelled bookings matching NO session at all, company-wide (via the
   // my_company_unsessioned_bookings() RPC — RLS otherwise only lets a guide read bookings already
   // linked to one of their own sessions, so this is the one company-wide exception). Shown as
@@ -180,7 +188,7 @@ export default function GuideCheckin() {
     if (acceptedSessionIds.length === 0) {
       setSessions([]);
       setSessionBookings([]);
-      setTeamSessionGuides([]);
+      setMyPay([]);
       setBookings([]);
       setCheckins([]);
       setArrivals([]);
@@ -203,7 +211,7 @@ export default function GuideCheckin() {
     const sessionIds = mySessions.map(s => s.id);
     if (sessionIds.length === 0) {
       setSessionBookings([]);
-      setTeamSessionGuides([]);
+      setMyPay([]);
       setBookings([]);
       setCheckins([]);
       setArrivals([]);
@@ -211,13 +219,14 @@ export default function GuideCheckin() {
       return;
     }
 
-    const [sbRes, teamRes, arrRes] = await Promise.all([
+    const [sbRes, payRes, arrRes] = await Promise.all([
       supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id')
         .eq('user_id', guideUserId).in('session_id', sessionIds),
-      // The full accepted roster for these sessions (not just this guide) — the allocation
-      // board is a team view so a guide can see where everyone stands, read-only.
-      supabase.from('session_guides').select('session_id, guide_id, shuffle_locked')
-        .eq('user_id', guideUserId).eq('status', 'accepted').in('session_id', sessionIds),
+      // This guide's OWN pay only — RLS permits a guide to SELECT their own session_guides row;
+      // co-guides' base_pay/bonus are never fetched here (or anywhere on this page — see
+      // sessionIdToTeam below, sourced entirely from my_session_team() instead).
+      supabase.from('session_guides').select('session_id, base_pay, bonus')
+        .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted').in('session_id', sessionIds),
       // This guide's OWN arrivals only (RLS allows nothing else) — so a reload shows the
       // recorded status instead of offering the button a second time.
       supabase.from('guide_arrivals').select(ARRIVAL_COLUMNS)
@@ -226,8 +235,7 @@ export default function GuideCheckin() {
     if (!mountedRef.current) return;
 
     const mySessionBookings = sbRes.data || [];
-    const teamGuides = teamRes.data || [];
-    setTeamSessionGuides(teamGuides);
+    setMyPay(payRes.data || []);
     setArrivals(prev => mergeArrivalsGuardingPending(arrRes.data || [], prev, queuedArrivalSessionIds));
 
     // Best-effort auto-population against THIS guide's own built sessions, using the company-wide
@@ -309,20 +317,16 @@ export default function GuideCheckin() {
     setArrivals(prev => mergeArrivalsGuardingPending(data || [], prev, queuedArrivalSessionIds));
   };
 
-  // Targeted refetch of just the team roster (incl. shuffle_locked) — mirrors TodayToursPage's
-  // refreshSessionGuides, used right after this guide's own lock toggle so the actor sees it land
-  // immediately rather than waiting on the broader session_guides realtime round-trip below.
-  const refreshTeamSessionGuides = async () => {
+  // Targeted refetch of just the team roster (incl. shuffle_locked, via my_session_team() — a
+  // guide's raw SELECT on session_guides only ever returns their own row now, so this RPC is the
+  // only source for co-guide state). Used right after this guide's own lock toggle so the actor
+  // sees it land immediately rather than waiting on the broader session_guides realtime round-trip
+  // below.
+  const refreshSessionTeam = async () => {
     if (!guideUserId) return;
-    const sessionIds = sessions.map(s => s.id);
-    if (sessionIds.length === 0) {
-      setTeamSessionGuides([]);
-      return;
-    }
-    const { data } = await supabase.from('session_guides').select('session_id, guide_id, shuffle_locked')
-      .eq('user_id', guideUserId).eq('status', 'accepted').in('session_id', sessionIds);
+    const { data } = await supabase.rpc('my_session_team');
     if (!mountedRef.current) return;
-    setTeamSessionGuides(data || []);
+    setSessionTeamRows(data || []);
   };
 
   // Keeps the long-lived realtime subscription (set up once per guide, below) always calling the
@@ -414,29 +418,23 @@ export default function GuideCheckin() {
   // check-in from a last-minute one in handleConfirmCheckin below.
   const linkedBookingRefs = useMemo(() => new Set(sessionBookings.map(sb => sb.booking_ref)), [sessionBookings]);
 
-  // guide_id -> name, scoped per session (not a single flat lookup) — matches my_session_team()'s
-  // own (session_id, guide_id) grain rather than assuming a guide's name lookup is session-agnostic.
-  const sessionTeamNames = useMemo(() => {
-    const m = new Map<string, Map<string, string>>();
+  // Every guide on any of this guide's sessions today, sourced ENTIRELY from my_session_team() —
+  // name, session_id AND shuffle_locked all come from that one RPC now, so there's no longer a
+  // separate raw session_guides join here at all (co-guide pay privacy: a raw session_guides
+  // SELECT would only return this guide's own row anyway, and even if it didn't, it must never be
+  // the source for co-guide info — see the SessionTeamRow comment above).
+  const sessionIdToTeam = useMemo(() => {
+    const m = new Map<string, AllocationGuide[]>();
     sessionTeamRows.forEach(r => {
-      const inner = m.get(r.session_id) || new Map<string, string>();
-      inner.set(r.id, r.name);
-      m.set(r.session_id, inner);
+      const arr = m.get(r.session_id) || [];
+      arr.push({ id: r.id, name: r.name, locked: r.shuffle_locked });
+      m.set(r.session_id, arr);
     });
     return m;
   }, [sessionTeamRows]);
 
-  const sessionIdToTeam = useMemo(() => {
-    const m = new Map<string, AllocationGuide[]>();
-    teamSessionGuides.forEach(tg => {
-      const name = sessionTeamNames.get(tg.session_id)?.get(tg.guide_id);
-      if (!name) return;
-      const arr = m.get(tg.session_id) || [];
-      arr.push({ id: tg.guide_id, name, locked: tg.shuffle_locked });
-      m.set(tg.session_id, arr);
-    });
-    return m;
-  }, [teamSessionGuides, sessionTeamNames]);
+  // This guide's OWN base_pay/bonus, keyed by session — never any other guide's.
+  const sessionIdToMyPay = useMemo(() => new Map(myPay.map(p => [p.session_id, p])), [myPay]);
 
   const getDisplayName = (b: Booking) => {
     const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
@@ -742,7 +740,7 @@ export default function GuideCheckin() {
       .eq('user_id', guideUserId)
       .eq('session_id', sessionId)
       .eq('guide_id', guideId);
-    await refreshTeamSessionGuides();
+    await refreshSessionTeam();
   };
 
   // Runs the shared Balance algorithm (lib/allocationBalance.ts — same function TodayToursPage
@@ -903,6 +901,7 @@ export default function GuideCheckin() {
 
               const teamGuides = sessionIdToTeam.get(session.id) || [];
               const allocationGuests = sessionIdToAllocationGuests.get(session.id) || [];
+              const myPayForSession = sessionIdToMyPay.get(session.id) ?? null;
 
               return (
                 <GuideSessionCard
@@ -914,6 +913,7 @@ export default function GuideCheckin() {
                   checkins={checkins}
                   teamGuides={teamGuides}
                   allocationGuests={allocationGuests}
+                  myPay={myPayForSession}
                   arrivalStatus={arrivalStatusBySession.get(session.id) ?? null}
                   arriving={arrivingSessionIds.has(session.id)}
                   arrivalSyncStuck={stuckArrivalSessionIds.has(session.id)}
@@ -970,6 +970,7 @@ function GuideSessionCard({
   checkins,
   teamGuides,
   allocationGuests,
+  myPay,
   arrivalStatus,
   arriving,
   arrivalSyncStuck,
@@ -993,6 +994,9 @@ function GuideSessionCard({
   checkins: Checkin[];
   teamGuides: AllocationGuide[];
   allocationGuests: GuideAllocationGuest[];
+  /** This guide's OWN base_pay/bonus for this session — never any other guide's. Null until the
+      owner has set a pay figure for this guide on this session. */
+  myPay: MyPayRow | null;
   arrivalStatus: string | null;
   arriving: boolean;
   arrivalSyncStuck: boolean;
@@ -1010,15 +1014,22 @@ function GuideSessionCard({
   onUndoCheckin: (bookingRef: string) => void;
 }) {
   const [tab, setTab] = useState<'checkin' | 'allocation'>('checkin');
+  const myPayTotal = myPay ? (Number(myPay.base_pay) || 0) + (Number(myPay.bonus) || 0) : null;
 
   return (
     <div className="aurelia-card overflow-hidden border border-border">
       <div className="bg-muted border-b border-border px-4 sm:px-5 py-4 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h3 className="font-extrabold text-base sm:text-lg truncate">{session.label || 'Untitled Session'}</h3>
-          <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
-            <Clock size={12} /> {session.start_time || '—'}
+          <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5 flex-wrap">
+            <Clock size={12} className="shrink-0" />
+            <span>Check-in {checkinTime(session.start_time) || '—'}</span>
+            <span className="text-muted-foreground/50">&middot;</span>
+            <span>Tour {session.start_time || '—'}</span>
           </p>
+          {myPayTotal !== null && (
+            <p className="text-xs font-bold text-gold mt-0.5">Your pay: €{myPayTotal.toLocaleString()}</p>
+          )}
         </div>
         <button
           onClick={onTransfer}

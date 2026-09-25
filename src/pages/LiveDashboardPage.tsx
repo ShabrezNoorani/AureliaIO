@@ -4,7 +4,7 @@ import type { LucideIcon } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { Users, CheckCircle2, Calendar as CalendarIcon, UserCheck, Eye, EyeOff, Clock, Sparkles, Plane, ClipboardList, X } from 'lucide-react';
-import { localDateStr, isCancelled, shortProductCode } from '@/lib/utils';
+import { localDateStr, isCancelled, shortProductCode, checkinTime } from '@/lib/utils';
 
 // Owner-only, big-screen operations board — a TV monitor left open in the office, never a
 // personal workflow page. Read-only everywhere: no writes happen here, this only ever displays
@@ -330,7 +330,15 @@ export default function LiveDashboardPage() {
         (payload) => { pushCheckinNotice(payload.new as Checkin); })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'checkins', filter: `user_id=eq.${user.id}` },
         (payload) => { pushCheckinNotice(payload.new as Checkin); })
-      .subscribe();
+      // Surfaces a failed/dropped subscription in the console — this channel otherwise fails
+      // silently (e.g. a table missing from the `supabase_realtime` publication produces no error
+      // at all, just no events; this at least catches CHANNEL_ERROR/TIMED_OUT/CLOSED so a dead
+      // board doesn't look identical to a quiet one).
+      .subscribe((status, err) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`[LiveDashboard] realtime subscription ${status}`, err);
+        }
+      });
     return () => { supabase.removeChannel(channel); };
   }, [user]);
 
@@ -870,7 +878,9 @@ function DayBox({
               <div key={s.id} className="bg-muted/50 border border-border rounded-xl p-4 space-y-2.5">
                 <div>
                   <p className="font-black text-sm leading-snug truncate">{s.label}</p>
-                  <p className="text-xs text-muted-foreground font-medium mt-0.5">{s.startTime || '—'}</p>
+                  <p className="text-xs text-muted-foreground font-medium mt-0.5">
+                    {s.startTime ? `Check-in ${checkinTime(s.startTime)} · Tour ${s.startTime}` : '—'}
+                  </p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {s.guideNames.length === 0 ? (

@@ -50,6 +50,38 @@ describe('buildGuideInviteLinks', () => {
     expect(calendarUrl).toContain('your+tour');
     expect(decodeURIComponent(whatsappUrl!)).toContain('time TBD');
   });
+
+  it('puts the check-in (tour minus 15 min) and tour time in the event title', () => {
+    const { calendarUrl } = buildGuideInviteLinks(session, { name: 'Maria', whatsapp: null }, 4, 'AURELIA Tours');
+    const text = new URL(calendarUrl).searchParams.get('text');
+    expect(text).toBe('Old Town Walk · Check-in 08:45 (Tour 09:00)');
+  });
+
+  it('omits the check-in/tour suffix when the start time is unparsable', () => {
+    const noTime = { label: 'Old Town Walk', start_time: null, tour_date: '2026-06-15' };
+    const { calendarUrl } = buildGuideInviteLinks(noTime, { name: 'Maria', whatsapp: null }, 4, 'AURELIA Tours');
+    const text = new URL(calendarUrl).searchParams.get('text');
+    expect(text).toBe('Old Town Walk');
+  });
+
+  it('pre-fills the guide email as a calendar guest when one is on file', () => {
+    const { calendarUrl, hasGuestEmail } = buildGuideInviteLinks(session, { name: 'Maria', whatsapp: null, email: 'maria@example.com' }, 4, 'AURELIA Tours');
+    expect(hasGuestEmail).toBe(true);
+    expect(new URL(calendarUrl).searchParams.get('add')).toBe('maria@example.com');
+  });
+
+  it('reports no guest email and adds no `add` param when the guide has none on file', () => {
+    const { calendarUrl, hasGuestEmail } = buildGuideInviteLinks(session, { name: 'Maria', whatsapp: null }, 4, 'AURELIA Tours');
+    expect(hasGuestEmail).toBe(false);
+    expect(new URL(calendarUrl).searchParams.has('add')).toBe(false);
+  });
+
+  it('folds session notes into the event description alongside the option name', () => {
+    const withNotes = { ...session, notes: 'Meet at the fountain' };
+    const { calendarUrl } = buildGuideInviteLinks(withNotes, { name: 'Maria', whatsapp: null }, 4, 'AURELIA Tours');
+    const details = new URL(calendarUrl).searchParams.get('details');
+    expect(details).toBe('Old Town Walk\nMeet at the fountain');
+  });
 });
 
 describe('buildWhatsAppUrl', () => {
@@ -71,5 +103,15 @@ describe('buildGoogleCalendarUrl', () => {
   it('always returns a link even with an unparsable start time', () => {
     const url = buildGoogleCalendarUrl({ title: 'Tour', tourDate: '2026-06-15', startTime: 'garbage' });
     expect(url).toContain('calendar.google.com');
+  });
+
+  it('adds the guest as an `add` param when guestEmail is given', () => {
+    const url = buildGoogleCalendarUrl({ title: 'Tour', tourDate: '2026-06-15', startTime: '09:00', guestEmail: 'guide@example.com' });
+    expect(new URL(url).searchParams.get('add')).toBe('guide@example.com');
+  });
+
+  it('omits the `add` param when no guestEmail is given', () => {
+    const url = buildGoogleCalendarUrl({ title: 'Tour', tourDate: '2026-06-15', startTime: '09:00' });
+    expect(new URL(url).searchParams.has('add')).toBe(false);
   });
 });
