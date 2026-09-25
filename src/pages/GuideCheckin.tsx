@@ -77,14 +77,16 @@ interface SessionTeamRow {
   shuffle_locked: boolean;
 }
 
-// This guide's OWN base_pay/bonus for one of their sessions today — read directly off their own
-// session_guides row (RLS permits a guide to SELECT their own row; co-guides' rows are invisible
-// to this same query, which is exactly why co-guide info above comes from my_session_team()
-// instead). Never fetched for, or shown alongside, any other guide.
+// This guide's OWN base_pay/bonus/checkin_time for one of their sessions today — read directly off
+// their own session_guides row (RLS permits a guide to SELECT their own row; co-guides' rows are
+// invisible to this same query, which is exactly why co-guide info above comes from
+// my_session_team() instead). Never fetched for, or shown alongside, any other guide — check-in
+// time isn't pay-sensitive, but this card still only ever shows this guide's own value.
 interface MyPayRow {
   session_id: string;
   base_pay: number | null;
   bonus: number | null;
+  checkin_time: string | null;
 }
 
 const paxTotal = (b: Booking) =>
@@ -222,10 +224,11 @@ export default function GuideCheckin() {
     const [sbRes, payRes, arrRes] = await Promise.all([
       supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id')
         .eq('user_id', guideUserId).in('session_id', sessionIds),
-      // This guide's OWN pay only — RLS permits a guide to SELECT their own session_guides row;
-      // co-guides' base_pay/bonus are never fetched here (or anywhere on this page — see
-      // sessionIdToTeam below, sourced entirely from my_session_team() instead).
-      supabase.from('session_guides').select('session_id, base_pay, bonus')
+      // This guide's OWN pay + check-in time only — RLS permits a guide to SELECT their own
+      // session_guides row; co-guides' base_pay/bonus/checkin_time are never fetched here (or
+      // anywhere on this page — see sessionIdToTeam below, sourced entirely from
+      // my_session_team() instead).
+      supabase.from('session_guides').select('session_id, base_pay, bonus, checkin_time')
         .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted').in('session_id', sessionIds),
       // This guide's OWN arrivals only (RLS allows nothing else) — so a reload shows the
       // recorded status instead of offering the button a second time.
@@ -994,8 +997,8 @@ function GuideSessionCard({
   checkins: Checkin[];
   teamGuides: AllocationGuide[];
   allocationGuests: GuideAllocationGuest[];
-  /** This guide's OWN base_pay/bonus for this session — never any other guide's. Null until the
-      owner has set a pay figure for this guide on this session. */
+  /** This guide's OWN base_pay/bonus/checkin_time for this session — never any other guide's.
+      Null until the owner has set a pay figure or check-in override for this guide. */
   myPay: MyPayRow | null;
   arrivalStatus: string | null;
   arriving: boolean;
@@ -1023,7 +1026,9 @@ function GuideSessionCard({
           <h3 className="font-extrabold text-base sm:text-lg truncate">{session.label || 'Untitled Session'}</h3>
           <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5 flex-wrap">
             <Clock size={12} className="shrink-0" />
-            <span>Check-in {checkinTime(session.start_time) || '—'}</span>
+            {/* This guide's OWN check-in time — their session_guides.checkin_time when the owner
+                has set one, otherwise falling back to the tour−15 default. Never a co-guide's. */}
+            <span>Check-in {myPay?.checkin_time || checkinTime(session.start_time) || '—'}</span>
             <span className="text-muted-foreground/50">&middot;</span>
             <span>Tour {session.start_time || '—'}</span>
           </p>

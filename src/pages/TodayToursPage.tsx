@@ -89,7 +89,7 @@ export default function TodayToursPage() {
     if (sessionIds.length > 0) {
       const [sbRes, sgRes, arrRes] = await Promise.all([
         supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
-        supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus').eq('user_id', user.id).in('session_id', sessionIds),
+        supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus, checkin_time').eq('user_id', user.id).in('session_id', sessionIds),
         supabase.from('guide_arrivals').select(ARRIVAL_COLUMNS).eq('user_id', user.id).in('session_id', sessionIds),
       ]);
       if (!mountedRef.current) return;
@@ -177,7 +177,7 @@ export default function TodayToursPage() {
       setSessionGuides([]);
       return;
     }
-    const { data } = await supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus').eq('user_id', user.id).in('session_id', sessionIds);
+    const { data } = await supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus, checkin_time').eq('user_id', user.id).in('session_id', sessionIds);
     if (!mountedRef.current) return;
     setSessionGuides(data || []);
   };
@@ -280,14 +280,14 @@ export default function TodayToursPage() {
     return m;
   }, [sessionGuides, guides]);
 
-  // Pay per session+guide — owner-only, sourced straight from session_guides (never from
-  // my_session_team, which deliberately omits pay). Keyed `${session_id}:${guide_id}` so a guide
-  // working two sessions today gets independent figures for each.
+  // Pay + check-in time per session+guide — owner-only, sourced straight from session_guides
+  // (never from my_session_team, which deliberately omits pay). Keyed `${session_id}:${guide_id}`
+  // so a guide working two sessions today gets independent figures for each.
   const sessionGuidePay = useMemo(() => {
-    const m = new Map<string, { base_pay: number | null; bonus: number | null }>();
+    const m = new Map<string, { base_pay: number | null; bonus: number | null; checkin_time: string | null }>();
     sessionGuides.forEach((sg: any) => {
       if (sg.status !== 'accepted') return;
-      m.set(`${sg.session_id}:${sg.guide_id}`, { base_pay: sg.base_pay, bonus: sg.bonus });
+      m.set(`${sg.session_id}:${sg.guide_id}`, { base_pay: sg.base_pay, bonus: sg.bonus, checkin_time: sg.checkin_time ?? null });
     });
     return m;
   }, [sessionGuides]);
@@ -631,6 +631,48 @@ export default function TodayToursPage() {
     await refreshSessionGuides();
   };
 
+  // Owner-only: override one guide's own check-in time on this session (e.g. a coordinator
+  // arriving earlier than the rest of the team).
+  const handleUpdateGuideCheckinTime = async (sessionId: string, guideId: string, value: string) => {
+    if (!user) return;
+    await supabase.from('session_guides')
+      .update({ checkin_time: value || null })
+      .eq('user_id', user.id)
+      .eq('session_id', sessionId)
+      .eq('guide_id', guideId);
+    await refreshSessionGuides();
+  };
+
+  // Owner-only: change the session's tour time from a plain phone-friendly time input. Any guide
+  // whose check-in time still matches the OLD default (tour − 15, via checkinTime()) — or who
+  // never had one set — is offered a one-tap recompute to the NEW default; a guide with a
+  // manually-overridden check-in time is left untouched. Mirrors DispatchPage's identical helper
+  // so both surfaces behave the same way.
+  const handleUpdateSessionTourTime = async (sessionId: string, newStartTime: string) => {
+    if (!user) return;
+    const session = sessions.find((s: any) => s.id === sessionId);
+    const oldStartTime = session?.start_time ?? null;
+    if (!newStartTime || newStartTime === oldStartTime) return;
+
+    await supabase.from('tour_sessions').update({ start_time: newStartTime }).eq('id', sessionId);
+
+    const oldDefault = checkinTime(oldStartTime);
+    const newDefault = checkinTime(newStartTime);
+    const onDefault = sessionGuides.filter((sg: any) =>
+      sg.session_id === sessionId && sg.status === 'accepted' && (!sg.checkin_time || sg.checkin_time === oldDefault)
+    );
+
+    if (newDefault && onDefault.length > 0 && confirm(
+      `Update check-in time for ${onDefault.length} guide${onDefault.length !== 1 ? 's' : ''} still on the default (tour − 15 min) to match the new tour time? Guides with a manually-set check-in time won't be touched.`
+    )) {
+      await Promise.all(onDefault.map((sg: any) =>
+        supabase.from('session_guides').update({ checkin_time: newDefault })
+          .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', sg.guide_id)
+      ));
+    }
+    await loadData();
+  };
+
   // Owner-only: run the Balance algorithm for one session and persist the resulting moves.
   const handleBalance = async (sessionId: string) => {
     if (!user) return;
@@ -795,6 +837,8 @@ export default function TodayToursPage() {
                 onMoveGuest={handleMoveGuest}
                 onToggleLock={handleToggleLock}
                 onUpdateGuidePay={handleUpdateGuidePay}
+                onUpdateGuideCheckinTime={handleUpdateGuideCheckinTime}
+                onUpdateSessionTourTime={handleUpdateSessionTourTime}
                 onBalance={handleBalance}
                 balancing={balancingSessionId === session.id}
                 stuckBookingRefs={stuckBookingRefs}
@@ -835,6 +879,8 @@ function SessionBoard({
   onMoveGuest,
   onToggleLock,
   onUpdateGuidePay,
+  onUpdateGuideCheckinTime,
+  onUpdateSessionTourTime,
   onBalance,
   balancing,
   stuckBookingRefs,
@@ -847,8 +893,9 @@ function SessionBoard({
   companyName?: string | null;
   /** Read-only arrival text keyed `${session_id}:${guide_id}`; absent = not yet arrived. */
   arrivalStatusByGuide: Map<string, string>;
-  /** Owner-only pay, keyed `${session_id}:${guide_id}` — never sourced for the guide side. */
-  guidePay: Map<string, { base_pay: number | null; bonus: number | null }>;
+  /** Owner-only pay + check-in time, keyed `${session_id}:${guide_id}` — never sourced for the
+   *  guide side. */
+  guidePay: Map<string, { base_pay: number | null; bonus: number | null; checkin_time: string | null }>;
   /** Every guest in the session — checked-in and not — for the Allocation board. */
   allocationGuests: AllocationGuest[];
   onCheckInClick: (b: any) => void;
@@ -858,6 +905,8 @@ function SessionBoard({
   onMoveGuest: (bookingRef: string, newGuideId: string | null) => void;
   onToggleLock: (sessionId: string, guideId: string, locked: boolean) => void;
   onUpdateGuidePay: (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number) => void;
+  onUpdateGuideCheckinTime: (sessionId: string, guideId: string, value: string) => void;
+  onUpdateSessionTourTime: (sessionId: string, newStartTime: string) => void;
   onBalance: (sessionId: string) => void;
   balancing: boolean;
   stuckBookingRefs: Set<string>;
@@ -885,11 +934,23 @@ function SessionBoard({
       <div className="bg-muted border-b border-border px-4 md:px-5 py-4 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h3 className="font-extrabold text-lg truncate">{session.label || 'Untitled Session'}</h3>
-          <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
+          <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5 flex-wrap">
             <Clock size={12} />
-            {session.start_time
-              ? `Check-in ${checkinTime(session.start_time)} · Tour ${session.start_time}`
-              : '—'}
+            <span>Default check-in {checkinTime(session.start_time) || '—'}</span>
+            <span>&middot;</span>
+            <span className="inline-flex items-center gap-1.5">
+              Tour
+              <input
+                key={`tour-time-${session.id}-${session.start_time}`}
+                type="time"
+                defaultValue={session.start_time || ''}
+                onBlur={(e) => {
+                  const v = e.target.value;
+                  if (v) onUpdateSessionTourTime(session.id, v);
+                }}
+                className="text-xs py-1.5 px-2 min-h-[34px] w-[104px] rounded border border-border bg-background"
+              />
+            </span>
           </p>
           {team.length > 0 && (
             <div className="mt-2 space-y-1.5">
@@ -897,7 +958,7 @@ function SessionBoard({
                 const arrival = arrivalStatusByGuide.get(`${session.id}:${g.id}`);
                 const guide = guideById.get(g.id);
                 const { calendarUrl, whatsappUrl, hasGuestEmail } = buildGuideInviteLinks(session, guide, sessionPax, companyName);
-                const pay = guidePay.get(`${session.id}:${g.id}`) || { base_pay: null, bonus: null };
+                const pay = guidePay.get(`${session.id}:${g.id}`) || { base_pay: null, bonus: null, checkin_time: null };
                 const payTotal = (Number(pay.base_pay) || 0) + (Number(pay.bonus) || 0);
                 return (
                   <div key={g.id} className="text-[11px]">
@@ -957,6 +1018,24 @@ function SessionBoard({
                         className="w-14 px-1 py-0.5 rounded border border-border bg-background text-right"
                       />
                       <span className="font-bold text-foreground">€{payTotal}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1 pl-[17px] text-[10px]">
+                      <span className="text-muted-foreground">Check-in</span>
+                      <input
+                        key={`checkin-${g.id}-${pay.checkin_time}`}
+                        type="time"
+                        defaultValue={pay.checkin_time || checkinTime(session.start_time) || ''}
+                        onBlur={(e) => {
+                          const v = e.target.value;
+                          if (v && v !== (pay.checkin_time || checkinTime(session.start_time) || '')) {
+                            onUpdateGuideCheckinTime(session.id, g.id, v);
+                          }
+                        }}
+                        className="w-[92px] px-1 py-0.5 rounded border border-border bg-background"
+                      />
+                      {!pay.checkin_time && (
+                        <span className="text-muted-foreground italic">default (tour − 15)</span>
+                      )}
                     </div>
                   </div>
                 );

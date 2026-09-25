@@ -48,6 +48,7 @@ interface SessionGuideRow {
   reassigned_from: string | null;
   base_pay: number | null;
   bonus: number | null;
+  checkin_time: string | null;
 }
 
 interface Guide {
@@ -393,6 +394,7 @@ export default function DispatchPage() {
   const handleAssignGuide = async (sessionId: string, guideId: string) => {
     if (!user) return;
     const guide = guideById.get(guideId);
+    const session = sessions.find(s => s.id === sessionId);
     await supabase.from('session_guides').insert({
       session_id: sessionId,
       guide_id: guideId,
@@ -401,6 +403,7 @@ export default function DispatchPage() {
       responded_at: new Date().toISOString(),
       base_pay: guide?.base_rate ?? 0,
       bonus: 0,
+      checkin_time: checkinTime(session?.start_time ?? null),
     });
     await loadData();
   };
@@ -422,6 +425,7 @@ export default function DispatchPage() {
     await unallotGuideFromSession(sessionId, fromGuideId);
     await supabase.from('session_guides').delete().eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', fromGuideId);
     const toGuide = guideById.get(toGuideId);
+    const session = sessions.find(s => s.id === sessionId);
     await supabase.from('session_guides').insert({
       session_id: sessionId,
       guide_id: toGuideId,
@@ -431,6 +435,7 @@ export default function DispatchPage() {
       reassigned_from: fromGuideId,
       base_pay: toGuide?.base_rate ?? 0,
       bonus: 0,
+      checkin_time: checkinTime(session?.start_time ?? null),
     });
     await loadData();
   };
@@ -444,6 +449,46 @@ export default function DispatchPage() {
       .update({ [field]: value })
       .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
     await refreshSessionGuides();
+  };
+
+  // Owner override of one guide's own check-in time on this session (e.g. a coordinator arriving
+  // earlier than the rest of the team). Same small-write-then-targeted-refetch pattern as pay.
+  const handleUpdateGuideCheckinTime = async (sessionId: string, guideId: string, value: string) => {
+    if (!user) return;
+    await supabase.from('session_guides')
+      .update({ checkin_time: value || null })
+      .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
+    await refreshSessionGuides();
+  };
+
+  // Owner can change the session's tour time anytime, from a plain phone-friendly time input.
+  // Any guide whose check-in time still matches the OLD default (tour − 15, computed via
+  // checkinTime()) — or who was never given one at all — is offered a one-tap recompute to the
+  // NEW default. A guide the owner has manually overridden (checkin_time present and NOT equal to
+  // the old default) is deliberately left untouched, per the "never overwrite an override" rule.
+  const handleUpdateSessionTourTime = async (sessionId: string, newStartTime: string) => {
+    if (!user) return;
+    const session = sessions.find(s => s.id === sessionId);
+    const oldStartTime = session?.start_time ?? null;
+    if (!newStartTime || newStartTime === oldStartTime) return;
+
+    await supabase.from('tour_sessions').update({ start_time: newStartTime }).eq('id', sessionId);
+
+    const oldDefault = checkinTime(oldStartTime);
+    const newDefault = checkinTime(newStartTime);
+    const onDefault = sessionGuides.filter(sg =>
+      sg.session_id === sessionId && sg.status === 'accepted' && (!sg.checkin_time || sg.checkin_time === oldDefault)
+    );
+
+    if (newDefault && onDefault.length > 0 && confirm(
+      `Update check-in time for ${onDefault.length} guide${onDefault.length !== 1 ? 's' : ''} still on the default (tour − 15 min) to match the new tour time? Guides with a manually-set check-in time won't be touched.`
+    )) {
+      await Promise.all(onDefault.map(sg =>
+        supabase.from('session_guides').update({ checkin_time: newDefault })
+          .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', sg.guide_id)
+      ));
+    }
+    await loadData();
   };
 
   // Builds the calendar invite + a matching WhatsApp confirmation for a confirmed ('accepted')
@@ -690,9 +735,21 @@ export default function DispatchPage() {
                           )}
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground mt-1">
                             <Clock size={12} />
-                            <span>Check-in {checkinTime(session.start_time) || '—'}</span>
+                            <span>Default check-in {checkinTime(session.start_time) || '—'}</span>
                             <span>&middot;</span>
-                            <span>Tour {session.start_time || '—'}</span>
+                            <span className="inline-flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                              Tour
+                              <input
+                                key={`tour-time-${session.id}-${session.start_time}`}
+                                type="time"
+                                defaultValue={session.start_time || ''}
+                                onBlur={e => {
+                                  const v = e.target.value;
+                                  if (v) handleUpdateSessionTourTime(session.id, v);
+                                }}
+                                className="aurelia-input text-xs py-1.5 px-2 min-h-[34px] w-[104px]"
+                              />
+                            </span>
                             <span>&middot;</span>
                             <span>{sBookings.length} booking{sBookings.length !== 1 ? 's' : ''}</span>
                             <span>&middot;</span>
@@ -777,6 +834,30 @@ export default function DispatchPage() {
                                   <span className="text-xs font-bold text-gold ml-auto shrink-0">
                                     €{((Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0)).toLocaleString()}
                                   </span>
+                                </div>
+
+                                {/* This guide's own check-in time — defaults to tour−15 (see
+                                    handleAssignGuide), independently overridable per guide (e.g. a
+                                    coordinator arriving earlier). Changing the session's tour time
+                                    above recomputes this automatically UNLESS it's been overridden
+                                    — see handleUpdateSessionTourTime. */}
+                                <div className="w-full flex items-center gap-2 pt-1.5 mt-0.5 border-t border-border" onClick={e => e.stopPropagation()}>
+                                  <label className="text-[9px] font-bold text-muted-foreground uppercase shrink-0">Check-in</label>
+                                  <input
+                                    key={`checkin-${sg.guide_id}-${sg.checkin_time}`}
+                                    type="time"
+                                    defaultValue={sg.checkin_time || checkinTime(session.start_time) || ''}
+                                    onBlur={e => {
+                                      const v = e.target.value;
+                                      if (v && v !== (sg.checkin_time || checkinTime(session.start_time) || '')) {
+                                        handleUpdateGuideCheckinTime(session.id, sg.guide_id, v);
+                                      }
+                                    }}
+                                    className="aurelia-input text-xs py-1.5 px-2 min-h-[34px] w-[104px]"
+                                  />
+                                  {!sg.checkin_time && (
+                                    <span className="text-[9px] text-muted-foreground italic">default (tour − 15)</span>
+                                  )}
                                 </div>
 
                                 {reassigningKey === `${session.id}:${sg.guide_id}` && (

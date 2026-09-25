@@ -939,6 +939,7 @@ export type Database = {
         Row: {
           base_pay: number | null
           bonus: number | null
+          checkin_time: string | null
           guide_id: string
           offered_at: string | null
           reassigned_from: string | null
@@ -951,6 +952,7 @@ export type Database = {
         Insert: {
           base_pay?: number | null
           bonus?: number | null
+          checkin_time?: string | null
           guide_id: string
           offered_at?: string | null
           reassigned_from?: string | null
@@ -963,6 +965,7 @@ export type Database = {
         Update: {
           base_pay?: number | null
           bonus?: number | null
+          checkin_time?: string | null
           guide_id?: string
           offered_at?: string | null
           reassigned_from?: string | null
