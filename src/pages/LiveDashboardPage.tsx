@@ -127,7 +127,9 @@ function buildGeneralGroups(bookings: Booking[]): { upcoming: GeneralGroup[]; ca
   bookings.forEach((b) => {
     if (isCancelled(b.status)) { cancelled.push(b); return; }
     const time = b.travel_time || 'No time';
-    const key = `${time}|${b.product_code || ''}|${b.option_name || ''}`;
+    // shortProductCode() here too, not just in optionLabel() below — an old gsheet row's "P13"
+    // and a newer Bokun row's "5591586P13" are the same tour and must land in one card, not two.
+    const key = `${time}|${shortProductCode(b.product_code) || ''}|${b.option_name || ''}`;
     const pax = paxTotal(b);
     const existing = upcomingMap.get(key);
     if (existing) {

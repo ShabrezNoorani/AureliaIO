@@ -13,6 +13,18 @@ const booking = (overrides: Partial<AutoPopBooking> & { booking_ref: string }): 
 const link = (session_id: string, booking_ref: string): AutoPopLink => ({ session_id, booking_ref });
 
 describe('matchBookingsToSessions', () => {
+  it('matches a "P13" late booking against a session built from "5591586P13" bookings — same tour, different raw product_code', () => {
+    const sessions = [session('S1')];
+    const links = [link('S1', 'BOKUN_0900')];
+    const bookings = [
+      booking({ booking_ref: 'BOKUN_0900', product_code: '5591586P13', travel_time: '09:00' }),
+      // Late-arriving gsheet row for the SAME tour, tagged with the short form — must still match.
+      booking({ booking_ref: 'GSHEET_LATE', product_code: 'P13', travel_time: '09:00' }),
+    ];
+    const matches = matchBookingsToSessions(sessions, links, bookings);
+    expect(matches).toEqual([{ session_id: 'S1', booking_ref: 'GSHEET_LATE' }]);
+  });
+
   it('matches a late booking with the same option and a time inside the session window', () => {
     const sessions = [session('S1')];
     const links = [

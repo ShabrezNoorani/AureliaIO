@@ -82,6 +82,19 @@ const paxTotal = (b: Booking) =>
 export const groupLabel = (g: { product_code: string | null; option_name: string }) =>
   `${shortProductCode(g.product_code) || 'Unknown'} — ${g.option_name}`;
 
+// The ONE grouping key for Dispatch's "natural groups" (time + product + option). Runs
+// product_code through shortProductCode() first — an old gsheet row's "P13" and a newer Bokun
+// row's "5591586P13" for the exact same tour must land in ONE group, not two, even though their
+// raw product_code strings differ. Falls back to product_name when there's no code at all, purely
+// so two genuinely different tours that both lack a code don't get merged into one "Unknown"
+// bucket. Exported purely so it's independently testable (see DispatchPage.groupLabel.test.ts).
+export const naturalGroupKey = (b: { travel_time: string | null; product_code: string | null; product_name: string; option_name: string }) => {
+  const time = b.travel_time || 'No Time';
+  const code = shortProductCode(b.product_code) || b.product_name || 'Unknown';
+  const opt = b.option_name || 'Standard';
+  return `${time}|${code}|${opt}`;
+};
+
 // 'offered'/'declined'/'reassigned' can still appear as a STATUS on rows created before
 // assignment became immediate — kept here purely so any such historical row still renders
 // sensibly, never produced by this page anymore. A row this page DOES produce can still carry
@@ -216,13 +229,11 @@ export default function DispatchPage() {
     const map = new Map<string, NaturalGroup>();
     bookings.forEach(b => {
       const time = b.travel_time || 'No Time';
-      // The GROUPING key still falls back to product_name when product_code is missing, purely so
-      // two genuinely different tours that both lack a code don't get merged into one "Unknown"
-      // bucket — but the group's own product_code field (below, what actually gets displayed) is
-      // always the raw value, never product_name.
-      const groupingKeyCode = b.product_code || b.product_name || 'Unknown';
       const opt = b.option_name || 'Standard';
-      const key = `${time}|${groupingKeyCode}|${opt}`;
+      const key = naturalGroupKey(b);
+      // The group's own product_code field (used only for display, via groupLabel) is always the
+      // RAW value from whichever booking happened to land here first — never product_name, and
+      // never re-normalized, since shortProductCode() already runs at display time too.
       if (!map.has(key)) {
         map.set(key, { key, travel_time: time, product_code: b.product_code || null, option_name: opt, bookings: [] });
       }

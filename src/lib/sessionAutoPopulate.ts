@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { isCancelled } from './utils';
+import { isCancelled, shortProductCode } from './utils';
 
 // Auto-populates built tour_sessions with late-arriving bookings that match them, so a booking
 // that comes in after Dispatch was last touched still shows up at check-in instead of being
@@ -26,8 +26,11 @@ export interface AutoPopLink {
   booking_ref: string;
 }
 
+// Runs product_code through shortProductCode() before keying — an old gsheet row's "P13" and a
+// newer Bokun row's "5591586P13" are the same tour and must match as the same option, even though
+// their raw product_code strings differ.
 const optionKey = (b: { product_code: string | null; option_name: string | null }) =>
-  `${b.product_code || ''}||${b.option_name || ''}`;
+  `${shortProductCode(b.product_code) || ''}||${b.option_name || ''}`;
 
 interface SessionProfile {
   optionKeys: Set<string>;

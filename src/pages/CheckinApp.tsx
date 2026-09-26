@@ -196,10 +196,11 @@ export default function CheckinApp() {
   const handleAssignGuide = async (booking: Booking, targetGuideId: string) => {
     if (!companyUserId) return;
 
-    // Check if assignment exists
+    // Check if assignment exists — product_code compared via shortProductCode() so a "P13" row
+    // and a "5591586P13" row for the same tour are recognized as the same assignment.
     const existing = assignments.find(a =>
       a.booking_ref === booking.booking_ref ||
-      (a.travel_time === booking.travel_time && a.product_code === booking.product_code && a.option_name === booking.option_name)
+      (a.travel_time === booking.travel_time && shortProductCode(a.product_code) === shortProductCode(booking.product_code) && a.option_name === booking.option_name)
     );
 
     if (existing) {
@@ -236,7 +237,9 @@ export default function CheckinApp() {
   const grouped = useMemo(() => {
     const groups: Record<string, Booking[]> = {};
     bookings.forEach(b => {
-      const key = `${b.travel_time} | ${b.product_code}`;
+      // shortProductCode() here — an old gsheet row's "P13" and a newer Bokun row's
+      // "5591586P13" are the same tour and must land in one group, not two.
+      const key = `${b.travel_time} | ${shortProductCode(b.product_code)}`;
       if (!groups[key]) groups[key] = [];
       groups[key].push(b);
     });
@@ -331,16 +334,18 @@ export default function CheckinApp() {
           </div>
         ) : (
           Object.entries(grouped).map(([key, groupBookings]) => {
+            // `code` here is already short (see grouped above), so guide_assignments rows — which
+            // still store the RAW product_code — are compared via shortProductCode() too.
             const [time, code] = key.split(' | ');
             const totalPax = groupBookings.reduce((sum, b) => sum + (b.pax_adult+b.pax_youth+b.pax_child+b.pax_infant), 0);
 
             // Shared guide check
-            const assignedGuides = assignments.filter(a => a.travel_time === time && a.product_code === code);
+            const assignedGuides = assignments.filter(a => a.travel_time === time && shortProductCode(a.product_code) === code);
             const uniqueGuides = Array.from(new Set(assignedGuides.map(a => a.guide_id)));
             const sharedGuideName = uniqueGuides.length === 1 ? guides.find(g => g.id === uniqueGuides[0])?.name : null;
 
             return (
-              <TourGroup key={key} time={time} code={shortProductCode(code)} bookingsCount={groupBookings.length} totalPax={totalPax} sharedGuideName={sharedGuideName}>
+              <TourGroup key={key} time={time} code={code} bookingsCount={groupBookings.length} totalPax={totalPax} sharedGuideName={sharedGuideName}>
                 {groupBookings.map(b => {
                   const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
                   const isDone = cRecord?.status === 'checked_in';
