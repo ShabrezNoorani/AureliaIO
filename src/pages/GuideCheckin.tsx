@@ -1017,7 +1017,10 @@ function GuideSessionCard({
   onUndoCheckin: (bookingRef: string) => void;
 }) {
   const [tab, setTab] = useState<'checkin' | 'allocation'>('checkin');
-  const myPayTotal = myPay ? (Number(myPay.base_pay) || 0) + (Number(myPay.bonus) || 0) : null;
+  // Pay is genuinely optional — a myPay row with both fields null means "not tracked", not "€0
+  // confirmed", so the line is omitted entirely rather than showing a fabricated "Your pay: €0".
+  const hasMyPay = !!myPay && (myPay.base_pay != null || myPay.bonus != null);
+  const myPayTotal = hasMyPay ? (Number(myPay!.base_pay) || 0) + (Number(myPay!.bonus) || 0) : null;
 
   return (
     <div className="aurelia-card overflow-hidden border border-border">

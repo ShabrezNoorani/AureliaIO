@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw, MapPin, CalendarPlus, MessageCircle, Send, CalendarCheck, CalendarX } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw, MapPin, CalendarPlus, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
@@ -16,8 +16,7 @@ import { enqueueRetry, useRetryQueueItems } from '@/lib/retryQueue';
 import { findCheckinRow, writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
 import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
 import { ARRIVAL_COLUMNS, ArrivalRow, formatArrivalStatus } from '@/lib/guideArrivals';
-import { buildGuideInviteLinks, type GuideInviteTarget } from '@/lib/tourInvites';
-import { createCalendarEvent, updateCalendarEvent, getCalendarEventStatus, tourSessionWindowIso } from '@/lib/calendarSync';
+import { buildGuideInviteLinks, buildSharedGuideInviteLink, forceBrowserUrl, type GuideInviteTarget } from '@/lib/tourInvites';
 
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
@@ -53,11 +52,6 @@ export default function TodayToursPage() {
   const [showConfirm, setShowConfirm] = useState<any | null>(null);
   const [balancingSessionId, setBalancingSessionId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-
-  // In-flight calendar-sync actions, keyed `${sessionId}:${guideId}` (send) / `sessionId` (status
-  // refresh) — drives each button's own loading/disabled state without a shared spinner.
-  const [sendingInviteKey, setSendingInviteKey] = useState<string | null>(null);
-  const [checkingStatusSessionId, setCheckingStatusSessionId] = useState<string | null>(null);
 
   // Guards every setState below against firing after this page has unmounted (relevant now that
   // several async refreshes can be in flight at once: initial load, realtime-triggered refreshes,
@@ -95,7 +89,7 @@ export default function TodayToursPage() {
     if (sessionIds.length > 0) {
       const [sbRes, sgRes, arrRes] = await Promise.all([
         supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
-        supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus, checkin_time, calendar_event_id, calendar_response').eq('user_id', user.id).in('session_id', sessionIds),
+        supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus, checkin_time').eq('user_id', user.id).in('session_id', sessionIds),
         supabase.from('guide_arrivals').select(ARRIVAL_COLUMNS).eq('user_id', user.id).in('session_id', sessionIds),
       ]);
       if (!mountedRef.current) return;
@@ -183,7 +177,7 @@ export default function TodayToursPage() {
       setSessionGuides([]);
       return;
     }
-    const { data } = await supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus, checkin_time, calendar_event_id, calendar_response').eq('user_id', user.id).in('session_id', sessionIds);
+    const { data } = await supabase.from('session_guides').select('session_id, guide_id, shuffle_locked, status, base_pay, bonus, checkin_time').eq('user_id', user.id).in('session_id', sessionIds);
     if (!mountedRef.current) return;
     setSessionGuides(data || []);
   };
@@ -290,16 +284,10 @@ export default function TodayToursPage() {
   // (never from my_session_team, which deliberately omits pay). Keyed `${session_id}:${guide_id}`
   // so a guide working two sessions today gets independent figures for each.
   const sessionGuidePay = useMemo(() => {
-    const m = new Map<string, {
-      base_pay: number | null; bonus: number | null; checkin_time: string | null;
-      calendar_event_id: string | null; calendar_response: string | null;
-    }>();
+    const m = new Map<string, { base_pay: number | null; bonus: number | null; checkin_time: string | null }>();
     sessionGuides.forEach((sg: any) => {
       if (sg.status !== 'accepted') return;
-      m.set(`${sg.session_id}:${sg.guide_id}`, {
-        base_pay: sg.base_pay, bonus: sg.bonus, checkin_time: sg.checkin_time ?? null,
-        calendar_event_id: sg.calendar_event_id ?? null, calendar_response: sg.calendar_response ?? null,
-      });
+      m.set(`${sg.session_id}:${sg.guide_id}`, { base_pay: sg.base_pay, bonus: sg.bonus, checkin_time: sg.checkin_time ?? null });
     });
     return m;
   }, [sessionGuides]);
@@ -632,8 +620,8 @@ export default function TodayToursPage() {
 
   // Owner-only: edit a guide's pay for this session (pre-filled from guides.base_rate at
   // assignment time on Dispatch; editable here too, e.g. once the tour's actual pax turns out
-  // different from plan).
-  const handleUpdateGuidePay = async (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number) => {
+  // different from plan). value: null clears it back to "not tracked" — pay is never required.
+  const handleUpdateGuidePay = async (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number | null) => {
     if (!user) return;
     await supabase.from('session_guides')
       .update({ [field]: value })
@@ -641,35 +629,6 @@ export default function TodayToursPage() {
       .eq('session_id', sessionId)
       .eq('guide_id', guideId);
     await refreshSessionGuides();
-  };
-
-  // Builds the calendar event's title/description for one guide on one session — the ONE place
-  // this wording is assembled, so the initial send and every later update always match. Mirrors
-  // DispatchPage's identical helper. "option name" comes from the session's first linked booking
-  // (falling back to the session label) — the guide-facing name, never the internal product code.
-  const buildCalendarEventContent = (session: any, sg: any) => {
-    const optionName = sessionIdToGuests.get(session.id)?.[0]?.booking?.option_name || session.label || 'Tour';
-    const tourTime = session.start_time || '—';
-    const checkin = sg.checkin_time || checkinTime(session.start_time) || tourTime;
-    const title = `Scenic Zest — ${optionName} · Check-in ${checkin} (Tour ${tourTime})`;
-    const dateLabel = new Date(`${session.tour_date}T00:00:00`)
-      .toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    const description = [optionName, dateLabel, `Check-in ${checkin}`, session.notes].filter(Boolean).join('\n');
-    return { title, description };
-  };
-
-  // Best-effort: pushes the updated title/start/end to a guide's already-sent invite, if any,
-  // after the tour time or their own check-in time changes. A failure here must never block the
-  // save that already happened by the time this runs — it only surfaces as a toast.
-  const pushCalendarUpdate = async (session: any, sg: any) => {
-    if (!sg.calendar_event_id || !session.start_time) return;
-    try {
-      const { title, description } = buildCalendarEventContent(session, sg);
-      const { startISO, endISO } = tourSessionWindowIso(session.tour_date, session.start_time);
-      await updateCalendarEvent({ eventId: sg.calendar_event_id, title, description, startISO, endISO });
-    } catch {
-      toast.error(`Calendar invite for ${guideById.get(sg.guide_id)?.name || 'a guide'} may be out of date — try Send again.`);
-    }
   };
 
   // Owner-only: override one guide's own check-in time on this session (e.g. a coordinator
@@ -684,11 +643,6 @@ export default function TodayToursPage() {
       .eq('user_id', user.id)
       .eq('session_id', sessionId)
       .eq('guide_id', guideId);
-    const session = sessions.find((s: any) => s.id === sessionId);
-    const sg = sessionGuides.find((r: any) => r.session_id === sessionId && r.guide_id === guideId);
-    if (session && sg?.calendar_event_id) {
-      await pushCalendarUpdate(session, { ...sg, checkin_time: normalized });
-    }
     await refreshSessionGuides();
   };
 
@@ -707,14 +661,13 @@ export default function TodayToursPage() {
     if (!newStartTime || newStartTime === oldStartTime || !session) return;
 
     await supabase.from('tour_sessions').update({ start_time: newStartTime }).eq('id', sessionId);
-    const newSession = { ...session, start_time: newStartTime };
 
     const oldDefault = checkinTime(oldStartTime);
     const newDefault = checkinTime(newStartTime);
-    const sessionRows = sessionGuides.filter((sg: any) => sg.session_id === sessionId && sg.status === 'accepted');
-    const onDefault = sessionRows.filter((sg: any) => !sg.checkin_time || sg.checkin_time === oldDefault);
+    const onDefault = sessionGuides.filter((sg: any) =>
+      sg.session_id === sessionId && sg.status === 'accepted' && (!sg.checkin_time || sg.checkin_time === oldDefault)
+    );
 
-    let recomputed = false;
     if (newDefault && onDefault.length > 0 && confirm(
       `Update check-in time for ${onDefault.length} guide${onDefault.length !== 1 ? 's' : ''} still on the default (tour − 15 min) to match the new tour time? Guides with a manually-set check-in time won't be touched.`
     )) {
@@ -722,77 +675,8 @@ export default function TodayToursPage() {
         supabase.from('session_guides').update({ checkin_time: newDefault })
           .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', sg.guide_id)
       ));
-      recomputed = true;
     }
-
-    // Push the new tour time — and, for guides just recomputed above, their new check-in time —
-    // to any already-sent invite, so it stays correct with zero extra taps from the owner.
-    const onDefaultIds = new Set(onDefault.map((sg: any) => sg.guide_id));
-    await Promise.all(sessionRows.filter((sg: any) => sg.calendar_event_id).map((sg: any) => pushCalendarUpdate(
-      newSession,
-      recomputed && onDefaultIds.has(sg.guide_id) ? { ...sg, checkin_time: newDefault } : sg
-    )));
-
     await loadData();
-  };
-
-  // Owner-only: sends a real Google Calendar invite for one assigned guide, via the Apps Script
-  // web app (lib/calendarSync.ts). The returned eventId is stored on the guide's session_guides
-  // row so a later tour-time/check-in-time edit can PATCH the same event instead of creating a
-  // duplicate. Never marks the invite as sent unless the call actually succeeds — a failure
-  // surfaces as a toast and never touches calendar_event_id.
-  const handleSendCalendarInvite = async (sessionId: string, guideId: string) => {
-    if (!user) return;
-    const session = sessions.find((s: any) => s.id === sessionId);
-    const guide = guideById.get(guideId) as any;
-    const sg = sessionGuides.find((r: any) => r.session_id === sessionId && r.guide_id === guideId);
-    if (!session || !sg) return;
-    if (!guide?.email) { toast.error(`${guide?.name || 'This guide'} has no email on file — add one to send an invite.`); return; }
-    if (!session.start_time) { toast.error('Set a tour time before sending a calendar invite.'); return; }
-
-    setSendingInviteKey(`${sessionId}:${guideId}`);
-    try {
-      const { title, description } = buildCalendarEventContent(session, sg);
-      const { startISO, endISO } = tourSessionWindowIso(session.tour_date, session.start_time);
-      const eventId = await createCalendarEvent({ title, description, startISO, endISO, guideEmail: guide.email });
-      await supabase.from('session_guides').update({ calendar_event_id: eventId, calendar_response: null })
-        .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
-      toast.success(`Calendar invite sent to ${guide.name}`);
-      await refreshSessionGuides();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to send calendar invite');
-    } finally {
-      setSendingInviteKey(null);
-    }
-  };
-
-  // Owner-only: polls the Apps Script "status" action for every guide on this session who already
-  // has a calendar_event_id, matches the response by email, and persists it — so a decline shows
-  // as a clear badge (the owner's cue to reassign) without opening Google Calendar.
-  const handleRefreshCalendarStatus = async (sessionId: string) => {
-    if (!user) return;
-    const rows = sessionGuides.filter((sg: any) => sg.session_id === sessionId && sg.status === 'accepted' && sg.calendar_event_id);
-    if (rows.length === 0) { toast.error('No calendar invites sent yet for this session.'); return; }
-    setCheckingStatusSessionId(sessionId);
-    try {
-      await Promise.all(rows.map(async (sg: any) => {
-        const guide = guideById.get(sg.guide_id) as any;
-        if (!guide?.email || !sg.calendar_event_id) return;
-        try {
-          const attendees = await getCalendarEventStatus(sg.calendar_event_id);
-          const mine = attendees.find(a => a.email.toLowerCase() === guide.email.toLowerCase());
-          await supabase.from('session_guides').update({ calendar_response: mine?.response || 'needsAction' })
-            .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', sg.guide_id);
-        } catch {
-          // best-effort per guide — one failed status check must not block the others
-        }
-      }));
-      await refreshSessionGuides();
-    } catch {
-      toast.error('Failed to refresh calendar status');
-    } finally {
-      setCheckingStatusSessionId(null);
-    }
   };
 
   // Owner-only: run the Balance algorithm for one session and persist the resulting moves.
@@ -961,10 +845,6 @@ export default function TodayToursPage() {
                 onUpdateGuidePay={handleUpdateGuidePay}
                 onUpdateGuideCheckinTime={handleUpdateGuideCheckinTime}
                 onUpdateSessionTourTime={handleUpdateSessionTourTime}
-                onSendCalendarInvite={handleSendCalendarInvite}
-                onRefreshCalendarStatus={handleRefreshCalendarStatus}
-                sendingInviteKey={sendingInviteKey}
-                checkingStatusSessionId={checkingStatusSessionId}
                 onBalance={handleBalance}
                 balancing={balancingSessionId === session.id}
                 stuckBookingRefs={stuckBookingRefs}
@@ -1007,10 +887,6 @@ function SessionBoard({
   onUpdateGuidePay,
   onUpdateGuideCheckinTime,
   onUpdateSessionTourTime,
-  onSendCalendarInvite,
-  onRefreshCalendarStatus,
-  sendingInviteKey,
-  checkingStatusSessionId,
   onBalance,
   balancing,
   stuckBookingRefs,
@@ -1023,12 +899,9 @@ function SessionBoard({
   companyName?: string | null;
   /** Read-only arrival text keyed `${session_id}:${guide_id}`; absent = not yet arrived. */
   arrivalStatusByGuide: Map<string, string>;
-  /** Owner-only pay + check-in time + calendar-invite state, keyed `${session_id}:${guide_id}` —
-   *  never sourced for the guide side. */
-  guidePay: Map<string, {
-    base_pay: number | null; bonus: number | null; checkin_time: string | null;
-    calendar_event_id: string | null; calendar_response: string | null;
-  }>;
+  /** Owner-only pay + check-in time, keyed `${session_id}:${guide_id}` — never sourced for the
+   *  guide side. */
+  guidePay: Map<string, { base_pay: number | null; bonus: number | null; checkin_time: string | null }>;
   /** Every guest in the session — checked-in and not — for the Allocation board. */
   allocationGuests: AllocationGuest[];
   onCheckInClick: (b: any) => void;
@@ -1037,13 +910,9 @@ function SessionBoard({
   onResetCheckin: (b: any) => void;
   onMoveGuest: (bookingRef: string, newGuideId: string | null) => void;
   onToggleLock: (sessionId: string, guideId: string, locked: boolean) => void;
-  onUpdateGuidePay: (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number) => void;
+  onUpdateGuidePay: (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number | null) => void;
   onUpdateGuideCheckinTime: (sessionId: string, guideId: string, value: string) => void;
   onUpdateSessionTourTime: (sessionId: string, newStartTime: string) => void;
-  onSendCalendarInvite: (sessionId: string, guideId: string) => void;
-  onRefreshCalendarStatus: (sessionId: string) => void;
-  sendingInviteKey: string | null;
-  checkingStatusSessionId: string | null;
   onBalance: (sessionId: string) => void;
   balancing: boolean;
   stuckBookingRefs: Set<string>;
@@ -1057,6 +926,34 @@ function SessionBoard({
   // Unfiltered session total — the search box below only narrows the guest LIST, the invite
   // message below must always quote the whole session's pax, same as Dispatch's sPax.
   const sessionPax = guests.reduce((s, g) => s + g.pax, 0);
+
+  // ONE calendar invite per session, covering every assigned guide — a single guide gets their
+  // own pay in the description (buildGuideInviteLinks); two or more guides get ONE shared event
+  // with everyone as a guest and NO pay at all (buildSharedGuideInviteLink never even accepts pay
+  // figures), since every invited guest would otherwise see the same description. Mirrors
+  // DispatchPage's identical sessionCalendarInvite.
+  const sessionCalendarInvite = team.length === 0 ? null
+    : team.length === 1
+      ? (() => {
+          const g = team[0];
+          const pay = guidePay.get(`${session.id}:${g.id}`) || { base_pay: null, bonus: null, checkin_time: null };
+          const { calendarUrl, hasGuestEmail } = buildGuideInviteLinks(
+            session,
+            { ...guideById.get(g.id), base_pay: pay.base_pay, bonus: pay.bonus },
+            sessionPax,
+            companyName,
+            { checkinTimeOverride: pay.checkin_time, optionName: guests[0]?.booking?.option_name || session.label }
+          );
+          return { calendarUrl, allHaveEmail: hasGuestEmail };
+        })()
+      : (() => {
+          const { calendarUrl, allHaveEmail } = buildSharedGuideInviteLink(
+            session,
+            team.map(g => guideById.get(g.id) || {}),
+            { optionName: guests[0]?.booking?.option_name || session.label }
+          );
+          return { calendarUrl, allHaveEmail };
+        })();
 
   const filteredGuests = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1088,25 +985,27 @@ function SessionBoard({
                 className="text-xs py-1.5 px-2 min-h-[34px] w-[104px] rounded border border-border bg-background"
               />
             </span>
-            {team.some(g => guidePay.get(`${session.id}:${g.id}`)?.calendar_event_id) && (
-              <button
-                onClick={() => onRefreshCalendarStatus(session.id)}
-                disabled={checkingStatusSessionId === session.id}
-                className="text-muted-foreground hover:text-gold p-1 disabled:opacity-50"
-                title="Check invite responses (accepted / declined)"
-              >
-                <RefreshCw size={13} className={checkingStatusSessionId === session.id ? 'animate-spin' : ''} />
-              </button>
-            )}
           </p>
           {team.length > 0 && (
             <div className="mt-2 space-y-1.5">
               {team.map(g => {
                 const arrival = arrivalStatusByGuide.get(`${session.id}:${g.id}`);
                 const guide = guideById.get(g.id);
-                const { calendarUrl, whatsappUrl, hasGuestEmail } = buildGuideInviteLinks(session, guide, sessionPax, companyName);
-                const pay = guidePay.get(`${session.id}:${g.id}`) || { base_pay: null, bonus: null, checkin_time: null, calendar_event_id: null, calendar_response: null };
-                const payTotal = (Number(pay.base_pay) || 0) + (Number(pay.bonus) || 0);
+                const pay = guidePay.get(`${session.id}:${g.id}`) || { base_pay: null, bonus: null, checkin_time: null };
+                const payTotal = pay.base_pay == null && pay.bonus == null ? null : (Number(pay.base_pay) || 0) + (Number(pay.bonus) || 0);
+                // Only whatsappUrl is used per-guide now — the calendar invite is a single
+                // session-level action below (see sessionCalendarInvite), so one event covers
+                // every assigned guide instead of one per guide.
+                const { whatsappUrl } = buildGuideInviteLinks(
+                  session,
+                  { ...guide, base_pay: pay.base_pay, bonus: pay.bonus },
+                  sessionPax,
+                  companyName,
+                  {
+                    checkinTimeOverride: pay.checkin_time,
+                    optionName: guests[0]?.booking?.option_name || session.label,
+                  }
+                );
                 return (
                   <div key={g.id} className="text-[11px]">
                     <p className="flex items-center gap-1.5">
@@ -1117,17 +1016,6 @@ function SessionBoard({
                       </span>
                     </p>
                     <div className="flex flex-wrap items-center gap-1.5 mt-1 pl-[17px]">
-                      <a
-                        href={calendarUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[10px] font-bold px-2 py-0.5 rounded-lg border border-border text-muted-foreground hover:text-gold hover:border-gold/30 transition-colors inline-flex items-center gap-1"
-                      >
-                        <CalendarPlus size={10} /> Add to Calendar
-                      </a>
-                      {!hasGuestEmail && (
-                        <span className="text-[9px] text-muted-foreground italic">add guide email to auto-invite</span>
-                      )}
                       {whatsappUrl ? (
                         <a
                           href={whatsappUrl}
@@ -1146,10 +1034,12 @@ function SessionBoard({
                       <input
                         key={`base-${g.id}-${pay.base_pay}`}
                         type="number"
-                        defaultValue={pay.base_pay ?? 0}
+                        placeholder="—"
+                        defaultValue={pay.base_pay ?? ''}
                         onBlur={(e) => {
-                          const v = Number(e.target.value) || 0;
-                          if (v !== (pay.base_pay ?? 0)) onUpdateGuidePay(session.id, g.id, 'base_pay', v);
+                          const raw = e.target.value.trim();
+                          const v = raw === '' ? null : Number(raw);
+                          if (v !== pay.base_pay) onUpdateGuidePay(session.id, g.id, 'base_pay', v);
                         }}
                         className="w-14 px-1 py-0.5 rounded border border-border bg-background text-right"
                       />
@@ -1157,14 +1047,16 @@ function SessionBoard({
                       <input
                         key={`bonus-${g.id}-${pay.bonus}`}
                         type="number"
-                        defaultValue={pay.bonus ?? 0}
+                        placeholder="—"
+                        defaultValue={pay.bonus ?? ''}
                         onBlur={(e) => {
-                          const v = Number(e.target.value) || 0;
-                          if (v !== (pay.bonus ?? 0)) onUpdateGuidePay(session.id, g.id, 'bonus', v);
+                          const raw = e.target.value.trim();
+                          const v = raw === '' ? null : Number(raw);
+                          if (v !== pay.bonus) onUpdateGuidePay(session.id, g.id, 'bonus', v);
                         }}
                         className="w-14 px-1 py-0.5 rounded border border-border bg-background text-right"
                       />
-                      <span className="font-bold text-foreground">€{payTotal}</span>
+                      <span className="font-bold text-foreground">{payTotal === null ? '—' : `€${payTotal}`}</span>
                     </div>
                     <div className="flex items-center gap-1.5 mt-1 pl-[17px] text-[10px]">
                       <span className="text-muted-foreground">Check-in</span>
@@ -1184,39 +1076,27 @@ function SessionBoard({
                         <span className="text-muted-foreground italic">default (tour − 15)</span>
                       )}
                     </div>
-                    {/* Real Google Calendar invite via the Apps Script web app (see
-                        lib/calendarSync.ts) — separate from the "Add to Calendar" link above,
-                        which just opens a pre-filled Google Calendar tab. This one actually
-                        creates the event and invites the guide directly. */}
-                    <div className="flex flex-wrap items-center gap-1.5 mt-1 pl-[17px]">
-                      {pay.calendar_event_id && (
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-lg inline-flex items-center gap-1 ${
-                          pay.calendar_response === 'declined' ? 'bg-red-600/15 text-red-700'
-                            : pay.calendar_response === 'accepted' ? 'bg-green-600/15 text-green-700'
-                            : 'bg-amber-600/15 text-amber-700'
-                        }`}>
-                          {pay.calendar_response === 'declined' ? <CalendarX size={10} /> : <CalendarCheck size={10} />}
-                          {pay.calendar_response === 'declined' ? 'Declined' : pay.calendar_response === 'accepted' ? 'Accepted' : 'Pending'}
-                        </span>
-                      )}
-                      <button
-                        onClick={() => onSendCalendarInvite(session.id, g.id)}
-                        disabled={sendingInviteKey === `${session.id}:${g.id}` || !(guide as any)?.email}
-                        title={(guide as any)?.email ? undefined : 'This guide has no email on file'}
-                        className="text-[9px] font-bold px-2 py-0.5 rounded-lg border border-gold/30 text-gold hover:bg-gold/10 transition-colors inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        <Send size={10} />
-                        {sendingInviteKey === `${session.id}:${g.id}`
-                          ? 'Sending…'
-                          : pay.calendar_event_id ? 'Resend invite' : 'Send calendar invite'}
-                      </button>
-                      {!(guide as any)?.email && (
-                        <span className="text-[9px] text-muted-foreground italic">add guide email to send</span>
-                      )}
-                    </div>
                   </div>
                 );
               })}
+            </div>
+          )}
+          {sessionCalendarInvite && (
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <a
+                href={forceBrowserUrl(sessionCalendarInvite.calendarUrl)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] font-bold px-2 py-0.5 rounded-lg border border-border text-muted-foreground hover:text-gold hover:border-gold/30 transition-colors inline-flex items-center gap-1"
+              >
+                <CalendarPlus size={10} />
+                {team.length > 1 ? `Send Calendar Invite (${team.length} guides)` : 'Send Calendar Invite'}
+              </a>
+              {!sessionCalendarInvite.allHaveEmail && (
+                <span className="text-[9px] text-muted-foreground italic">
+                  {team.length > 1 ? 'some guides missing email — add to auto-invite them too' : 'add guide email to auto-invite'}
+                </span>
+              )}
             </div>
           )}
         </div>

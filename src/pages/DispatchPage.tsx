@@ -2,11 +2,10 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat, Send, RefreshCw, CalendarCheck, CalendarX } from 'lucide-react';
-import { buildGuideInviteLinks } from '@/lib/tourInvites';
+import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat } from 'lucide-react';
+import { buildGuideInviteLinks, buildSharedGuideInviteLink, forceBrowserUrl } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
 import { localDateStr, shortProductCode, isCancelled, checkinTime, normalizeTime } from '@/lib/utils';
-import { createCalendarEvent, updateCalendarEvent, getCalendarEventStatus, tourSessionWindowIso } from '@/lib/calendarSync';
 
 interface Booking {
   id: string;
@@ -50,8 +49,6 @@ interface SessionGuideRow {
   base_pay: number | null;
   bonus: number | null;
   checkin_time: string | null;
-  calendar_event_id: string | null;
-  calendar_response: string | null;
 }
 
 interface Guide {
@@ -121,11 +118,6 @@ export default function DispatchPage() {
   // Which guide row currently has its inline "Reassign to…" picker open — keyed
   // `${sessionId}:${guideId}` so two sessions' rows never collide.
   const [reassigningKey, setReassigningKey] = useState<string | null>(null);
-
-  // In-flight calendar-sync actions, keyed `${sessionId}:${guideId}` (send) / `sessionId` (status
-  // refresh) — drives each button's own loading/disabled state without a shared spinner.
-  const [sendingInviteKey, setSendingInviteKey] = useState<string | null>(null);
-  const [checkingStatusSessionId, setCheckingStatusSessionId] = useState<string | null>(null);
 
   // Guards every setState below against firing after this page has unmounted, or after the
   // selected date has moved on mid-fetch.
@@ -403,8 +395,10 @@ export default function DispatchPage() {
   // Assignment is immediate — no accept/decline step. The guide is on the hook for this tour
   // the moment the owner picks them; 'accepted' is the status every other query (Today's Tours,
   // guide check-in, the guide dashboard) already treats as "actively working this session".
-  // base_pay pre-fills from the guide's own base_rate (0 if they don't have one set) — the owner
-  // can override it, and bonus, right there in the roster row afterward (see handleUpdateGuidePay).
+  // base_pay pre-fills from the guide's own base_rate WHEN they actually have one — left null
+  // (never faked to 0) otherwise, so a company that doesn't track guide cost never gets a
+  // fabricated €0 written on assignment. bonus always starts null — genuinely optional, not a
+  // real zero. The owner can fill either in anytime afterward (see handleUpdateGuidePay).
   const handleAssignGuide = async (sessionId: string, guideId: string) => {
     if (!user) return;
     const guide = guideById.get(guideId);
@@ -415,8 +409,8 @@ export default function DispatchPage() {
       user_id: user.id,
       status: 'accepted',
       responded_at: new Date().toISOString(),
-      base_pay: guide?.base_rate ?? 0,
-      bonus: 0,
+      base_pay: guide?.base_rate ?? null,
+      bonus: null,
       checkin_time: checkinTime(session?.start_time ?? null),
     });
     await loadData();
@@ -432,8 +426,8 @@ export default function DispatchPage() {
   // Moves a session from one guide straight to another in one action — remove-then-add would
   // leave a moment where the session shows no guide at all, and would need two separate confirms.
   // The new row lands with status 'accepted' just like a fresh assignment (base_pay pre-filled
-  // from the NEW guide's own base_rate, same as a plain assignment), so the calendar/WhatsApp send
-  // below renders for the new guide immediately, no extra step required.
+  // from the NEW guide's own base_rate WHEN they have one, else left null — see handleAssignGuide),
+  // so the calendar/WhatsApp send below renders for the new guide immediately, no extra step.
   const handleReassignGuide = async (sessionId: string, fromGuideId: string, toGuideId: string) => {
     if (!user || fromGuideId === toGuideId) return;
     await unallotGuideFromSession(sessionId, fromGuideId);
@@ -447,8 +441,8 @@ export default function DispatchPage() {
       status: 'accepted',
       responded_at: new Date().toISOString(),
       reassigned_from: fromGuideId,
-      base_pay: toGuide?.base_rate ?? 0,
-      bonus: 0,
+      base_pay: toGuide?.base_rate ?? null,
+      bonus: null,
       checkin_time: checkinTime(session?.start_time ?? null),
     });
     await loadData();
@@ -456,43 +450,15 @@ export default function DispatchPage() {
 
   // Owner can edit a guide's pay at any time, not just at assignment — a small single-row write,
   // awaited directly (same pattern as the lock toggle elsewhere in this app), then a targeted
-  // roster refetch so the edit reflects immediately without a full page reload.
-  const handleUpdateGuidePay = async (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number) => {
+  // roster refetch so the edit reflects immediately without a full page reload. `value: null`
+  // clears the field back to "not tracked" — pay is never required, and a blank field must stay
+  // genuinely blank rather than being coerced to a real €0.
+  const handleUpdateGuidePay = async (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number | null) => {
     if (!user) return;
     await supabase.from('session_guides')
       .update({ [field]: value })
       .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
     await refreshSessionGuides();
-  };
-
-  // Builds the calendar event's title/description for one guide on one session — the ONE place
-  // this wording is assembled, so the initial send and every later update always match.
-  // "option name" is the first linked booking's own option_name (falling back to the session
-  // label) — the guide-facing name, never the internal product code.
-  const buildCalendarEventContent = (session: TourSession, sessionGuide: SessionGuideRow) => {
-    const optionName = sessionIdToBookings.get(session.id)?.[0]?.option_name || session.label || 'Tour';
-    const tourTime = session.start_time || '—';
-    const checkin = sessionGuide.checkin_time || checkinTime(session.start_time) || tourTime;
-    const title = `Scenic Zest — ${optionName} · Check-in ${checkin} (Tour ${tourTime})`;
-    const dateLabel = new Date(`${session.tour_date}T00:00:00`)
-      .toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    const description = [optionName, dateLabel, `Check-in ${checkin}`, session.notes].filter(Boolean).join('\n');
-    return { title, description };
-  };
-
-  // Best-effort: pushes the updated title/start/end to a guide's already-sent invite, if any,
-  // after the tour time or their own check-in time changes (sendUpdates=all on the Apps Script
-  // side notifies them). A failure here must never block the tour-time/check-in-time save that
-  // already happened by the time this runs — it only surfaces as a toast.
-  const pushCalendarUpdate = async (session: TourSession, sg: SessionGuideRow) => {
-    if (!sg.calendar_event_id || !session.start_time) return;
-    try {
-      const { title, description } = buildCalendarEventContent(session, sg);
-      const { startISO, endISO } = tourSessionWindowIso(session.tour_date, session.start_time);
-      await updateCalendarEvent({ eventId: sg.calendar_event_id, title, description, startISO, endISO });
-    } catch {
-      toast.error(`Calendar invite for ${guideById.get(sg.guide_id)?.name || 'a guide'} may be out of date — try Send again.`);
-    }
   };
 
   // Owner override of one guide's own check-in time on this session (e.g. a coordinator arriving
@@ -505,11 +471,6 @@ export default function DispatchPage() {
     await supabase.from('session_guides')
       .update({ checkin_time: normalized })
       .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
-    const session = sessions.find(s => s.id === sessionId);
-    const sg = sessionGuides.find(r => r.session_id === sessionId && r.guide_id === guideId);
-    if (session && sg?.calendar_event_id) {
-      await pushCalendarUpdate(session, { ...sg, checkin_time: normalized });
-    }
     await refreshSessionGuides();
   };
 
@@ -528,14 +489,13 @@ export default function DispatchPage() {
     if (!newStartTime || newStartTime === oldStartTime || !session) return;
 
     await supabase.from('tour_sessions').update({ start_time: newStartTime }).eq('id', sessionId);
-    const newSession: TourSession = { ...session, start_time: newStartTime };
 
     const oldDefault = checkinTime(oldStartTime);
     const newDefault = checkinTime(newStartTime);
-    const sessionRows = sessionGuides.filter(sg => sg.session_id === sessionId && sg.status === 'accepted');
-    const onDefault = sessionRows.filter(sg => !sg.checkin_time || sg.checkin_time === oldDefault);
+    const onDefault = sessionGuides.filter(sg =>
+      sg.session_id === sessionId && sg.status === 'accepted' && (!sg.checkin_time || sg.checkin_time === oldDefault)
+    );
 
-    let recomputed = false;
     if (newDefault && onDefault.length > 0 && confirm(
       `Update check-in time for ${onDefault.length} guide${onDefault.length !== 1 ? 's' : ''} still on the default (tour − 15 min) to match the new tour time? Guides with a manually-set check-in time won't be touched.`
     )) {
@@ -543,86 +503,26 @@ export default function DispatchPage() {
         supabase.from('session_guides').update({ checkin_time: newDefault })
           .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', sg.guide_id)
       ));
-      recomputed = true;
     }
-
-    // Push the new tour time — and, for guides just recomputed above, their new check-in time —
-    // to any already-sent invite, so it stays correct with zero extra taps from the owner.
-    const onDefaultIds = new Set(onDefault.map(sg => sg.guide_id));
-    await Promise.all(sessionRows.filter(sg => sg.calendar_event_id).map(sg => pushCalendarUpdate(
-      newSession,
-      recomputed && onDefaultIds.has(sg.guide_id) ? { ...sg, checkin_time: newDefault } : sg
-    )));
-
     await loadData();
   };
 
-  // Owner-only: sends a real Google Calendar invite for one assigned guide, via the Apps Script
-  // web app (lib/calendarSync.ts). The returned eventId is stored on the guide's session_guides
-  // row so a later tour-time/check-in-time edit can PATCH the same event instead of creating a
-  // duplicate (see the two handlers above). Never marks the invite as sent unless the call
-  // actually succeeds — a failure surfaces as a toast and never touches calendar_event_id, per
-  // "handle failures gracefully... never block the rest of the UI".
-  const handleSendCalendarInvite = async (sessionId: string, guideId: string) => {
-    if (!user) return;
-    const session = sessions.find(s => s.id === sessionId);
-    const guide = guideById.get(guideId);
-    const sg = sessionGuides.find(r => r.session_id === sessionId && r.guide_id === guideId);
-    if (!session || !sg) return;
-    if (!guide?.email) { toast.error(`${guide?.name || 'This guide'} has no email on file — add one to send an invite.`); return; }
-    if (!session.start_time) { toast.error('Set a tour time before sending a calendar invite.'); return; }
-
-    setSendingInviteKey(`${sessionId}:${guideId}`);
-    try {
-      const { title, description } = buildCalendarEventContent(session, sg);
-      const { startISO, endISO } = tourSessionWindowIso(session.tour_date, session.start_time);
-      const eventId = await createCalendarEvent({ title, description, startISO, endISO, guideEmail: guide.email });
-      await supabase.from('session_guides').update({ calendar_event_id: eventId, calendar_response: null })
-        .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
-      toast.success(`Calendar invite sent to ${guide.name}`);
-      await refreshSessionGuides();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to send calendar invite');
-    } finally {
-      setSendingInviteKey(null);
-    }
-  };
-
-  // Owner-only: polls the Apps Script "status" action for every guide on this session who already
-  // has a calendar_event_id, matches the response by email, and persists it — so a decline shows
-  // as a clear badge (the owner's cue to reassign) without opening Google Calendar. Each guide's
-  // status check is independently best-effort — one failure never blocks the others.
-  const handleRefreshCalendarStatus = async (sessionId: string) => {
-    if (!user) return;
-    const rows = sessionGuides.filter(sg => sg.session_id === sessionId && sg.status === 'accepted' && sg.calendar_event_id);
-    if (rows.length === 0) { toast.error('No calendar invites sent yet for this session.'); return; }
-    setCheckingStatusSessionId(sessionId);
-    try {
-      await Promise.all(rows.map(async sg => {
-        const guide = guideById.get(sg.guide_id);
-        if (!guide?.email || !sg.calendar_event_id) return;
-        try {
-          const attendees = await getCalendarEventStatus(sg.calendar_event_id);
-          const mine = attendees.find(a => a.email.toLowerCase() === guide.email!.toLowerCase());
-          await supabase.from('session_guides').update({ calendar_response: mine?.response || 'needsAction' })
-            .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', sg.guide_id);
-        } catch {
-          // best-effort per guide — one failed status check must not block the others
-        }
-      }));
-      await refreshSessionGuides();
-    } catch {
-      toast.error('Failed to refresh calendar status');
-    } finally {
-      setCheckingStatusSessionId(null);
-    }
-  };
-
-  // Builds the calendar invite + a matching WhatsApp confirmation for a confirmed ('accepted')
-  // guide — thin wrapper around the shared builder (lib/tourInvites.ts) so TodayToursPage.tsx
-  // sends the exact same wording/links from its own assigned-guide view.
-  const buildInviteLinks = (session: TourSession, guide: Guide | undefined, pax: number) =>
-    buildGuideInviteLinks(session, guide, pax, profile?.company_name);
+  // Builds the "Send Calendar Invite" (Google Calendar render-URL) + WhatsApp links for one
+  // guide's accepted assignment — thin wrapper around the shared builder (lib/tourInvites.ts) so
+  // TodayToursPage.tsx sends the exact same wording/links from its own assigned-guide view.
+  // Threads THIS guide's own session_guides row through so the description carries their own pay
+  // and check-in-time override only — never another guide's.
+  const buildInviteLinks = (session: TourSession, guide: Guide | undefined, sg: SessionGuideRow, pax: number) =>
+    buildGuideInviteLinks(
+      session,
+      { ...guide, base_pay: sg.base_pay, bonus: sg.bonus },
+      pax,
+      profile?.company_name,
+      {
+        checkinTimeOverride: sg.checkin_time,
+        optionName: sessionIdToBookings.get(session.id)?.[0]?.option_name || session.label,
+      }
+    );
 
   return (
     <div className="p-4 md:p-8 pb-32 max-w-6xl mx-auto space-y-8 animate-fade-in">
@@ -826,8 +726,32 @@ export default function DispatchPage() {
                   const assignedGuideIds = sGuideRows.map(r => r.guide_id);
                   const isEditingLabel = editingLabelId === session.id;
                   // Owner-visible total (task 5: "show owner totals") — sum of every assigned
-                  // guide's base_pay+bonus on this session, regardless of status badge.
+                  // guide's base_pay+bonus on this session, regardless of status badge. A guide
+                  // with no pay tracked (both null) contributes 0, same as being excluded — pay
+                  // is never forced, so this total only ever reflects what was actually entered.
                   const sGuideCost = sGuideRows.reduce((s, sg) => s + (Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0), 0);
+
+                  // ONE calendar invite per session, covering every 'accepted' guide — a single
+                  // guide gets their own pay in the description (buildGuideInviteLinks); two or
+                  // more guides get ONE shared event with everyone as a guest and NO pay at all
+                  // (buildSharedGuideInviteLink never even accepts pay figures), since every
+                  // invited guest would otherwise see the same description.
+                  const acceptedRows = sGuideRows.filter(sg => sg.status === 'accepted');
+                  const sessionCalendarInvite = acceptedRows.length === 0 ? null
+                    : acceptedRows.length === 1
+                      ? (() => {
+                          const sg = acceptedRows[0];
+                          const { calendarUrl, hasGuestEmail } = buildInviteLinks(session, guideById.get(sg.guide_id), sg, sPax);
+                          return { calendarUrl, allHaveEmail: hasGuestEmail };
+                        })()
+                      : (() => {
+                          const { calendarUrl, allHaveEmail } = buildSharedGuideInviteLink(
+                            session,
+                            acceptedRows.map(sg => guideById.get(sg.guide_id) || {}),
+                            { optionName: sessionIdToBookings.get(session.id)?.[0]?.option_name || session.label }
+                          );
+                          return { calendarUrl, allHaveEmail };
+                        })();
 
                   return (
                     <div key={session.id} className="aurelia-card p-5 border border-border space-y-4">
@@ -889,21 +813,9 @@ export default function DispatchPage() {
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {sGuideRows.some(sg => sg.calendar_event_id) && (
-                            <button
-                              onClick={() => handleRefreshCalendarStatus(session.id)}
-                              disabled={checkingStatusSessionId === session.id}
-                              className="text-muted-foreground hover:text-gold p-1.5 disabled:opacity-50"
-                              title="Check invite responses (accepted / declined)"
-                            >
-                              <RefreshCw size={16} className={checkingStatusSessionId === session.id ? 'animate-spin' : ''} />
-                            </button>
-                          )}
-                          <button onClick={() => handleDeleteSession(session)} className="text-muted-foreground hover:text-red-700 p-1.5" title="Delete session">
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
+                        <button onClick={() => handleDeleteSession(session)} className="text-muted-foreground hover:text-red-700 p-1.5 shrink-0" title="Delete session">
+                          <Trash2 size={16} />
+                        </button>
                       </div>
 
                       <div>
@@ -915,9 +827,12 @@ export default function DispatchPage() {
                             const guide = guideById.get(sg.guide_id);
                             const fromGuide = sg.reassigned_from ? guideById.get(sg.reassigned_from) : null;
                             const badge = STATUS_BADGE[sg.status] || STATUS_BADGE.offered;
-                            const { calendarUrl, whatsappUrl, hasGuestEmail } = sg.status === 'accepted'
-                              ? buildInviteLinks(session, guide, sPax)
-                              : { calendarUrl: '', whatsappUrl: null as string | null, hasGuestEmail: false };
+                            // Only whatsappUrl is used per-guide now — the calendar invite is a
+                            // single session-level action below (see sessionCalendarInvite), so
+                            // one event covers every assigned guide instead of one per guide.
+                            const { whatsappUrl } = sg.status === 'accepted'
+                              ? buildInviteLinks(session, guide, sg, sPax)
+                              : { whatsappUrl: null as string | null };
                             return (
                               <div key={sg.guide_id} className="flex flex-wrap items-center justify-between gap-2 bg-muted rounded-lg px-3 py-2">
                                 <div className="flex items-center gap-2 min-w-0 flex-wrap">
@@ -942,20 +857,26 @@ export default function DispatchPage() {
                                     <X size={13} />
                                   </button>
                                 </div>
-                                {/* Editable pay — pre-filled from guide.base_rate at assignment (see
-                                    handleAssignGuide), adjustable here anytime. Uncontrolled inputs
-                                    keyed off the current server value so an external change (e.g. a
-                                    realtime refresh) remounts them with the fresh figure instead of
-                                    silently going stale, without writing on every keystroke. */}
+                                {/* Editable pay — pre-fills from guide.base_rate at assignment ONLY
+                                    when the guide actually has one (see handleAssignGuide); never
+                                    faked to €0. Genuinely optional: a company that doesn't track
+                                    guide cost just leaves both blank forever. Blank ("") in the
+                                    input == null in the DB, shown as "—" in the total — never a
+                                    real, confirmed-looking €0. Uncontrolled inputs keyed off the
+                                    current server value so an external change (e.g. a realtime
+                                    refresh) remounts them with the fresh figure, without writing
+                                    on every keystroke. */}
                                 <div className="w-full flex items-center gap-2 pt-1.5 mt-0.5 border-t border-border" onClick={e => e.stopPropagation()}>
                                   <label className="text-[9px] font-bold text-muted-foreground uppercase shrink-0">Base</label>
                                   <input
                                     key={`base-${sg.guide_id}-${sg.base_pay}`}
                                     type="number"
-                                    defaultValue={sg.base_pay ?? 0}
+                                    placeholder="—"
+                                    defaultValue={sg.base_pay ?? ''}
                                     onBlur={e => {
-                                      const v = Number(e.target.value) || 0;
-                                      if (v !== (sg.base_pay ?? 0)) handleUpdateGuidePay(session.id, sg.guide_id, 'base_pay', v);
+                                      const raw = e.target.value.trim();
+                                      const v = raw === '' ? null : Number(raw);
+                                      if (v !== sg.base_pay) handleUpdateGuidePay(session.id, sg.guide_id, 'base_pay', v);
                                     }}
                                     className="aurelia-input w-20 text-xs py-1"
                                   />
@@ -963,15 +884,19 @@ export default function DispatchPage() {
                                   <input
                                     key={`bonus-${sg.guide_id}-${sg.bonus}`}
                                     type="number"
-                                    defaultValue={sg.bonus ?? 0}
+                                    placeholder="—"
+                                    defaultValue={sg.bonus ?? ''}
                                     onBlur={e => {
-                                      const v = Number(e.target.value) || 0;
-                                      if (v !== (sg.bonus ?? 0)) handleUpdateGuidePay(session.id, sg.guide_id, 'bonus', v);
+                                      const raw = e.target.value.trim();
+                                      const v = raw === '' ? null : Number(raw);
+                                      if (v !== sg.bonus) handleUpdateGuidePay(session.id, sg.guide_id, 'bonus', v);
                                     }}
                                     className="aurelia-input w-16 text-xs py-1"
                                   />
                                   <span className="text-xs font-bold text-gold ml-auto shrink-0">
-                                    €{((Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0)).toLocaleString()}
+                                    {sg.base_pay == null && sg.bonus == null
+                                      ? '—'
+                                      : `€${((Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0)).toLocaleString()}`}
                                   </span>
                                 </div>
 
@@ -1018,17 +943,6 @@ export default function DispatchPage() {
                                 )}
                                 {sg.status === 'accepted' && (
                                   <div className="w-full flex flex-wrap items-center gap-2 pt-1.5 mt-0.5 border-t border-border">
-                                    <a
-                                      href={calendarUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-border text-muted-foreground hover:text-gold hover:border-gold/30 transition-colors inline-flex items-center gap-1"
-                                    >
-                                      <CalendarPlus size={11} /> Add to Calendar
-                                    </a>
-                                    {!hasGuestEmail && (
-                                      <span className="text-[9px] text-muted-foreground italic">add guide email to auto-invite</span>
-                                    )}
                                     {whatsappUrl ? (
                                       <a
                                         href={whatsappUrl}
@@ -1052,42 +966,29 @@ export default function DispatchPage() {
                                     )}
                                   </div>
                                 )}
-                                {/* Real Google Calendar invite via the Apps Script web app (see
-                                    lib/calendarSync.ts) — separate from the "Add to Calendar" link
-                                    above, which just opens a pre-filled Google Calendar tab. This
-                                    one actually creates the event and invites the guide directly. */}
-                                {sg.status === 'accepted' && (
-                                  <div className="w-full flex flex-wrap items-center gap-2 pt-1.5 mt-0.5 border-t border-border">
-                                    {sg.calendar_event_id && (
-                                      <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg inline-flex items-center gap-1 ${
-                                        sg.calendar_response === 'declined' ? 'bg-red-600/15 text-red-700'
-                                          : sg.calendar_response === 'accepted' ? 'bg-green-600/15 text-green-700'
-                                          : 'bg-amber-600/15 text-amber-700'
-                                      }`}>
-                                        {sg.calendar_response === 'declined' ? <CalendarX size={11} /> : <CalendarCheck size={11} />}
-                                        {sg.calendar_response === 'declined' ? 'Declined' : sg.calendar_response === 'accepted' ? 'Accepted' : 'Pending'}
-                                      </span>
-                                    )}
-                                    <button
-                                      onClick={() => handleSendCalendarInvite(session.id, sg.guide_id)}
-                                      disabled={sendingInviteKey === `${session.id}:${sg.guide_id}` || !guide?.email}
-                                      title={guide?.email ? undefined : 'This guide has no email on file'}
-                                      className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-gold/30 text-gold hover:bg-gold/10 transition-colors inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
-                                    >
-                                      <Send size={11} />
-                                      {sendingInviteKey === `${session.id}:${sg.guide_id}`
-                                        ? 'Sending…'
-                                        : sg.calendar_event_id ? 'Resend invite' : 'Send calendar invite'}
-                                    </button>
-                                    {!guide?.email && (
-                                      <span className="text-[9px] text-muted-foreground italic">add guide email to send</span>
-                                    )}
-                                  </div>
-                                )}
                               </div>
                             );
                           })}
                         </div>
+
+                        {sessionCalendarInvite && (
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <a
+                              href={forceBrowserUrl(sessionCalendarInvite.calendarUrl)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-border text-muted-foreground hover:text-gold hover:border-gold/30 transition-colors inline-flex items-center gap-1"
+                            >
+                              <CalendarPlus size={11} />
+                              {acceptedRows.length > 1 ? `Send Calendar Invite (${acceptedRows.length} guides)` : 'Send Calendar Invite'}
+                            </a>
+                            {!sessionCalendarInvite.allHaveEmail && (
+                              <span className="text-[9px] text-muted-foreground italic">
+                                {acceptedRows.length > 1 ? 'some guides missing email — add to auto-invite them too' : 'add guide email to auto-invite'}
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         <select
                           value=""
