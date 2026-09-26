@@ -939,6 +939,8 @@ export type Database = {
         Row: {
           base_pay: number | null
           bonus: number | null
+          calendar_event_id: string | null
+          calendar_response: string | null
           checkin_time: string | null
           guide_id: string
           offered_at: string | null
@@ -952,6 +954,8 @@ export type Database = {
         Insert: {
           base_pay?: number | null
           bonus?: number | null
+          calendar_event_id?: string | null
+          calendar_response?: string | null
           checkin_time?: string | null
           guide_id: string
           offered_at?: string | null
@@ -965,6 +969,8 @@ export type Database = {
         Update: {
           base_pay?: number | null
           bonus?: number | null
+          calendar_event_id?: string | null
+          calendar_response?: string | null
           checkin_time?: string | null
           guide_id?: string
           offered_at?: string | null

@@ -2,10 +2,11 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat, Send, RefreshCw, CalendarCheck, CalendarX } from 'lucide-react';
 import { buildGuideInviteLinks } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
 import { localDateStr, shortProductCode, isCancelled, checkinTime } from '@/lib/utils';
+import { createCalendarEvent, updateCalendarEvent, getCalendarEventStatus, tourSessionWindowIso } from '@/lib/calendarSync';
 
 interface Booking {
   id: string;
@@ -49,6 +50,8 @@ interface SessionGuideRow {
   base_pay: number | null;
   bonus: number | null;
   checkin_time: string | null;
+  calendar_event_id: string | null;
+  calendar_response: string | null;
 }
 
 interface Guide {
@@ -118,6 +121,11 @@ export default function DispatchPage() {
   // Which guide row currently has its inline "Reassign to…" picker open — keyed
   // `${sessionId}:${guideId}` so two sessions' rows never collide.
   const [reassigningKey, setReassigningKey] = useState<string | null>(null);
+
+  // In-flight calendar-sync actions, keyed `${sessionId}:${guideId}` (send) / `sessionId` (status
+  // refresh) — drives each button's own loading/disabled state without a shared spinner.
+  const [sendingInviteKey, setSendingInviteKey] = useState<string | null>(null);
+  const [checkingStatusSessionId, setCheckingStatusSessionId] = useState<string | null>(null);
 
   // Guards every setState below against firing after this page has unmounted, or after the
   // selected date has moved on mid-fetch.
@@ -451,6 +459,36 @@ export default function DispatchPage() {
     await refreshSessionGuides();
   };
 
+  // Builds the calendar event's title/description for one guide on one session — the ONE place
+  // this wording is assembled, so the initial send and every later update always match.
+  // "option name" is the first linked booking's own option_name (falling back to the session
+  // label) — the guide-facing name, never the internal product code.
+  const buildCalendarEventContent = (session: TourSession, sessionGuide: SessionGuideRow) => {
+    const optionName = sessionIdToBookings.get(session.id)?.[0]?.option_name || session.label || 'Tour';
+    const tourTime = session.start_time || '—';
+    const checkin = sessionGuide.checkin_time || checkinTime(session.start_time) || tourTime;
+    const title = `Scenic Zest — ${optionName} · Check-in ${checkin} (Tour ${tourTime})`;
+    const dateLabel = new Date(`${session.tour_date}T00:00:00`)
+      .toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const description = [optionName, dateLabel, `Check-in ${checkin}`, session.notes].filter(Boolean).join('\n');
+    return { title, description };
+  };
+
+  // Best-effort: pushes the updated title/start/end to a guide's already-sent invite, if any,
+  // after the tour time or their own check-in time changes (sendUpdates=all on the Apps Script
+  // side notifies them). A failure here must never block the tour-time/check-in-time save that
+  // already happened by the time this runs — it only surfaces as a toast.
+  const pushCalendarUpdate = async (session: TourSession, sg: SessionGuideRow) => {
+    if (!sg.calendar_event_id || !session.start_time) return;
+    try {
+      const { title, description } = buildCalendarEventContent(session, sg);
+      const { startISO, endISO } = tourSessionWindowIso(session.tour_date, session.start_time);
+      await updateCalendarEvent({ eventId: sg.calendar_event_id, title, description, startISO, endISO });
+    } catch {
+      toast.error(`Calendar invite for ${guideById.get(sg.guide_id)?.name || 'a guide'} may be out of date — try Send again.`);
+    }
+  };
+
   // Owner override of one guide's own check-in time on this session (e.g. a coordinator arriving
   // earlier than the rest of the team). Same small-write-then-targeted-refetch pattern as pay.
   const handleUpdateGuideCheckinTime = async (sessionId: string, guideId: string, value: string) => {
@@ -458,6 +496,11 @@ export default function DispatchPage() {
     await supabase.from('session_guides')
       .update({ checkin_time: value || null })
       .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
+    const session = sessions.find(s => s.id === sessionId);
+    const sg = sessionGuides.find(r => r.session_id === sessionId && r.guide_id === guideId);
+    if (session && sg?.calendar_event_id) {
+      await pushCalendarUpdate(session, { ...sg, checkin_time: value || null });
+    }
     await refreshSessionGuides();
   };
 
@@ -470,16 +513,17 @@ export default function DispatchPage() {
     if (!user) return;
     const session = sessions.find(s => s.id === sessionId);
     const oldStartTime = session?.start_time ?? null;
-    if (!newStartTime || newStartTime === oldStartTime) return;
+    if (!newStartTime || newStartTime === oldStartTime || !session) return;
 
     await supabase.from('tour_sessions').update({ start_time: newStartTime }).eq('id', sessionId);
+    const newSession: TourSession = { ...session, start_time: newStartTime };
 
     const oldDefault = checkinTime(oldStartTime);
     const newDefault = checkinTime(newStartTime);
-    const onDefault = sessionGuides.filter(sg =>
-      sg.session_id === sessionId && sg.status === 'accepted' && (!sg.checkin_time || sg.checkin_time === oldDefault)
-    );
+    const sessionRows = sessionGuides.filter(sg => sg.session_id === sessionId && sg.status === 'accepted');
+    const onDefault = sessionRows.filter(sg => !sg.checkin_time || sg.checkin_time === oldDefault);
 
+    let recomputed = false;
     if (newDefault && onDefault.length > 0 && confirm(
       `Update check-in time for ${onDefault.length} guide${onDefault.length !== 1 ? 's' : ''} still on the default (tour − 15 min) to match the new tour time? Guides with a manually-set check-in time won't be touched.`
     )) {
@@ -487,8 +531,79 @@ export default function DispatchPage() {
         supabase.from('session_guides').update({ checkin_time: newDefault })
           .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', sg.guide_id)
       ));
+      recomputed = true;
     }
+
+    // Push the new tour time — and, for guides just recomputed above, their new check-in time —
+    // to any already-sent invite, so it stays correct with zero extra taps from the owner.
+    const onDefaultIds = new Set(onDefault.map(sg => sg.guide_id));
+    await Promise.all(sessionRows.filter(sg => sg.calendar_event_id).map(sg => pushCalendarUpdate(
+      newSession,
+      recomputed && onDefaultIds.has(sg.guide_id) ? { ...sg, checkin_time: newDefault } : sg
+    )));
+
     await loadData();
+  };
+
+  // Owner-only: sends a real Google Calendar invite for one assigned guide, via the Apps Script
+  // web app (lib/calendarSync.ts). The returned eventId is stored on the guide's session_guides
+  // row so a later tour-time/check-in-time edit can PATCH the same event instead of creating a
+  // duplicate (see the two handlers above). Never marks the invite as sent unless the call
+  // actually succeeds — a failure surfaces as a toast and never touches calendar_event_id, per
+  // "handle failures gracefully... never block the rest of the UI".
+  const handleSendCalendarInvite = async (sessionId: string, guideId: string) => {
+    if (!user) return;
+    const session = sessions.find(s => s.id === sessionId);
+    const guide = guideById.get(guideId);
+    const sg = sessionGuides.find(r => r.session_id === sessionId && r.guide_id === guideId);
+    if (!session || !sg) return;
+    if (!guide?.email) { toast.error(`${guide?.name || 'This guide'} has no email on file — add one to send an invite.`); return; }
+    if (!session.start_time) { toast.error('Set a tour time before sending a calendar invite.'); return; }
+
+    setSendingInviteKey(`${sessionId}:${guideId}`);
+    try {
+      const { title, description } = buildCalendarEventContent(session, sg);
+      const { startISO, endISO } = tourSessionWindowIso(session.tour_date, session.start_time);
+      const eventId = await createCalendarEvent({ title, description, startISO, endISO, guideEmail: guide.email });
+      await supabase.from('session_guides').update({ calendar_event_id: eventId, calendar_response: null })
+        .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
+      toast.success(`Calendar invite sent to ${guide.name}`);
+      await refreshSessionGuides();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send calendar invite');
+    } finally {
+      setSendingInviteKey(null);
+    }
+  };
+
+  // Owner-only: polls the Apps Script "status" action for every guide on this session who already
+  // has a calendar_event_id, matches the response by email, and persists it — so a decline shows
+  // as a clear badge (the owner's cue to reassign) without opening Google Calendar. Each guide's
+  // status check is independently best-effort — one failure never blocks the others.
+  const handleRefreshCalendarStatus = async (sessionId: string) => {
+    if (!user) return;
+    const rows = sessionGuides.filter(sg => sg.session_id === sessionId && sg.status === 'accepted' && sg.calendar_event_id);
+    if (rows.length === 0) { toast.error('No calendar invites sent yet for this session.'); return; }
+    setCheckingStatusSessionId(sessionId);
+    try {
+      await Promise.all(rows.map(async sg => {
+        const guide = guideById.get(sg.guide_id);
+        if (!guide?.email || !sg.calendar_event_id) return;
+        try {
+          const attendees = await getCalendarEventStatus(sg.calendar_event_id);
+          const mine = attendees.find(a => a.email.toLowerCase() === guide.email!.toLowerCase());
+          await supabase.from('session_guides').update({ calendar_response: mine?.response || 'needsAction' })
+            .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', sg.guide_id);
+        } catch {
+          // best-effort per guide — one failed status check must not block the others
+        }
+      }));
+      await refreshSessionGuides();
+    } catch {
+      toast.error('Failed to refresh calendar status');
+    } finally {
+      setCheckingStatusSessionId(null);
+    }
   };
 
   // Builds the calendar invite + a matching WhatsApp confirmation for a confirmed ('accepted')
@@ -762,9 +877,21 @@ export default function DispatchPage() {
                             )}
                           </div>
                         </div>
-                        <button onClick={() => handleDeleteSession(session)} className="text-muted-foreground hover:text-red-700 p-1.5 shrink-0" title="Delete session">
-                          <Trash2 size={16} />
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {sGuideRows.some(sg => sg.calendar_event_id) && (
+                            <button
+                              onClick={() => handleRefreshCalendarStatus(session.id)}
+                              disabled={checkingStatusSessionId === session.id}
+                              className="text-muted-foreground hover:text-gold p-1.5 disabled:opacity-50"
+                              title="Check invite responses (accepted / declined)"
+                            >
+                              <RefreshCw size={16} className={checkingStatusSessionId === session.id ? 'animate-spin' : ''} />
+                            </button>
+                          )}
+                          <button onClick={() => handleDeleteSession(session)} className="text-muted-foreground hover:text-red-700 p-1.5" title="Delete session">
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </div>
 
                       <div>
@@ -910,6 +1037,38 @@ export default function DispatchPage() {
                                         </button>
                                         <span className="text-[9px] text-muted-foreground italic">no WhatsApp number</span>
                                       </span>
+                                    )}
+                                  </div>
+                                )}
+                                {/* Real Google Calendar invite via the Apps Script web app (see
+                                    lib/calendarSync.ts) — separate from the "Add to Calendar" link
+                                    above, which just opens a pre-filled Google Calendar tab. This
+                                    one actually creates the event and invites the guide directly. */}
+                                {sg.status === 'accepted' && (
+                                  <div className="w-full flex flex-wrap items-center gap-2 pt-1.5 mt-0.5 border-t border-border">
+                                    {sg.calendar_event_id && (
+                                      <span className={`text-[10px] font-bold px-2.5 py-1 rounded-lg inline-flex items-center gap-1 ${
+                                        sg.calendar_response === 'declined' ? 'bg-red-600/15 text-red-700'
+                                          : sg.calendar_response === 'accepted' ? 'bg-green-600/15 text-green-700'
+                                          : 'bg-amber-600/15 text-amber-700'
+                                      }`}>
+                                        {sg.calendar_response === 'declined' ? <CalendarX size={11} /> : <CalendarCheck size={11} />}
+                                        {sg.calendar_response === 'declined' ? 'Declined' : sg.calendar_response === 'accepted' ? 'Accepted' : 'Pending'}
+                                      </span>
+                                    )}
+                                    <button
+                                      onClick={() => handleSendCalendarInvite(session.id, sg.guide_id)}
+                                      disabled={sendingInviteKey === `${session.id}:${sg.guide_id}` || !guide?.email}
+                                      title={guide?.email ? undefined : 'This guide has no email on file'}
+                                      className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-gold/30 text-gold hover:bg-gold/10 transition-colors inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                      <Send size={11} />
+                                      {sendingInviteKey === `${session.id}:${sg.guide_id}`
+                                        ? 'Sending…'
+                                        : sg.calendar_event_id ? 'Resend invite' : 'Send calendar invite'}
+                                    </button>
+                                    {!guide?.email && (
+                                      <span className="text-[9px] text-muted-foreground italic">add guide email to send</span>
                                     )}
                                   </div>
                                 )}
