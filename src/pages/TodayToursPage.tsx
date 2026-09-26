@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
 import { matchBookingsToSessions, autoPopulateSessionBookings, pickBestSessionForBooking } from '@/lib/sessionAutoPopulate';
-import { localDateStr, checkinTime } from '@/lib/utils';
+import { localDateStr, checkinTime, normalizeTime } from '@/lib/utils';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
@@ -676,15 +676,18 @@ export default function TodayToursPage() {
   // arriving earlier than the rest of the team).
   const handleUpdateGuideCheckinTime = async (sessionId: string, guideId: string, value: string) => {
     if (!user) return;
+    // Native <input type="time"> already emits "HH:MM", but normalizing here too closes off any
+    // other future caller of this handler from writing a non-"HH:MM" value.
+    const normalized = normalizeTime(value) || value || null;
     await supabase.from('session_guides')
-      .update({ checkin_time: value || null })
+      .update({ checkin_time: normalized })
       .eq('user_id', user.id)
       .eq('session_id', sessionId)
       .eq('guide_id', guideId);
     const session = sessions.find((s: any) => s.id === sessionId);
     const sg = sessionGuides.find((r: any) => r.session_id === sessionId && r.guide_id === guideId);
     if (session && sg?.calendar_event_id) {
-      await pushCalendarUpdate(session, { ...sg, checkin_time: value || null });
+      await pushCalendarUpdate(session, { ...sg, checkin_time: normalized });
     }
     await refreshSessionGuides();
   };
@@ -694,8 +697,11 @@ export default function TodayToursPage() {
   // never had one set — is offered a one-tap recompute to the NEW default; a guide with a
   // manually-overridden check-in time is left untouched. Mirrors DispatchPage's identical helper
   // so both surfaces behave the same way.
-  const handleUpdateSessionTourTime = async (sessionId: string, newStartTime: string) => {
+  const handleUpdateSessionTourTime = async (sessionId: string, rawStartTime: string) => {
     if (!user) return;
+    // Native <input type="time"> already emits "HH:MM", but normalizing here too closes off any
+    // other future caller of this handler from writing a non-"HH:MM" value.
+    const newStartTime = normalizeTime(rawStartTime) || rawStartTime;
     const session = sessions.find((s: any) => s.id === sessionId);
     const oldStartTime = session?.start_time ?? null;
     if (!newStartTime || newStartTime === oldStartTime || !session) return;

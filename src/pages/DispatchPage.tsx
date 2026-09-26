@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat, Send, RefreshCw, CalendarCheck, CalendarX } from 'lucide-react';
 import { buildGuideInviteLinks } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
-import { localDateStr, shortProductCode, isCancelled, checkinTime } from '@/lib/utils';
+import { localDateStr, shortProductCode, isCancelled, checkinTime, normalizeTime } from '@/lib/utils';
 import { createCalendarEvent, updateCalendarEvent, getCalendarEventStatus, tourSessionWindowIso } from '@/lib/calendarSync';
 
 interface Booking {
@@ -328,10 +328,16 @@ export default function DispatchPage() {
     setCreating(true);
     try {
       const refs = selectedBookingsFlat.map(b => b.booking_ref);
-      const earliestTime = selectedGroups
-        .map(g => g.travel_time)
-        .filter(t => t !== 'No Time')
-        .sort((a, b) => a.localeCompare(b))[0] || selectedGroups[0].travel_time;
+      // Normalize every candidate to "HH:MM" before comparing — the lexicographic sort below only
+      // picks the true earliest time when every value is zero-padded 24h (an un-normalized "9:00"
+      // would otherwise sort AFTER "10:00"). normalizeTime() also drops "No Time"/unparseable
+      // values from contention, same as the previous 'No Time' filter but more robust.
+      const normalizedTimes = selectedGroups
+        .map(g => normalizeTime(g.travel_time))
+        .filter((t): t is string => t !== null);
+      const earliestTime = normalizedTimes.sort((a, b) => a.localeCompare(b))[0]
+        || normalizeTime(selectedGroups[0].travel_time)
+        || selectedGroups[0].travel_time;
 
       const label = newSessionLabel.trim() || defaultLabel;
 
@@ -493,13 +499,16 @@ export default function DispatchPage() {
   // earlier than the rest of the team). Same small-write-then-targeted-refetch pattern as pay.
   const handleUpdateGuideCheckinTime = async (sessionId: string, guideId: string, value: string) => {
     if (!user) return;
+    // Native <input type="time"> already emits "HH:MM", but normalizing here too closes off any
+    // other future caller of this handler from writing a non-"HH:MM" value.
+    const normalized = normalizeTime(value) || value || null;
     await supabase.from('session_guides')
-      .update({ checkin_time: value || null })
+      .update({ checkin_time: normalized })
       .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', guideId);
     const session = sessions.find(s => s.id === sessionId);
     const sg = sessionGuides.find(r => r.session_id === sessionId && r.guide_id === guideId);
     if (session && sg?.calendar_event_id) {
-      await pushCalendarUpdate(session, { ...sg, checkin_time: value || null });
+      await pushCalendarUpdate(session, { ...sg, checkin_time: normalized });
     }
     await refreshSessionGuides();
   };
@@ -509,8 +518,11 @@ export default function DispatchPage() {
   // checkinTime()) — or who was never given one at all — is offered a one-tap recompute to the
   // NEW default. A guide the owner has manually overridden (checkin_time present and NOT equal to
   // the old default) is deliberately left untouched, per the "never overwrite an override" rule.
-  const handleUpdateSessionTourTime = async (sessionId: string, newStartTime: string) => {
+  const handleUpdateSessionTourTime = async (sessionId: string, rawStartTime: string) => {
     if (!user) return;
+    // Native <input type="time"> already emits "HH:MM", but normalizing here too closes off any
+    // other future caller of this handler from writing a non-"HH:MM" value.
+    const newStartTime = normalizeTime(rawStartTime) || rawStartTime;
     const session = sessions.find(s => s.id === sessionId);
     const oldStartTime = session?.start_time ?? null;
     if (!newStartTime || newStartTime === oldStartTime || !session) return;

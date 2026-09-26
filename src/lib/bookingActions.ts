@@ -3,6 +3,7 @@ import type { Booking } from './useBookings';
 import { logChange } from './changeLog';
 import { computeDerivedBookingFields } from './bookingCalc';
 import { PROTECTABLE_BOOKING_FIELDS, addManualOverrides, type ProtectableBookingField } from './bookingOverrides';
+import { normalizeTime } from './utils';
 
 const FIELD_LABELS: Record<ProtectableBookingField, string> = {
   customer_name: 'Customer name',
@@ -53,7 +54,10 @@ export async function saveBooking(
   after: Booking
 ): Promise<SaveBookingResult> {
   const derived = computeDerivedBookingFields(after);
-  const finalFields: Booking = { ...after, ...derived };
+  // BookingPanel's native <input type="time"> already emits "HH:MM", but normalizing here too —
+  // the one write chokepoint for both new bookings and edits — is a zero-cost guarantee against
+  // any other caller of saveBooking ever landing a non-"HH:MM" value.
+  const finalFields: Booking = { ...after, ...derived, travel_time: normalizeTime(after.travel_time) || after.travel_time };
 
   const changedFields = PROTECTABLE_BOOKING_FIELDS.filter(f => before[f] !== finalFields[f]);
   const manual_overrides = addManualOverrides(before.manual_overrides, changedFields);

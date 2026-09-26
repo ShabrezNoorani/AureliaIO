@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isCancelled, shortProductCode, checkinTime } from './utils';
+import { isCancelled, shortProductCode, checkinTime, normalizeTime } from './utils';
 
 describe('isCancelled', () => {
   it('matches the single "CANCELLED" status the DB now writes', () => {
@@ -62,5 +62,52 @@ describe('checkinTime', () => {
 
   it('tolerates a single-digit hour', () => {
     expect(checkinTime('9:00')).toBe('08:45');
+  });
+});
+
+describe('normalizeTime', () => {
+  it('is a no-op for an already-normalized "HH:MM" string', () => {
+    expect(normalizeTime('09:00')).toBe('09:00');
+    expect(normalizeTime('16:30')).toBe('16:30');
+  });
+
+  it('pads a single-digit hour with no minutes lost', () => {
+    expect(normalizeTime('9:05')).toBe('09:05');
+  });
+
+  it('converts 12-hour AM/PM times to 24-hour', () => {
+    expect(normalizeTime('9:00:00 AM')).toBe('09:00');
+    expect(normalizeTime('9:00 AM')).toBe('09:00');
+    expect(normalizeTime('9 AM')).toBe('09:00');
+    expect(normalizeTime('2:30 PM')).toBe('14:30');
+    expect(normalizeTime('2:30pm')).toBe('14:30');
+  });
+
+  it('handles the AM/PM midnight and noon edge cases', () => {
+    expect(normalizeTime('12:00 AM')).toBe('00:00');
+    expect(normalizeTime('12:00 PM')).toBe('12:00');
+  });
+
+  it('strips trailing seconds from an already-24h value', () => {
+    expect(normalizeTime('23:00:00')).toBe('23:00');
+    expect(normalizeTime('9:00:00')).toBe('09:00');
+  });
+
+  it('treats a bare hour with no minutes as :00', () => {
+    expect(normalizeTime('9')).toBe('09:00');
+  });
+
+  it('returns null for anything that is not a recognizable time', () => {
+    expect(normalizeTime('No Time')).toBeNull();
+    expect(normalizeTime('TBD')).toBeNull();
+    expect(normalizeTime('99:00')).toBeNull();
+    expect(normalizeTime('25:00')).toBeNull();
+  });
+
+  it('is null-safe', () => {
+    expect(normalizeTime(null)).toBeNull();
+    expect(normalizeTime(undefined)).toBeNull();
+    expect(normalizeTime('')).toBeNull();
+    expect(normalizeTime('   ')).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabase';
 import { useAuth } from '@/context/AuthContext';
-import { localDateStr } from './utils';
+import { localDateStr, normalizeTime } from './utils';
 
 export interface Booking {
   id?: string;
@@ -125,6 +125,7 @@ export function useBookings() {
     try {
       const { error } = await supabase.from('bookings').insert({
         ...booking,
+        travel_time: normalizeTime(booking.travel_time) || booking.travel_time,
         user_id: user.id,
       });
       if (error) throw error;
@@ -139,7 +140,11 @@ export function useBookings() {
     try {
       const { error } = await supabase
         .from('bookings')
-        .update(booking)
+        .update(
+          booking.travel_time !== undefined
+            ? { ...booking, travel_time: normalizeTime(booking.travel_time) || booking.travel_time }
+            : booking
+        )
         .eq('id', id);
       if (error) throw error;
       await fetchBookings();

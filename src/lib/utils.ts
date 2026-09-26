@@ -43,6 +43,33 @@ export function checkinTime(startTime: string | null | undefined): string | null
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+// Normalizes any reasonably-shaped time string — "9:00:00 AM", "9 AM", "9:00", "09:00", "16:30:00"
+// — to a strict 24-hour "HH:MM" string. This is the ONE place time values get parsed on their way
+// into travel_time/start_time/checkin_time, so a 12-hour-formatted source (a sheet, an API, a CSV)
+// can never reintroduce a non-"HH:MM" value into columns that grouping/merging/auto-populate all
+// key off. Returns null for anything unparseable (a blank cell, "No Time", "TBD") — callers decide
+// the fallback; this never guesses.
+export function normalizeTime(input: string | null | undefined): string | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const match = trimmed.match(/^(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*(am|pm)?$/i);
+  if (!match) return null;
+
+  let h = Number(match[1]);
+  const m = match[2] !== undefined ? Number(match[2]) : 0;
+  const ampm = match[3]?.toLowerCase();
+
+  if (ampm === 'pm' && h < 12) h += 12;
+  if (ampm === 'am' && h === 12) h = 0;
+  // No AM/PM suffix and hour > 23 isn't a valid 24h time at all (e.g. garbage like "99:00").
+  if (!ampm && h > 23) return null;
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 // bookings.product_code comes in two shapes depending on source: older gsheet rows store just the
 // short OTA code ("P13"), newer bokun_email rows store it prefixed with the numeric Bokun product
 // id ("5591586P13"). Always display the trailing short code — never the raw column value or

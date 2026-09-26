@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { localDateStr } from './utils';
+import { localDateStr, normalizeTime } from './utils';
 import { stripManualOverrides } from './bookingOverrides';
 
 // ──────────── Helpers ────────────
@@ -242,7 +242,10 @@ export async function syncMasterData(
       customer_name: cols[6] || '',
       customer_phone: cols[7] || '',
       promo_code: cols[8] || '',
-      travel_time: cols[10] || '',
+      // normalizeTime() converts a 12-hour-formatted sheet cell ("9:00:00 AM") to strict 24h
+      // "HH:MM" — falls back to the raw cell only if it's genuinely unparseable (blank, "TBD"),
+      // matching the previous behavior for that case rather than blanking a value outright.
+      travel_time: normalizeTime(cols[10]) || cols[10] || '',
       channel,
       pax_adult: parseNum(cols[12]),
       pax_youth: parseNum(cols[13]),

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { X, Upload, Download } from 'lucide-react';
 import type { Booking } from '@/lib/useBookings';
 import { EMPTY_BOOKING, COMMISSION_DEFAULTS } from '@/lib/useBookings';
+import { normalizeTime } from '@/lib/utils';
 
 interface CsvUploadModalProps {
   onImport: (bookings: Booking[]) => Promise<{ inserted: number; skipped: number }>;
@@ -12,6 +13,7 @@ const FIELD_MAP = [
   { key: 'booking_ref', label: 'Booking Ref' },
   { key: 'ext_ref', label: 'Ext Ref' },
   { key: 'travel_date', label: 'Travel Date' },
+  { key: 'travel_time', label: 'Travel Time' },
   { key: 'booking_date', label: 'Booking Date' },
   { key: 'product_name', label: 'Product Name' },
   { key: 'option_name', label: 'Option Name' },
@@ -115,6 +117,11 @@ export default function CsvUploadModal({ onImport, onClose }: CsvUploadModalProp
         if (['pax_adult', 'pax_youth', 'pax_child', 'pax_infant', 'gross_revenue', 'commission_rate'].includes(f.key)) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (b as any)[f.key] = Number(val.replace(/[^0-9.-]/g, '')) || 0;
+        } else if (f.key === 'travel_time') {
+          // A CSV time column can arrive in any shape ("9:00 AM", "9:00", etc.) — normalize to
+          // strict 24h "HH:MM"; an unparseable cell falls back to EMPTY_BOOKING's own default
+          // rather than writing garbage the owner would only spot after import.
+          b.travel_time = normalizeTime(val) || EMPTY_BOOKING.travel_time;
         } else {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (b as any)[f.key] = val;

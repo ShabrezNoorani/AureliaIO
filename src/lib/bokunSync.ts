@@ -1,5 +1,6 @@
 import { callBokunProxy } from './bokunProxy';
 import { stripManualOverrides } from './bookingOverrides';
+import { normalizeTime } from './utils';
 
 export async function testBokunConnection(
   supabase: any
@@ -98,7 +99,9 @@ export async function syncBokunBookings(
         customer_name: `${b.customer?.firstName || b.customerName?.split(' ')[0] || ''} ${b.customer?.lastName || b.customerName?.split(' ').slice(1).join(' ') || ''}`.trim(),
         customer_phone: b.customer?.phoneNumber || null,
         travel_date: b.startDate,
-        travel_time: b.startTime || '',
+        // Bokun's own field is usually already 24h, but normalizeTime() guarantees strict "HH:MM"
+        // regardless — falls back to the raw value only if it's genuinely unparseable.
+        travel_time: normalizeTime(b.startTime) || b.startTime || '',
         booking_date: b.creationDate,
         channel: booking_ref.startsWith('VIA') ? 'Viator' :
                  (booking_ref.startsWith('GYG') || booking_ref.startsWith('GET')) ? 'GYG' :
