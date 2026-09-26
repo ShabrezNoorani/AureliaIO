@@ -1003,6 +1003,8 @@ export type Database = {
           created_at: string | null
           id: string
           label: string | null
+          max_pax_per_guide: number | null
+          needs_guide: boolean
           notes: string | null
           start_time: string | null
           tour_date: string
@@ -1012,6 +1014,8 @@ export type Database = {
           created_at?: string | null
           id?: string
           label?: string | null
+          max_pax_per_guide?: number | null
+          needs_guide?: boolean
           notes?: string | null
           start_time?: string | null
           tour_date: string
@@ -1021,6 +1025,8 @@ export type Database = {
           created_at?: string | null
           id?: string
           label?: string | null
+          max_pax_per_guide?: number | null
+          needs_guide?: boolean
           notes?: string | null
           start_time?: string | null
           tour_date?: string

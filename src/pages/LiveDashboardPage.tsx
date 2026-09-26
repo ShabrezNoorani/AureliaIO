@@ -3,8 +3,9 @@ import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Users, CheckCircle2, Calendar as CalendarIcon, UserCheck, Eye, EyeOff, Clock, Sparkles, Plane, ClipboardList, X } from 'lucide-react';
+import { Users, CheckCircle2, Calendar as CalendarIcon, UserCheck, Eye, EyeOff, Clock, Sparkles, Plane, ClipboardList, X, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { localDateStr, isCancelled, shortProductCode, checkinTime } from '@/lib/utils';
+import { buildStaffingAlerts, type StaffingAlert } from '@/lib/staffingAlerts';
 
 // Owner-only, big-screen operations board — a TV monitor left open in the office, never a
 // personal workflow page. Read-only everywhere: no writes happen here, this only ever displays
@@ -171,6 +172,21 @@ export default function LiveDashboardPage() {
   const [checkins, setCheckins] = useState<Checkin[]>([]);
   const [monthTravelBookings, setMonthTravelBookings] = useState<MonthBookingRow[]>([]);
   const [monthBookedBookings, setMonthBookedBookings] = useState<MonthBookingRow[]>([]);
+
+  // STAFFING ALERTS — a separate, wider (today..+5 days) window from the today/tomorrow-scoped
+  // state above, kept minimal (only what's needed to compute capacity). Owner-only, admin-only —
+  // this whole page already is (see the file-top note), so no extra role check is needed here.
+  const [staffSessions, setStaffSessions] = useState<{
+    id: string; tour_date: string; label: string | null; start_time: string | null;
+    max_pax_per_guide: number | null; needs_guide: boolean;
+  }[]>([]);
+  const [staffSessionBookings, setStaffSessionBookings] = useState<{ session_id: string; booking_ref: string }[]>([]);
+  const [staffSessionGuides, setStaffSessionGuides] = useState<{ session_id: string; guide_id: string; status: string }[]>([]);
+  const [staffBookings, setStaffBookings] = useState<{
+    booking_ref: string; pax_adult: number | null; pax_youth: number | null; pax_child: number | null;
+    pax_infant: number | null; status: string | null; option_name: string | null; product_code: string | null;
+  }[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [showMoney, setShowMoney] = useState(false);
   const [now, setNow] = useState(new Date());
@@ -186,6 +202,8 @@ export default function LiveDashboardPage() {
 
   const today = localDateStr();
   const tomorrow = localDateStr(new Date(Date.now() + 24 * 60 * 60 * 1000));
+  // "Next 5 days" for Staffing Alerts — today through +5 calendar days, inclusive.
+  const day5 = localDateStr(new Date(Date.now() + 5 * 24 * 60 * 60 * 1000));
   const todayLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' });
   const tomorrowLabel = new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' });
 
@@ -243,6 +261,36 @@ export default function LiveDashboardPage() {
     } else {
       setSessionBookings([]);
       setSessionGuides([]);
+    }
+
+    // STAFFING ALERTS — sessions over the next 5 days (today..+5), separate/wider window from the
+    // today/tomorrow state above. Refreshed by the SAME loadData() this whole page already calls
+    // on every relevant realtime event (session_guides/session_bookings/bookings/tour_sessions —
+    // see the subscription below), so this stays live with zero extra listeners.
+    const { data: staffSessData } = await supabase.from('tour_sessions')
+      .select('id, tour_date, label, start_time, max_pax_per_guide, needs_guide')
+      .eq('user_id', user.id).gte('tour_date', today).lte('tour_date', day5)
+      .order('tour_date', { ascending: true }).order('start_time', { ascending: true });
+    if (!mountedRef.current) return;
+    const staffSessData_ = staffSessData || [];
+    setStaffSessions(staffSessData_);
+    const staffSessionIds = staffSessData_.map((s) => s.id);
+
+    if (staffSessionIds.length > 0) {
+      const [staffSbRes, staffSgRes, staffBookRes] = await Promise.all([
+        supabase.from('session_bookings').select('session_id, booking_ref').eq('user_id', user.id).in('session_id', staffSessionIds),
+        supabase.from('session_guides').select('session_id, guide_id, status').eq('user_id', user.id).in('session_id', staffSessionIds),
+        supabase.from('bookings').select('booking_ref, pax_adult, pax_youth, pax_child, pax_infant, status, option_name, product_code')
+          .eq('user_id', user.id).gte('travel_date', today).lte('travel_date', day5),
+      ]);
+      if (!mountedRef.current) return;
+      setStaffSessionBookings(staffSbRes.data || []);
+      setStaffSessionGuides(staffSgRes.data || []);
+      setStaffBookings(staffBookRes.data || []);
+    } else {
+      setStaffSessionBookings([]);
+      setStaffSessionGuides([]);
+      setStaffBookings([]);
     }
 
     setLoading(false);
@@ -351,6 +399,12 @@ export default function LiveDashboardPage() {
   }, []);
 
   const guideById = useMemo(() => new Map(guides.map((g) => [g.id, g])), [guides]);
+
+  // ── STAFFING ALERTS (next 5 days) ─────────────────────────────────────────────────────────
+  const staffingAlerts: StaffingAlert[] = useMemo(
+    () => buildStaffingAlerts(staffSessions, staffSessionBookings, staffSessionGuides, staffBookings),
+    [staffSessions, staffSessionBookings, staffSessionGuides, staffBookings]
+  );
   const todayBookingByRef = useMemo(() => new Map(todayBookings.map((b) => [b.booking_ref, b])), [todayBookings]);
   const todaySessionBookingByRef = useMemo(() => {
     const m = new Map<string, SessionBookingRow>();
@@ -530,6 +584,49 @@ export default function LiveDashboardPage() {
           <StatCard label="Pax Checked In" value={paxCheckedIn} icon={CheckCircle2} accent="green" />
           <StatCard label="Tours Today" value={todaySessions.length} icon={CalendarIcon} accent="gold" />
           <StatCard label="Guides On Today" value={guidesOnToday} icon={UserCheck} accent="purple" />
+        </div>
+
+        {/* STAFFING ALERTS — the at-a-glance "does anything in the next 5 days need another
+            guide" view, so the owner never has to hunt date by date. Admin-only (this whole page
+            already is — see the file-top note); guides never see this. Live via the SAME
+            realtime subscription that already drives every other section (session_guides/
+            session_bookings/bookings/tour_sessions changes all re-run loadData()). */}
+        <div className={`aurelia-card p-5 lg:p-6 ${staffingAlerts.length > 0 ? 'border-l-[4px] border-l-red-600' : ''}`}>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              {staffingAlerts.length > 0
+                ? <ShieldAlert size={20} className="text-red-600" />
+                : <ShieldCheck size={20} className="text-green-600" />}
+              <h2 className="text-lg lg:text-xl font-black uppercase tracking-widest">Staffing Alerts</h2>
+            </div>
+            {staffingAlerts.length > 0 && (
+              <span className="text-xs font-black uppercase tracking-widest px-2.5 py-1 rounded-full bg-red-600/15 text-red-700">
+                {staffingAlerts.length} session{staffingAlerts.length !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+          {staffingAlerts.length === 0 ? (
+            <p className="text-muted-foreground text-sm italic py-4 text-center">
+              All staffed — nothing in the next 5 days needs another guide.
+            </p>
+          ) : (
+            <div className="space-y-2.5">
+              {staffingAlerts.map((a) => (
+                <div key={a.sessionId} className="flex flex-wrap items-center justify-between gap-3 bg-red-600/[0.04] border border-red-600/20 rounded-xl p-3.5">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-black text-red-700 uppercase tracking-wide">{fmtShortDate(a.tourDate)}</span>
+                      <span className="font-bold text-sm truncate">{a.label}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Tour {a.startTime || '—'} &middot; {a.guideCount} guide{a.guideCount !== 1 ? 's' : ''} &middot; {a.totalPax} pax
+                    </p>
+                    <p className="text-xs font-semibold text-red-700 mt-1">{a.reasons.join(' · ')}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* OVERALL CHECK-IN PROGRESS */}

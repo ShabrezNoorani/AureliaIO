@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw, MapPin, CalendarPlus, MessageCircle } from 'lucide-react';
+import { Clock, Calendar as CalendarIcon, Search, AlertTriangle, RefreshCw, MapPin, CalendarPlus, MessageCircle, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { logChange } from '@/lib/changeLog';
 import { computeBalance, pickLeastLoadedGuide } from '@/lib/allocationBalance';
 import { matchBookingsToSessions, autoPopulateSessionBookings, pickBestSessionForBooking } from '@/lib/sessionAutoPopulate';
 import { localDateStr, checkinTime, normalizeTime } from '@/lib/utils';
+import { computeSessionCapacity } from '@/lib/staffingAlerts';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
@@ -74,7 +75,7 @@ export default function TodayToursPage() {
       supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', today).not('status', 'eq', 'CANCELLED').order('travel_time', { ascending: true }),
       supabase.from('guides').select('*').eq('user_id', user.id).eq('status', 'active'),
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
-      supabase.from('tour_sessions').select('id, label, start_time, tour_date, notes').eq('user_id', user.id).eq('tour_date', today).order('start_time', { ascending: true }),
+      supabase.from('tour_sessions').select('id, label, start_time, tour_date, notes, max_pax_per_guide, needs_guide').eq('user_id', user.id).eq('tour_date', today).order('start_time', { ascending: true }),
     ]);
     if (!mountedRef.current) return;
 
@@ -679,6 +680,14 @@ export default function TodayToursPage() {
     await loadData();
   };
 
+  // Owner-only: edit a session's staffing-capacity settings anytime — max pax/guide (null clears
+  // it back to "no limit") and the manual "needs another guide" toggle. Neither is ever required.
+  const handleUpdateSessionCapacity = async (sessionId: string, field: 'max_pax_per_guide' | 'needs_guide', value: number | boolean | null) => {
+    if (!user) return;
+    await supabase.from('tour_sessions').update({ [field]: value }).eq('id', sessionId).eq('user_id', user.id);
+    await loadData();
+  };
+
   // Owner-only: run the Balance algorithm for one session and persist the resulting moves.
   const handleBalance = async (sessionId: string) => {
     if (!user) return;
@@ -845,6 +854,7 @@ export default function TodayToursPage() {
                 onUpdateGuidePay={handleUpdateGuidePay}
                 onUpdateGuideCheckinTime={handleUpdateGuideCheckinTime}
                 onUpdateSessionTourTime={handleUpdateSessionTourTime}
+                onUpdateSessionCapacity={handleUpdateSessionCapacity}
                 onBalance={handleBalance}
                 balancing={balancingSessionId === session.id}
                 stuckBookingRefs={stuckBookingRefs}
@@ -887,6 +897,7 @@ function SessionBoard({
   onUpdateGuidePay,
   onUpdateGuideCheckinTime,
   onUpdateSessionTourTime,
+  onUpdateSessionCapacity,
   onBalance,
   balancing,
   stuckBookingRefs,
@@ -913,6 +924,7 @@ function SessionBoard({
   onUpdateGuidePay: (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number | null) => void;
   onUpdateGuideCheckinTime: (sessionId: string, guideId: string, value: string) => void;
   onUpdateSessionTourTime: (sessionId: string, newStartTime: string) => void;
+  onUpdateSessionCapacity: (sessionId: string, field: 'max_pax_per_guide' | 'needs_guide', value: number | boolean | null) => void;
   onBalance: (sessionId: string) => void;
   balancing: boolean;
   stuckBookingRefs: Set<string>;
@@ -926,6 +938,18 @@ function SessionBoard({
   // Unfiltered session total — the search box below only narrows the guest LIST, the invite
   // message below must always quote the whole session's pax, same as Dispatch's sPax.
   const sessionPax = guests.reduce((s, g) => s + g.pax, 0);
+
+  // Staffing capacity — red ("Needs another guide") when this session's pax exceeds (assigned
+  // guides × max pax/guide), OR the owner has manually flagged it. Same computeSessionCapacity()
+  // the Live Board's staffing alerts use, so "flagged" never drifts between the two. `team` is
+  // already accepted-guides-only (see sessionIdToTeam in the parent), and `guests`'/`sessionPax`'s
+  // source query already excludes cancelled bookings.
+  const capacity = computeSessionCapacity({
+    maxPaxPerGuide: session.max_pax_per_guide,
+    needsGuide: session.needs_guide,
+    assignedGuideCount: team.length,
+    totalPax: sessionPax,
+  });
 
   // ONE calendar invite per session, covering every assigned guide — a single guide gets their
   // own pay in the description (buildGuideInviteLinks); two or more guides get ONE shared event
@@ -964,7 +988,13 @@ function SessionBoard({
   const filteredPax = filteredGuests.reduce((s, g) => s + g.pax, 0);
 
   return (
-    <div className="aurelia-card overflow-hidden border border-border">
+    <div className={`aurelia-card overflow-hidden border ${capacity.isFlagged ? 'border-red-600/50' : 'border-border'}`}>
+      {capacity.isFlagged && (
+        <div className="flex items-start gap-2 text-xs bg-red-600/10 border-b border-red-600/30 text-red-700 px-4 md:px-5 py-2 font-bold">
+          <ShieldAlert size={14} className="shrink-0 mt-0.5" />
+          <span>Needs another guide — {capacity.reasons.join('; ')}</span>
+        </div>
+      )}
       <div className="bg-muted border-b border-border px-4 md:px-5 py-4 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h3 className="font-extrabold text-lg truncate">{session.label || 'Untitled Session'}</h3>
@@ -986,6 +1016,36 @@ function SessionBoard({
               />
             </span>
           </p>
+          {/* Staffing capacity controls — optional per-session limit (blank = no limit) plus a
+              manual override for e.g. a private tour that needs its own guide regardless of pax.
+              Never required. */}
+          <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs">
+            <label className="text-[10px] font-bold text-muted-foreground uppercase shrink-0">Max pax/guide</label>
+            <input
+              key={`max-pax-${session.id}-${session.max_pax_per_guide}`}
+              type="number"
+              min={1}
+              placeholder="—"
+              defaultValue={session.max_pax_per_guide ?? ''}
+              onBlur={(e) => {
+                const raw = e.target.value.trim();
+                const v = raw === '' ? null : Number(raw);
+                if (v !== session.max_pax_per_guide) onUpdateSessionCapacity(session.id, 'max_pax_per_guide', v);
+              }}
+              className="w-16 px-1 py-0.5 rounded border border-border bg-background"
+            />
+            <button
+              onClick={() => onUpdateSessionCapacity(session.id, 'needs_guide', !session.needs_guide)}
+              className={`text-[10px] font-bold uppercase px-2 py-1 rounded-lg border transition-colors ${
+                session.needs_guide
+                  ? 'bg-red-600/15 border-red-600/40 text-red-700'
+                  : 'border-border text-muted-foreground hover:text-red-700 hover:border-red-600/30'
+              }`}
+              title="Manually flag this session as needing another guide, regardless of pax"
+            >
+              {session.needs_guide ? '✓ Needs another guide' : 'Flag: needs another guide'}
+            </button>
+          </div>
           {team.length > 0 && (
             <div className="mt-2 space-y-1.5">
               {team.map(g => {

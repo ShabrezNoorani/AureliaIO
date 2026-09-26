@@ -2,10 +2,11 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat, ShieldAlert } from 'lucide-react';
 import { buildGuideInviteLinks, buildSharedGuideInviteLink, forceBrowserUrl } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
 import { localDateStr, shortProductCode, isCancelled, checkinTime, normalizeTime } from '@/lib/utils';
+import { computeSessionCapacity } from '@/lib/staffingAlerts';
 
 interface Booking {
   id: string;
@@ -30,6 +31,8 @@ interface TourSession {
   label: string | null;
   start_time: string | null;
   notes: string | null;
+  max_pax_per_guide: number | null;
+  needs_guide: boolean;
 }
 
 interface SessionBookingRow {
@@ -123,6 +126,9 @@ export default function DispatchPage() {
   const [selectedGroupKeys, setSelectedGroupKeys] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [newSessionLabel, setNewSessionLabel] = useState('');
+  // Optional per-session cap on pax-per-assigned-guide — blank means no limit. Text (not number)
+  // state so the input can be genuinely empty rather than coerced to a stray "0".
+  const [newSessionMaxPaxPerGuide, setNewSessionMaxPaxPerGuide] = useState('');
   const [creating, setCreating] = useState(false);
 
   const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
@@ -343,10 +349,12 @@ export default function DispatchPage() {
         || selectedGroups[0].travel_time;
 
       const label = newSessionLabel.trim() || defaultLabel;
+      const maxPaxTrimmed = newSessionMaxPaxPerGuide.trim();
+      const maxPaxPerGuide = maxPaxTrimmed === '' ? null : Number(maxPaxTrimmed);
 
       const { data: newSession, error: sessErr } = await supabase
         .from('tour_sessions')
-        .insert({ user_id: user.id, tour_date: selectedDate, label, start_time: earliestTime })
+        .insert({ user_id: user.id, tour_date: selectedDate, label, start_time: earliestTime, max_pax_per_guide: maxPaxPerGuide })
         .select()
         .single();
       if (sessErr || !newSession) throw sessErr || new Error('No session returned');
@@ -355,6 +363,7 @@ export default function DispatchPage() {
 
       setSelectedGroupKeys(new Set());
       setNewSessionLabel('');
+      setNewSessionMaxPaxPerGuide('');
       toast.success(`Session "${label}" created with ${refs.length} booking${refs.length !== 1 ? 's' : ''}`);
       await loadData();
     } catch (e) {
@@ -515,6 +524,15 @@ export default function DispatchPage() {
           .eq('user_id', user.id).eq('session_id', sessionId).eq('guide_id', sg.guide_id)
       ));
     }
+    await loadData();
+  };
+
+  // Owner-only: edit a session's staffing-capacity settings anytime — max pax/guide (null clears
+  // it back to "no limit") and the manual "needs another guide" toggle (e.g. a private tour that
+  // needs its own guide regardless of pax). Neither is ever required; both default to "not set".
+  const handleUpdateSessionCapacity = async (sessionId: string, field: 'max_pax_per_guide' | 'needs_guide', value: number | boolean | null) => {
+    if (!user) return;
+    await supabase.from('tour_sessions').update({ [field]: value }).eq('id', sessionId).eq('user_id', user.id);
     await loadData();
   };
 
@@ -710,6 +728,15 @@ export default function DispatchPage() {
                   placeholder={defaultLabel || 'Session label'}
                   className="aurelia-input flex-1"
                 />
+                <input
+                  type="number"
+                  min={1}
+                  value={newSessionMaxPaxPerGuide}
+                  onChange={e => setNewSessionMaxPaxPerGuide(e.target.value)}
+                  placeholder="Max pax/guide (optional)"
+                  title="Optional — blank means no limit"
+                  className="aurelia-input w-full sm:w-44"
+                />
                 <button
                   onClick={handleCreateSession}
                   disabled={creating}
@@ -742,6 +769,18 @@ export default function DispatchPage() {
                   // is never forced, so this total only ever reflects what was actually entered.
                   const sGuideCost = sGuideRows.reduce((s, sg) => s + (Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0), 0);
 
+                  // Staffing capacity — red ("Needs another guide") when this session's
+                  // non-cancelled pax exceeds (assigned guides × max pax/guide), OR the owner has
+                  // manually flagged it. Same computeSessionCapacity() the Live Board's staffing
+                  // alerts use, so the definition of "flagged" never drifts between the two.
+                  const sGuideCountAccepted = sGuideRows.filter(sg => sg.status === 'accepted').length;
+                  const capacity = computeSessionCapacity({
+                    maxPaxPerGuide: session.max_pax_per_guide,
+                    needsGuide: session.needs_guide,
+                    assignedGuideCount: sGuideCountAccepted,
+                    totalPax: sPax,
+                  });
+
                   // ONE calendar invite per session, covering every 'accepted' guide — a single
                   // guide gets their own pay in the description (buildGuideInviteLinks); two or
                   // more guides get ONE shared event with everyone as a guest and NO pay at all
@@ -765,7 +804,13 @@ export default function DispatchPage() {
                         })();
 
                   return (
-                    <div key={session.id} className="aurelia-card p-5 border border-border space-y-4">
+                    <div key={session.id} className={`aurelia-card p-5 border space-y-4 ${capacity.isFlagged ? 'border-red-600/50 bg-red-600/[0.03]' : 'border-border'}`}>
+                      {capacity.isFlagged && (
+                        <div className="flex items-start gap-2 text-xs bg-red-600/10 border border-red-600/30 text-red-700 rounded-lg p-2.5 font-bold">
+                          <ShieldAlert size={14} className="shrink-0 mt-0.5" />
+                          <span>Needs another guide — {capacity.reasons.join('; ')}</span>
+                        </div>
+                      )}
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           {isEditingLabel ? (
@@ -822,6 +867,36 @@ export default function DispatchPage() {
                                 <span className="text-muted-foreground font-bold" title="Total guide pay (base + bonus)">€{sGuideCost.toLocaleString()} guide cost</span>
                               </>
                             )}
+                          </div>
+                          {/* Staffing capacity controls — optional per-session limit (blank = no
+                              limit) plus a manual override for e.g. a private tour that needs its
+                              own guide regardless of pax. Never required. */}
+                          <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs" onClick={e => e.stopPropagation()}>
+                            <label className="text-[10px] font-bold text-muted-foreground uppercase shrink-0">Max pax/guide</label>
+                            <input
+                              key={`max-pax-${session.id}-${session.max_pax_per_guide}`}
+                              type="number"
+                              min={1}
+                              placeholder="—"
+                              defaultValue={session.max_pax_per_guide ?? ''}
+                              onBlur={e => {
+                                const raw = e.target.value.trim();
+                                const v = raw === '' ? null : Number(raw);
+                                if (v !== session.max_pax_per_guide) handleUpdateSessionCapacity(session.id, 'max_pax_per_guide', v);
+                              }}
+                              className="aurelia-input w-16 text-xs py-1"
+                            />
+                            <button
+                              onClick={() => handleUpdateSessionCapacity(session.id, 'needs_guide', !session.needs_guide)}
+                              className={`text-[10px] font-bold uppercase px-2 py-1 rounded-lg border transition-colors ${
+                                session.needs_guide
+                                  ? 'bg-red-600/15 border-red-600/40 text-red-700'
+                                  : 'border-border text-muted-foreground hover:text-red-700 hover:border-red-600/30'
+                              }`}
+                              title="Manually flag this session as needing another guide, regardless of pax"
+                            >
+                              {session.needs_guide ? '✓ Needs another guide' : 'Flag: needs another guide'}
+                            </button>
                           </div>
                         </div>
                         <button onClick={() => handleDeleteSession(session)} className="text-muted-foreground hover:text-red-700 p-1.5 shrink-0" title="Delete session">
