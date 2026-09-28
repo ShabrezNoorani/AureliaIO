@@ -11,9 +11,15 @@ export interface BalanceGuestInput {
   bookingRef: string;
   pax: number;
   allottedGuideId: string | null;
-  /** A checked-in guest is locked to whoever checked them in — Balance must never move them
-      (safety rule: check-in = ownership). Still counts toward that guide's running total below,
-      just never enters the movable pool. */
+  /** The Allocation tab and Balance only ever operate on CHECKED-IN guests — callers must already
+      have filtered `guests` down to isCheckedIn: true before calling computeBalance (a
+      not-checked-in guest belongs on the Check-in tab only, never here). This flag is kept as a
+      defensive, explicit re-check inside the pool filter below rather than trusted blindly, so a
+      caller that ever forgets to pre-filter still can't leak a not-checked-in guest into a move.
+      Once a checked-in guest already has an allottedGuideId (they were checked in under a
+      specific guide, or manually moved since), they're locked to that guide — Balance must never
+      move them (safety rule: check-in = ownership). Still counts toward that guide's running
+      total below, just never enters the movable pool. */
   isCheckedIn: boolean;
 }
 
@@ -56,15 +62,17 @@ export function pickLeastLoadedGuide(
 }
 
 // Balance only ever fills GAPS — it never reshuffles a guest someone (a check-in, a manual move,
-// or an earlier Balance run) already placed. Given `guests` covering an ENTIRE session (checked-in
-// and not, per the auto-population feature — a session can now hold not-yet-arrived guests too):
-//   - A checked-in guest is locked to their current guide: excluded from the pool, but their pax
-//     still seeds that guide's running total, so Balance never piles more guests onto a guide
-//     who's already carrying a full checked-in load.
-//   - An already-allotted-but-not-yet-checked-in guest (placed manually, or by an earlier Balance
-//     run) is left exactly where it is too — same seeding, same pool exclusion.
-//   - The pool is genuinely UNALLOTTED, not-checked-in guests only — auto-populated bookings sit
-//     here until a human checks them in or runs Balance.
+// or an earlier Balance run) already placed. `guests` must already be CHECKED-IN GUESTS ONLY —
+// the Allocation tab and Balance never see or touch a guest who hasn't checked in; that guest
+// belongs on the Check-in tab only (see the caller-side filter in TodayToursPage.tsx/
+// GuideCheckin.tsx). Within that checked-in population:
+//   - A guest who's ALREADY allotted to a guide (checked in directly under that guide, or moved
+//     there since) is locked to them: excluded from the pool, but their pax still seeds that
+//     guide's running total, so Balance never piles more guests onto a guide who's already
+//     carrying a full load.
+//   - A guest who checked in WITHOUT landing on a specific guide (allottedGuideId still null —
+//     e.g. a last-minute check-in that hasn't been placed yet) is the only kind of guest Balance
+//     ever actually moves.
 export function computeBalance(
   guides: BalanceGuideInput[],
   guests: BalanceGuestInput[]
@@ -77,8 +85,8 @@ export function computeBalance(
   const totalsByGuideId: Record<string, number> = {};
   unlockedGuides.forEach(g => { totalsByGuideId[g.id] = 0; });
 
-  // Seed every unlocked guide's total from whichever guests are ALREADY on them (checked in or
-  // not) — a locked guide's guests aren't tracked here at all (no key for them), matching how
+  // Seed every unlocked guide's total from whichever checked-in guests are ALREADY on them — a
+  // locked guide's guests aren't tracked here at all (no key for them), matching how
   // totalsByGuideId has only ever covered unlocked guides.
   guests.forEach(g => {
     if (g.allottedGuideId && totalsByGuideId[g.allottedGuideId] !== undefined) {
@@ -86,7 +94,10 @@ export function computeBalance(
     }
   });
 
-  const pool = guests.filter(g => !g.isCheckedIn && !g.allottedGuideId);
+  // Defensive `g.isCheckedIn` re-check (see BalanceGuestInput's doc comment) — callers must
+  // already pre-filter to checked-in-only, but the pool must never include a not-checked-in guest
+  // even if one somehow slips through.
+  const pool = guests.filter(g => g.isCheckedIn && !g.allottedGuideId);
 
   // Largest group first — never split a group, so the biggest groups need to be placed while
   // the most "room" is still available across guides.

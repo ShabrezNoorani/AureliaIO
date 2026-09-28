@@ -21,9 +21,10 @@ export interface GuideAllocationGuest {
 
 interface GuideAllocationBoardProps {
   guides: AllocationGuide[];
-  /** Every guest currently in the session — checked-in AND not (auto-populated / pre-allotted
-      guests included), so Balance has the not-yet-arrived pool to distribute and the board shows
-      the full picture. Callers must still exclude cancelled bookings. */
+  /** CHECKED-IN guests only — a not-checked-in guest belongs on the Check-in tab, never here.
+      Callers (GuideCheckin.tsx) must already have filtered `guests` down to isCheckedIn: true
+      (and excluded cancelled bookings) before it reaches this component; this board itself does
+      no further filtering, it just lays out whatever it's given. */
   guests: GuideAllocationGuest[];
   /** Highlights this guide's own column so they can find themselves at a glance. */
   highlightGuideId?: string;
@@ -205,9 +206,10 @@ export default function GuideAllocationBoard({
           );
         })}
 
-        {/* HOLDING COLUMN — every guest not yet allotted to a guide, checked in or not (e.g. a
-            freshly auto-populated late booking, sitting here until someone checks them in or runs
-            Balance) */}
+        {/* HOLDING COLUMN — every CHECKED-IN guest not yet allotted to a guide (e.g. a last-minute
+            check-in that hasn't been placed yet), sitting here until someone manually moves them
+            or runs Balance. A not-checked-in guest never appears here — it's not in `guests` at
+            all (see GuideAllocationBoardProps above). */}
         <div
           onClick={() => handleColumnTap(null)}
           className={`flex flex-col rounded-2xl p-4 space-y-2.5 border border-dashed transition-all min-w-0 ${

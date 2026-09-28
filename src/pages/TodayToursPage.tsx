@@ -329,16 +329,16 @@ export default function TodayToursPage() {
     return m;
   }, [sessionBookings, bookings, checkins]);
 
-  // EVERY guest in the session — checked-in AND not (auto-populated / pre-allotted guests
-  // included, now that a session can hold not-yet-arrived guests too) — grouped by their CURRENT
-  // session_bookings.allotted_guide_id, never a frozen "checked in by" name, so a guest's shown
-  // guide always reflects live allotment. Feeds both the Allocation board (so the not-yet-arrived
-  // pool is visible/balanceable) and computeBalance, which needs isCheckedIn to lock checked-in
-  // guests to their guide (safety rule: check-in = ownership — Balance must never move them).
+  // CHECKED-IN guests only — a not-checked-in guest belongs on the Check-in tab, never on
+  // Allocation. Grouped by their CURRENT session_bookings.allotted_guide_id, never a frozen
+  // "checked in by" name, so a guest's shown guide always reflects live allotment. Feeds both the
+  // Allocation board's display AND computeBalance (handleBalance below reuses this exact map), so
+  // Balance can structurally never see or move a not-checked-in guest — they're not in the array
+  // at all, not just excluded by computeBalance's own defensive isCheckedIn check.
   const sessionIdToAllocationGuests = useMemo(() => {
     const m = new Map<string, AllocationGuest[]>();
     sessionIdToGuests.forEach((rows, sessionId) => {
-      m.set(sessionId, rows.map(r => ({
+      m.set(sessionId, rows.filter(r => r.isCheckedIn).map(r => ({
         bookingRef: r.booking.booking_ref,
         displayName: r.displayName,
         pax: r.pax,
