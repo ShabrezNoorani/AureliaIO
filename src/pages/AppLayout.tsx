@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Menu } from 'lucide-react';
 import AureliaSidebar from '@/components/AureliaSidebar';
 import Dashboard from '@/components/Dashboard';
@@ -94,23 +94,25 @@ const AppLayout = () => {
   const [bookingsLoaded, setBookingsLoaded] = useState(false);
   const [adminCostsLoaded, setAdminCostsLoaded] = useState(false);
 
+  // Full bookings table (all rows, ~1000+ for an established owner) is only ever needed by the
+  // Ledger view — fetch it lazily the first time that view actually opens, instead of on every
+  // owner page load. The sidebar's "new bookings" badge below uses its own cheap count-only query
+  // instead of depending on this array, so it stays accurate even before Ledger has ever loaded.
   useEffect(() => {
-    if (!user) return;
+    if (!user || view !== 'ledger' || bookingsLoaded) return;
+    supabase.from('bookings').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).then(({ data }) => {
+      if (data) setBookings(data);
+      setBookingsLoaded(true);
+    });
+  }, [user, view, bookingsLoaded]);
 
-    if (!bookingsLoaded) {
-      supabase.from('bookings').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).then(({ data }) => {
-        if (data) setBookings(data);
-        setBookingsLoaded(true);
-      });
-    }
-
-    if (!adminCostsLoaded) {
-      supabase.from('admin_costs').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).then(({ data }) => {
-        if (data) setAdminCosts(data);
-        setAdminCostsLoaded(true);
-      });
-    }
-  }, [user, bookingsLoaded, adminCostsLoaded]);
+  useEffect(() => {
+    if (!user || adminCostsLoaded) return;
+    supabase.from('admin_costs').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).then(({ data }) => {
+      if (data) setAdminCosts(data);
+      setAdminCostsLoaded(true);
+    });
+  }, [user, adminCostsLoaded]);
 
   // NEW-BOOKING BADGE
   // bookings.created_at is the per-row timestamp that already exists on the table — a sync
@@ -141,10 +143,21 @@ const AppLayout = () => {
     setLastSeenBookingsAt(now);
   }, [view, user]);
 
-  const newBookingsCount = useMemo(() => {
-    if (!lastSeenBookingsAt) return 0;
-    return bookings.filter(b => b.created_at && new Date(b.created_at).getTime() > lastSeenBookingsAt).length;
-  }, [bookings, lastSeenBookingsAt]);
+  // Cheap count-only query (head: true — no rows downloaded) so the sidebar badge never needs the
+  // full bookings table. Re-runs whenever the "seen" mark moves, and whenever bookingsLoaded flips
+  // back to false (a sync — manual from Ledger, or the background auto-sync below — just
+  // completed and reset it), so the badge stays current even when Ledger was never opened.
+  const [newBookingsCount, setNewBookingsCount] = useState(0);
+
+  useEffect(() => {
+    if (!user || !lastSeenBookingsAt) return;
+    supabase
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .gt('created_at', new Date(lastSeenBookingsAt).toISOString())
+      .then(({ count }) => setNewBookingsCount(count ?? 0));
+  }, [user, lastSeenBookingsAt, bookingsLoaded]);
 
   // AUTO SYNC LOGIC
   const [lastSynced, setLastSynced] = useState<number | null>(null);

@@ -66,4 +66,21 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // jsPDF (+ jspdf-autotable) and its own optional html2canvas/dompurify dependencies are
+        // only ever needed for the "Download Invoice" actions (see src/lib/generateInvoice.ts,
+        // now reached only via a dynamic import() at those call sites) — grouped into their own
+        // chunk here so they can never end up merged back into a chunk that loads eagerly.
+        manualChunks(id) {
+          if (id.includes('node_modules') && (
+            id.includes('jspdf') || id.includes('html2canvas') || id.includes('dompurify')
+          )) {
+            return 'pdf-export';
+          }
+        },
+      },
+    },
+  },
 }));

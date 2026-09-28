@@ -6,32 +6,34 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import FinancialCanvas from "@/components/ParticleCanvas";
-import LandingPage from "./pages/LandingPage";
-import SignupPage from "./pages/SignupPage";
-import LoginPage from "./pages/LoginPage";
-import PricingPage from "./pages/PricingPage";
-import AppLayout from "./pages/AppLayout";
-import BlogPage from "./pages/BlogPage";
-import BlogPostPage from "./pages/BlogPostPage";
-import BlogAdminPage from "./pages/BlogAdminPage";
-import MarketplacePage from "./pages/MarketplacePage";
-import GuidesPage from "./pages/GuidesPage";
-import GuideDashboard from "./pages/GuideDashboard";
-import GuideLayout from "./pages/GuideLayout";
-import AnalyticsPage from "./pages/AnalyticsPage";
-import BreakdownPnlPage from "./pages/BreakdownPnlPage";
-import TodayToursPage from "./pages/TodayToursPage";
-import LiveDashboardPage from "./pages/LiveDashboardPage";
-import DispatchPage from "./pages/DispatchPage";
-import ChangeLogPage from "./pages/ChangeLogPage";
-import CheckinApp from "./pages/CheckinApp";
-import GuideClaimPage from "./pages/GuideClaimPage";
-import GuideCheckin from "./pages/GuideCheckin";
-import GuideProfile from "./pages/GuideProfile";
-import GuideReviews from "./pages/GuideReviews";
-import NotFound from "./pages/NotFound";
 import { setupGuideTables } from "./lib/setupTables";
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
+
+// Route-level code splitting: each top-level route is its own chunk, fetched only when that route
+// is actually visited. AppLayout and GuideLayout in particular each statically import their own
+// entire internal page set (they switch between "views" via local state rather than nested
+// react-router routes/<Outlet/> — see below), so lazy-loading just these two is what actually
+// separates the owner bundle from the guide bundle; a guide's initial download never touches
+// Analytics/Dispatch/Ledger/BlogAdmin/etc.
+const LandingPage = lazy(() => import("./pages/LandingPage"));
+const SignupPage = lazy(() => import("./pages/SignupPage"));
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const PricingPage = lazy(() => import("./pages/PricingPage"));
+const BlogPage = lazy(() => import("./pages/BlogPage"));
+const BlogPostPage = lazy(() => import("./pages/BlogPostPage"));
+const CheckinApp = lazy(() => import("./pages/CheckinApp"));
+const GuideClaimPage = lazy(() => import("./pages/GuideClaimPage"));
+const AppLayout = lazy(() => import("./pages/AppLayout"));
+const GuideLayout = lazy(() => import("./pages/GuideLayout"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+
+// Small, dependency-free — safe to keep in the main chunk so it never itself waits on a lazy
+// chunk to display.
+const RouteFallback = () => (
+  <div className="flex min-h-screen items-center justify-center bg-background">
+    <div className="w-8 h-8 border-2 border-gold border-t-transparent rounded-full animate-spin" />
+  </div>
+);
 
 const queryClient = new QueryClient();
 
@@ -73,54 +75,45 @@ const AppContent = () => {
     <div style={{ position: 'relative', minHeight: '100vh' }}>
       {!hideAnimatedBackground && <FinancialCanvas />}
       <AuthProvider>
-        <Routes>
-          {/* Public routes */}
-          <Route path="/" element={<RootRoute />} />
-          <Route path="/signup" element={<SignupPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/pricing" element={<PricingPage />} />
-          <Route path="/blog" element={<BlogPage />} />
-          <Route path="/blog/:slug" element={<BlogPostPage />} />
-          <Route path="/checkin/:token" element={<CheckinApp />} />
-          <Route path="/guide/claim/:token" element={<GuideClaimPage />} />
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            {/* Public routes */}
+            <Route path="/" element={<RootRoute />} />
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/pricing" element={<PricingPage />} />
+            <Route path="/blog" element={<BlogPage />} />
+            <Route path="/blog/:slug" element={<BlogPostPage />} />
+            <Route path="/checkin/:token" element={<CheckinApp />} />
+            <Route path="/guide/claim/:token" element={<GuideClaimPage />} />
 
-          {/* Protected owner app */}
-          <Route
-            path="/app"
-            element={
-              <ProtectedRoute requiredRole="owner">
-                <AppLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="blog-admin" element={<BlogAdminPage />} />
-            <Route path="marketplace" element={<MarketplacePage />} />
-            <Route path="guides" element={<GuidesPage />} />
-            <Route path="guide-dashboard" element={<GuideDashboard />} />
-            <Route path="today" element={<TodayToursPage />} />
-            <Route path="live" element={<LiveDashboardPage />} />
-            <Route path="dispatch" element={<DispatchPage />} />
-            <Route path="analytics" element={<AnalyticsPage />} />
-            <Route path="breakdown-pnl" element={<BreakdownPnlPage />} />
-            <Route path="changelog" element={<ChangeLogPage />} />
-          </Route>
+            {/* Protected owner app — AppLayout handles all /app/* sub-navigation internally
+                (its own "view" state, switched via the sidebar) rather than nested routes/
+                <Outlet/>, so a single wildcard route is all react-router needs here; this is
+                also what keeps every owner page's code inside AppLayout's own lazy chunk,
+                separate from the guide chunk below. */}
+            <Route
+              path="/app/*"
+              element={
+                <ProtectedRoute requiredRole="owner">
+                  <AppLayout />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Protected guide app */}
-          <Route
-            path="/guide"
-            element={
-              <ProtectedRoute requiredRole="guide">
-                <GuideLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route path="checkin" element={<GuideCheckin />} />
-            <Route path="profile" element={<GuideProfile />} />
-            <Route path="reviews" element={<GuideReviews />} />
-          </Route>
+            {/* Protected guide app — same internal-view pattern as AppLayout above. */}
+            <Route
+              path="/guide/*"
+              element={
+                <ProtectedRoute requiredRole="guide">
+                  <GuideLayout />
+                </ProtectedRoute>
+              }
+            />
 
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     </div>
   );

@@ -1,9 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Users, Activity, Euro, BarChart2, Calendar, FileText, X, Star, Info } from 'lucide-react';
-import { generateGuideInvoice } from '@/lib/generateInvoice';
 import { localDateStr } from '@/lib/utils';
 import {
   computeGuideOverviewRows, computeAssignmentStats, computeRatingStats, computePunctualityStats,
@@ -17,11 +16,14 @@ import {
   insertGuideMonthlyPayment,
 } from '@/lib/guideRatingActions';
 import GuideStatCards from '@/components/guide/GuideStatCards';
-import GuideEarningsChart from '@/components/guide/GuideEarningsChart';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
 import GuideRatingsPanel from '@/components/guide/GuideRatingsPanel';
 import GuideScoreCard from '@/components/guide/GuideScoreCard';
+
+// recharts (pulled in by GuideEarningsChart) is a large charting library — lazy-loaded here too
+// (same as GuideHome, the guide's own equivalent view) so it never blocks this page's first paint.
+const GuideEarningsChart = lazy(() => import('@/components/guide/GuideEarningsChart'));
 
 interface GuideArrivalRow extends ArrivalPunctualityRow {
   guide_id: string;
@@ -297,7 +299,7 @@ export default function GuideDashboard() {
     );
   }
 
-  const handleDownloadInvoice = () => {
+  const handleDownloadInvoice = async () => {
     if (!selectedGuide) return;
     const guideAsns = assignments.filter(a => 
       a.guide_id === selectedGuide.id && 
@@ -310,9 +312,12 @@ export default function GuideDashboard() {
       return;
     }
 
+    // jsPDF (+ jspdf-autotable) is a heavy dependency only ever needed for this one action —
+    // loaded on demand instead of bundled into the app's initial download.
+    const { generateGuideInvoice } = await import('@/lib/generateInvoice');
     generateGuideInvoice(
-      selectedGuide, 
-      guideAsns, 
+      selectedGuide,
+      guideAsns,
       profile?.company_name || 'AURELIA Suite',
       invoiceDates
     );
@@ -649,7 +654,9 @@ export default function GuideDashboard() {
                 <section className="space-y-4 pt-6 border-t border-border">
                   <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Tours &amp; Pay</h3>
                   <GuideStatCards stats={detailGuideStats} />
-                  <GuideEarningsChart data={detailGuideMonthlyEarnings} />
+                  <Suspense fallback={<div className="h-64 rounded-2xl bg-muted animate-pulse" />}>
+                    <GuideEarningsChart data={detailGuideMonthlyEarnings} />
+                  </Suspense>
                   <TourHistoryList
                     assignments={detailGuideAssignments}
                     todayStr={todayStr}

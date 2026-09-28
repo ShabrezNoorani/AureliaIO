@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { Calendar as CalendarIcon, Compass, Users } from 'lucide-react';
@@ -11,11 +11,15 @@ import {
 } from '@/lib/guidePerformance';
 import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
 import GuideStatCards from '@/components/guide/GuideStatCards';
-import GuideEarningsChart from '@/components/guide/GuideEarningsChart';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
 import GuideScoreCard from '@/components/guide/GuideScoreCard';
 import TransferTourModal from '@/components/guide/TransferTourModal';
+
+// recharts (pulled in by GuideEarningsChart) is a large charting library shared with the owner's
+// GuideDashboard — lazy-loaded here so it never blocks this guide's first paint; the chart pops
+// in a beat later instead of gating the rest of the dashboard on its own download.
+const GuideEarningsChart = lazy(() => import('@/components/guide/GuideEarningsChart'));
 
 interface SessionGuideRow {
   session_id: string;
@@ -382,7 +386,9 @@ export default function GuideHome() {
           <section className="space-y-4">
             <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Tours &amp; Pay</h2>
             <GuideStatCards stats={assignmentStats} />
-            <GuideEarningsChart data={monthlyEarnings} />
+            <Suspense fallback={<div className="h-64 rounded-2xl bg-muted animate-pulse" />}>
+              <GuideEarningsChart data={monthlyEarnings} />
+            </Suspense>
             <TourHistoryList assignments={allAssignments} todayStr={today} />
           </section>
 

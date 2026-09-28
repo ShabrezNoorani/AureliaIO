@@ -332,6 +332,138 @@ export default function GuideCheckin() {
     setSessionTeamRows(data || []);
   };
 
+  // Targeted refresh for the session_guides realtime listener below — replaces a full loadData().
+  // A session_guides change can mean this guide's own pay/checkin_time was edited, a co-guide's
+  // lock was toggled (my_session_team), or the guide was actually added to/removed from/
+  // transferred off a session (changes acceptedSessionIds itself). The first two cases only need
+  // the two cheap queries below; only when the SESSION SET itself changed do we also re-pull
+  // session_bookings/checkins/arrivals/bookings for the new set — session_bookings/checkins each
+  // already have their own realtime listeners for in-place edits, so there's nothing else to do
+  // once the set is stable. fetchCompanyGuides (transfer picker) and the unsessioned-bookings
+  // auto-populate pass are deliberately NOT re-run here — neither depends on this guide's own
+  // session_guides rows.
+  const refreshSessionsAndTeam = async () => {
+    if (!guideId || !guideUserId) return;
+
+    const [sgRes, sessionTeamRes] = await Promise.all([
+      supabase.from('session_guides').select('session_id')
+        .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted'),
+      supabase.rpc('my_session_team'),
+    ]);
+    if (!mountedRef.current) return;
+    setSessionTeamRows(sessionTeamRes.data || []);
+
+    const acceptedSessionIds = (sgRes.data || []).map(sg => sg.session_id);
+    const previousIds = new Set(sessions.map(s => s.id));
+    const sessionSetChanged = acceptedSessionIds.length !== sessions.length
+      || acceptedSessionIds.some(id => !previousIds.has(id));
+
+    if (acceptedSessionIds.length === 0) {
+      setSessions([]);
+      setSessionBookings([]);
+      setMyPay([]);
+      setBookings([]);
+      setCheckins([]);
+      setArrivals([]);
+      return;
+    }
+
+    const [sessionsRes, payRes] = await Promise.all([
+      supabase.from('tour_sessions').select('id, label, start_time, tour_date')
+        .eq('user_id', guideUserId).eq('tour_date', today).in('id', acceptedSessionIds)
+        .order('start_time', { ascending: true }),
+      supabase.from('session_guides').select('session_id, base_pay, bonus, checkin_time')
+        .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted').in('session_id', acceptedSessionIds),
+    ]);
+    if (!mountedRef.current) return;
+    const mySessions = sessionsRes.data || [];
+    setSessions(mySessions);
+    setMyPay(payRes.data || []);
+
+    if (!sessionSetChanged) return;
+
+    const sessionIds = mySessions.map(s => s.id);
+    if (sessionIds.length === 0) {
+      setSessionBookings([]);
+      setBookings([]);
+      setCheckins([]);
+      setArrivals([]);
+      return;
+    }
+
+    const [sbRes, arrRes] = await Promise.all([
+      supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id')
+        .eq('user_id', guideUserId).in('session_id', sessionIds),
+      supabase.from('guide_arrivals').select(ARRIVAL_COLUMNS)
+        .eq('user_id', guideUserId).eq('guide_id', guideId).in('session_id', sessionIds),
+    ]);
+    if (!mountedRef.current) return;
+    setSessionBookings(prev => mergeGuardingPending(sbRes.data || [], prev, pendingBookingRefs));
+    setArrivals(prev => mergeArrivalsGuardingPending(arrRes.data || [], prev, queuedArrivalSessionIds));
+
+    const refs = Array.from(new Set((sbRes.data || []).map(sb => sb.booking_ref)));
+    if (refs.length === 0) {
+      setBookings([]);
+      setCheckins([]);
+      return;
+    }
+    const [bRes, cRes] = await Promise.all([
+      supabase.from('bookings').select('*').eq('user_id', guideUserId).in('booking_ref', refs),
+      supabase.from('checkins').select('booking_ref, status, checked_in_at, display_name_override, ticket_photo')
+        .eq('user_id', guideUserId).eq('travel_date', today).in('booking_ref', refs),
+    ]);
+    if (!mountedRef.current) return;
+    setBookings(bRes.data || []);
+    setCheckins(prev => mergeGuardingPending(cRes.data || [], prev, pendingBookingRefs));
+  };
+
+  // Targeted refresh for the bookings realtime listener below — replaces a full loadData(). Keeps
+  // this guide's own booking rows (pax/status/customer edits, etc.) in sync, and re-runs the same
+  // best-effort auto-population pass loadData() performs on mount so a brand-new booking that now
+  // matches one of this guide's own built sessions gets linked without a full reload.
+  const refreshBookingsAndUnsessioned = async () => {
+    if (!guideUserId || !guideId) return;
+    const existingRefs = Array.from(new Set(sessionBookings.map(sb => sb.booking_ref)));
+
+    const [bRes, unsessionedRes] = await Promise.all([
+      existingRefs.length > 0
+        ? supabase.from('bookings').select('*').eq('user_id', guideUserId).in('booking_ref', existingRefs)
+        : Promise.resolve({ data: [] as Booking[] }),
+      supabase.rpc('my_company_unsessioned_bookings', { p_date: today }),
+    ]);
+    if (!mountedRef.current) return;
+    const unsessioned = (unsessionedRes.data as unknown as Booking[]) || [];
+    setUnsessionedBookings(unsessioned);
+
+    const autoMatches = matchBookingsToSessions(sessions, sessionBookings, unsessioned);
+    if (autoMatches.length === 0) {
+      setBookings(bRes.data || []);
+      return;
+    }
+
+    await autoPopulateSessionBookings(supabase, guideUserId, autoMatches);
+    const sessionIds = sessions.map(s => s.id);
+    const { data: freshLinks } = await supabase.from('session_bookings')
+      .select('session_id, booking_ref, allotted_guide_id').eq('user_id', guideUserId).in('session_id', sessionIds);
+    if (!mountedRef.current) return;
+    setSessionBookings(prev => mergeGuardingPending(freshLinks || [], prev, pendingBookingRefs));
+
+    const freshRefs = Array.from(new Set((freshLinks || []).map(sb => sb.booking_ref)));
+    if (freshRefs.length === 0) {
+      setBookings([]);
+      setCheckins([]);
+      return;
+    }
+    const [freshBookingsRes, freshCheckinsRes] = await Promise.all([
+      supabase.from('bookings').select('*').eq('user_id', guideUserId).in('booking_ref', freshRefs),
+      supabase.from('checkins').select('booking_ref, status, checked_in_at, display_name_override, ticket_photo')
+        .eq('user_id', guideUserId).eq('travel_date', today).in('booking_ref', freshRefs),
+    ]);
+    if (!mountedRef.current) return;
+    setBookings(freshBookingsRes.data || []);
+    setCheckins(prev => mergeGuardingPending(freshCheckinsRes.data || [], prev, pendingBookingRefs));
+  };
+
   // Keeps the long-lived realtime subscription (set up once per guide, below) always calling the
   // LATEST version of these refreshers — they close over `sessions`/`sessionBookings`, which
   // change far more often than the subscription itself needs to re-establish.
@@ -341,12 +473,10 @@ export default function GuideCheckin() {
   refreshSessionBookingsRef.current = refreshSessionBookings;
   const refreshArrivalsRef = useRef(refreshArrivals);
   refreshArrivalsRef.current = refreshArrivals;
-  // loadData itself closes over queuedArrivalSessionIds/pendingBookingRefs (both recomputed from
-  // the retry queue on every render), so it needs the same "always latest" ref treatment as the
-  // lighter refreshers above — the session_guides listener below can fire long after this effect
-  // last ran.
-  const loadDataRef = useRef(loadData);
-  loadDataRef.current = loadData;
+  const refreshSessionsAndTeamRef = useRef(refreshSessionsAndTeam);
+  refreshSessionsAndTeamRef.current = refreshSessionsAndTeam;
+  const refreshBookingsAndUnsessionedRef = useRef(refreshBookingsAndUnsessioned);
+  refreshBookingsAndUnsessionedRef.current = refreshBookingsAndUnsessioned;
 
   const handleManualRefresh = async () => {
     setRefreshing(true);
@@ -370,10 +500,12 @@ export default function GuideCheckin() {
   // RLS (my_session_booking_refs()) is what actually restricts which events this guide receives —
   // Realtime enforces RLS per-connection, so a guide never sees another session's events.
   //
-  // session_guides also listens here (unlike checkins/session_bookings, it triggers a full
-  // silent loadData() rather than a targeted refresher) — an assignment, reassignment or
-  // guide-to-guide transfer can change WHICH sessions this guide even has, not just details on
-  // sessions already known, so only re-deriving the whole accepted-session set is correct.
+  // session_guides and bookings each get their own targeted refresher (refreshSessionsAndTeam /
+  // refreshBookingsAndUnsessioned, defined above) rather than a full loadData() — an assignment,
+  // reassignment or guide-to-guide transfer can change WHICH sessions this guide has, and a new
+  // booking can newly match one of this guide's sessions, so both still re-derive their own slice
+  // of state correctly; they just skip the queries loadData() runs unconditionally on every mount
+  // (fetchCompanyGuides, etc.) that these events never actually affect.
   useEffect(() => {
     if (!guideUserId) return;
 
@@ -384,13 +516,13 @@ export default function GuideCheckin() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'session_bookings', filter: `user_id=eq.${guideUserId}` },
         () => { refreshSessionBookingsRef.current(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'session_guides', filter: `user_id=eq.${guideUserId}` },
-        () => { loadDataRef.current(true); })
+        () => { refreshSessionsAndTeamRef.current(); })
       // A booking arriving/changing — re-derive the unsessioned list and re-run auto-population
       // against this guide's own sessions. Best-effort under today's RLS (see loadData's own
       // comment on my_company_unsessioned_bookings()); harmless either way, and the owner's page
       // performing the same write is the reliable path for a genuinely brand-new booking.
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings', filter: `user_id=eq.${guideUserId}` },
-        () => { loadDataRef.current(true); })
+        () => { refreshBookingsAndUnsessionedRef.current(); })
       .subscribe();
 
     return () => {

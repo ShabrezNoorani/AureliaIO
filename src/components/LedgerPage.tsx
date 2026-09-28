@@ -5,7 +5,6 @@ import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { syncMasterData } from '@/lib/gsheetSync';
 import { shortProductCode } from '@/lib/utils';
-import { generateBookingInvoice } from '@/lib/generateInvoice';
 import { EMPTY_BOOKING, type Booking } from '@/lib/useBookings';
 import { saveBooking } from '@/lib/bookingActions';
 import BookingPanel from './BookingPanel';
@@ -243,6 +242,13 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   const handleEdit = (b: Booking) => {
     setEditBooking(b);
     setPanelOpen(true);
+  };
+
+  // jsPDF (+ jspdf-autotable) is a heavy dependency only ever needed for this one action — loaded
+  // on demand instead of bundled into the app's initial download.
+  const handleDownloadInvoice = async (b: any) => {
+    const { generateBookingInvoice } = await import('@/lib/generateInvoice');
+    generateBookingInvoice(b, profile?.company_name || 'AURELIA Suite');
   };
 
   const handleDelete = async (b: any) => {
@@ -530,7 +536,7 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                           case 'guide': return <span className="text-muted-foreground">{b.assigned_guide || '—'}</span>;
                           case 'actions': return (
                             <div className="flex gap-2">
-                              <button onClick={() => generateBookingInvoice(b, profile?.company_name || 'AURELIA Suite')} className="p-1 px-1.5 rounded transition-colors text-gold border border-gold/20 hover:bg-gold/10" title="Download Invoice">
+                              <button onClick={() => handleDownloadInvoice(b)} className="p-1 px-1.5 rounded transition-colors text-gold border border-gold/20 hover:bg-gold/10" title="Download Invoice">
                                 <FileDown size={12} />
                               </button>
                               <button onClick={() => handleEdit(b)} className="p-1 px-1.5 rounded transition-colors bg-muted" style={{ color: 'hsl(var(--theme-text-sec))' }}>
