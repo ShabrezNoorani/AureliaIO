@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CheckCircle2, XCircle, Phone, MessageCircle, Pencil, Check, X, CloudAlert } from 'lucide-react';
 import CheckinPhotoThumb from './CheckinPhotoThumb';
+import { normalizeTime } from '@/lib/utils';
 
 export interface GuestCardBooking {
   id: string;
@@ -8,6 +9,10 @@ export interface GuestCardBooking {
   customer_name: string;
   customer_phone?: string | null;
   travel_date: string;
+  /** THIS booking's own tour time — a session can merge guests booked for different times, so
+      the card must always show the booking's own travel_time, never the session's start_time or
+      another guest's. */
+  travel_time?: string | null;
   product_name?: string | null;
   product_code?: string | null;
   /** The specific tour option the guest booked — real column: bookings.option_name. */
@@ -95,6 +100,9 @@ export default function GuestCard({
 
   const name = displayName && displayName.trim() ? displayName : booking.customer_name;
   const locked = isCheckedIn || isNoShow || !!isCancelled;
+  // This booking's own tour time, normalized to plain "HH:MM" — never the session's time or
+  // another guest's, since one session card can merge guests booked for different times.
+  const time = normalizeTime(booking.travel_time) || booking.travel_time || null;
   const canEditName = !!(editableName && isOwner) && !isCancelled;
 
   const startEditing = () => {
@@ -156,6 +164,11 @@ export default function GuestCard({
             >
               {name}
             </span>
+            {time && (
+              <span className="text-[9px] font-black text-gold bg-gold/10 px-1.5 py-0.5 rounded shrink-0" title="Tour time">
+                {time}
+              </span>
+            )}
             {isCancelled && (
               <span className="text-[8px] font-black uppercase tracking-wide bg-red-600/10 text-red-700/80 px-1.5 py-0.5 rounded shrink-0">
                 Cancelled
