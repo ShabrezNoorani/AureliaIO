@@ -301,10 +301,13 @@ export default function GuideDashboard() {
 
   const handleDownloadInvoice = async () => {
     if (!selectedGuide) return;
-    const guideAsns = assignments.filter(a => 
-      a.guide_id === selectedGuide.id && 
-      a.travel_date >= invoiceDates.from && 
-      a.travel_date <= invoiceDates.to
+    // allAssignments (imported + unified session-based pay), not the raw imported-only
+    // `assignments` — otherwise a guide's session-based tours/pay would silently never appear on
+    // their invoice even though they're already counted in every on-screen total.
+    const guideAsns = allAssignments.filter(a =>
+      a.guide_id === selectedGuide.id &&
+      (a.travel_date || '') >= invoiceDates.from &&
+      (a.travel_date || '') <= invoiceDates.to
     );
     
     if (guideAsns.length === 0) {

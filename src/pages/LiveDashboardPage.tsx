@@ -26,6 +26,17 @@ interface Booking {
   travel_time: string | null;
   gross_revenue: number | null;
   net_profit: number | null;
+  /** Booking-level cost columns — used to recompute profit live (see moneyToday) rather than
+      trusting the stored net_profit column, which predates per-session guide pay and would
+      otherwise silently omit it. guide_cost specifically is only ever a FALLBACK for a booking
+      not linked to any tour_session; a session-linked booking's cost comes from that session's
+      session_guides pay instead (see sessionedBookingRefsToday), never both. */
+  ticket_cost: number | null;
+  extra_cost: number | null;
+  gyg_cost: number | null;
+  commission_amount: number | null;
+  marketplace_fee: number | null;
+  guide_cost: number | null;
   pax_adult: number | null;
   pax_youth: number | null;
   pax_child: number | null;
@@ -49,6 +60,10 @@ interface SessionGuideRow {
   session_id: string;
   guide_id: string;
   status: string;
+  /** The real, current source of truth for guide cost (see moneyToday) — bookings.guide_cost is
+      stale/unused now that pay is set per session. */
+  base_pay: number | null;
+  bonus: number | null;
 }
 
 interface Guide {
@@ -190,6 +205,10 @@ export default function LiveDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [showMoney, setShowMoney] = useState(false);
   const [now, setNow] = useState(new Date());
+  // Reflects the realtime channel's own connection state in the UI, not just the console — a dead
+  // subscription (missing publication entry, RLS issue, dropped socket) must never look identical
+  // to a healthy, quiet board.
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
 
   // Live notification streams — purely additive to the existing summary containers, purely
   // in-app (no browser push). Capped to the newest STREAM_CAP entries; older ones just drop off
@@ -253,7 +272,7 @@ export default function LiveDashboardPage() {
     if (sessionIds.length > 0) {
       const [sbRes, sgRes] = await Promise.all([
         supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
-        supabase.from('session_guides').select('session_id, guide_id, status').eq('user_id', user.id).in('session_id', sessionIds),
+        supabase.from('session_guides').select('session_id, guide_id, status, base_pay, bonus').eq('user_id', user.id).in('session_id', sessionIds),
       ]);
       if (!mountedRef.current) return;
       setSessionBookings(sbRes.data || []);
@@ -380,13 +399,16 @@ export default function LiveDashboardPage() {
         (payload) => { pushCheckinNotice(payload.new as Checkin); })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'checkins', filter: `user_id=eq.${user.id}` },
         (payload) => { pushCheckinNotice(payload.new as Checkin); })
-      // Surfaces a failed/dropped subscription in the console — this channel otherwise fails
-      // silently (e.g. a table missing from the `supabase_realtime` publication produces no error
-      // at all, just no events; this at least catches CHANNEL_ERROR/TIMED_OUT/CLOSED so a dead
-      // board doesn't look identical to a quiet one).
+      // Surfaces a failed/dropped subscription both in the console AND in the header badge below
+      // (see realtimeStatus) — this channel otherwise fails silently (e.g. a table missing from
+      // the `supabase_realtime` publication produces no error at all, just no events), so a dead
+      // board would otherwise look identical to a quiet one to anyone actually looking at it.
       .subscribe((status, err) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        if (status === 'SUBSCRIBED') {
+          setRealtimeStatus('live');
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           console.error(`[LiveDashboard] realtime subscription ${status}`, err);
+          setRealtimeStatus('error');
         }
       });
     return () => { supabase.removeChannel(channel); };
@@ -428,12 +450,12 @@ export default function LiveDashboardPage() {
   }, 0), [checkedInRows, todayBookingByRef]);
   const todaySessions = useMemo(() => sessions.filter((s) => s.tour_date === today), [sessions, today]);
   const tomorrowSessions = useMemo(() => sessions.filter((s) => s.tour_date === tomorrow), [sessions, tomorrow]);
+  const todaySessionIds = useMemo(() => new Set(todaySessions.map((s) => s.id)), [todaySessions]);
   const guidesOnToday = useMemo(() => {
-    const todaySessionIds = new Set(todaySessions.map((s) => s.id));
     const ids = new Set<string>();
     sessionGuides.forEach((sg) => { if (sg.status === 'accepted' && todaySessionIds.has(sg.session_id)) ids.add(sg.guide_id); });
     return ids.size;
-  }, [sessionGuides, todaySessions]);
+  }, [sessionGuides, todaySessionIds]);
   const checkinPct = paxExpected > 0 ? Math.round((paxCheckedIn / paxExpected) * 100) : 0;
 
   // ── CHECKING IN NOW ───────────────────────────────────────────────────────────────────────
@@ -514,23 +536,57 @@ export default function LiveDashboardPage() {
   const newBookingsFeed = useMemo(() => recentBookings.filter((b) => !isCancelled(b.status)), [recentBookings]);
 
   // ── TODAY'S MONEY ─────────────────────────────────────────────────────────────────────────
+  // Profit is recomputed live from cost components rather than trusting the stored
+  // bookings.net_profit column, which predates per-session guide pay (session_guides.base_pay/
+  // bonus) and would otherwise silently show a stale, too-high profit. A booking already linked
+  // to one of today's sessions gets its guide cost from that session's pay (summed once below,
+  // per session-guide, independent of how many bookings the session has) — its own guide_cost
+  // column is a FALLBACK, used only when the booking isn't linked to any session at all, so guide
+  // cost is never counted twice for the same booking.
+  const sessionedBookingRefsToday = useMemo(() => {
+    const set = new Set<string>();
+    sessionBookings.forEach((sb) => { if (todaySessionIds.has(sb.session_id)) set.add(sb.booking_ref); });
+    return set;
+  }, [sessionBookings, todaySessionIds]);
+
   const moneyToday = useMemo(() => {
     let revenue = 0;
-    let profit = 0;
+    let bookingCosts = 0;
     todayBookings.forEach((b) => {
       if (isCancelled(b.status)) return;
       revenue += Number(b.gross_revenue) || 0;
-      profit += Number(b.net_profit) || 0;
+      bookingCosts += (Number(b.ticket_cost) || 0) + (Number(b.extra_cost) || 0) + (Number(b.gyg_cost) || 0)
+        + (Number(b.commission_amount) || 0) + (Number(b.marketplace_fee) || 0);
+      if (!sessionedBookingRefsToday.has(b.booking_ref)) {
+        bookingCosts += Number(b.guide_cost) || 0;
+      }
     });
-    return { revenue, profit };
-  }, [todayBookings]);
+
+    // Session-based guide pay — summed once per (session, guide) row, never per booking, so a
+    // session with many bookings can never inflate this.
+    let sessionGuideCost = 0;
+    sessionGuides.forEach((sg) => {
+      if (sg.status !== 'accepted' || !todaySessionIds.has(sg.session_id)) return;
+      sessionGuideCost += (Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0);
+    });
+
+    return { revenue, profit: revenue - bookingCosts - sessionGuideCost };
+  }, [todayBookings, sessionGuides, todaySessionIds, sessionedBookingRefsToday]);
 
   // ── THIS MONTH — EARNING (travel date) ───────────────────────────────────────────────────
-  // Sum of gross_revenue for bookings whose TRAVEL happens this calendar month — grows as this
-  // month's tours actually run, regardless of when they were booked.
-  const monthEarningTravel = useMemo(() => (
-    monthTravelBookings.reduce((s, b) => s + (isCancelled(b.status) ? 0 : (Number(b.gross_revenue) || 0)), 0)
-  ), [monthTravelBookings]);
+  // Revenue + count of bookings whose TRAVEL happens this calendar month — grows as this month's
+  // tours actually run, regardless of when they were booked. Same {revenue, count} shape as
+  // monthBookedStats below so both "This Month" tiles read the same way: big money, small count.
+  const monthTravelStats = useMemo(() => {
+    let revenue = 0;
+    let count = 0;
+    monthTravelBookings.forEach((b) => {
+      if (isCancelled(b.status)) return;
+      revenue += Number(b.gross_revenue) || 0;
+      count += 1;
+    });
+    return { revenue, count };
+  }, [monthTravelBookings]);
 
   // ── THIS MONTH — BOOKINGS (booking date) ─────────────────────────────────────────────────
   // Count + gross_revenue of bookings MADE this calendar month, regardless of travel date — a
@@ -565,11 +621,22 @@ export default function LiveDashboardPage() {
         <div className="flex flex-wrap items-start justify-between gap-5">
           <div>
             <div className="flex items-center gap-2">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-60" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600" />
-              </span>
-              <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-green-700">Live</span>
+              {realtimeStatus === 'error' ? (
+                <>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-red-600 shrink-0" />
+                  <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-red-700">Disconnected</span>
+                </>
+              ) : (
+                <>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-60" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600" />
+                  </span>
+                  <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-green-700">
+                    {realtimeStatus === 'live' ? 'Live' : 'Connecting…'}
+                  </span>
+                </>
+              )}
             </div>
             <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight mt-1">Live Board</h1>
             <p className="text-muted-foreground font-medium mt-1 text-sm lg:text-base">{todayLabel}</p>
@@ -581,6 +648,15 @@ export default function LiveDashboardPage() {
             </span>
           </div>
         </div>
+
+        {/* Only shown when the realtime channel itself reports CHANNEL_ERROR/TIMED_OUT/CLOSED —
+            not shown while merely connecting, so a normal page load never flashes this. */}
+        {realtimeStatus === 'error' && (
+          <div className="flex items-center gap-2.5 bg-red-600/10 border border-red-600/25 text-red-700 text-xs sm:text-sm font-bold rounded-xl px-4 py-3">
+            <ShieldAlert size={16} className="shrink-0" />
+            Live updates disconnected — this board will not update on its own until refreshed. (Realtime subscription error)
+          </div>
+        )}
 
         {/* TODAY AT A GLANCE — the stat strip and check-in progress bar unified into one card
             (they're both "today's headline status") instead of floating as separate elements,
@@ -702,7 +778,8 @@ export default function LiveDashboardPage() {
               badgeClass="bg-sky-500/10 text-sky-700"
               icon={Plane}
               dotClass="bg-sky-500"
-              value={fmtE(monthEarningTravel)}
+              value={fmtE(monthTravelStats.revenue)}
+              count={`${monthTravelStats.count} tour${monthTravelStats.count !== 1 ? 's' : ''}`}
               sublabel={`Tours running in ${monthLabel} — grows as they happen`}
             />
             <MonthStatCard
@@ -711,76 +788,10 @@ export default function LiveDashboardPage() {
               badgeClass="bg-amber-500/10 text-amber-700"
               icon={ClipboardList}
               dotClass="bg-amber-500"
-              value={String(monthBookedStats.count)}
+              value={fmtE(monthBookedStats.revenue)}
+              count={`${monthBookedStats.count} booking${monthBookedStats.count !== 1 ? 's' : ''}`}
               sublabel={`Booked in ${monthLabel} — demand, may travel later`}
-              secondary={fmtE(monthBookedStats.revenue)}
             />
-          </div>
-        </section>
-
-        {/* LIVE ACTIVITY — two ephemeral "flying up" streams, additive to the persistent summary
-            containers elsewhere on the board (Checking In Now, New Bookings — Last 24h). Left/
-            right columns in landscape, stacked rows in portrait (xl breakpoint, same threshold
-            used for the Today/Tomorrow boxes) — always in normal page flow, never fixed/overlay,
-            so they can never cover another section. */}
-        <section className="space-y-4">
-          <h2 className="aurelia-section-title">Live Activity</h2>
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 lg:gap-6">
-            <NoticeStream
-              title="New Bookings"
-              icon={ClipboardList}
-              accentClass="text-sky-600"
-              emptyText="Waiting for the next booking…"
-            >
-              {newBookingNotices.map((n) => (
-                <div key={n.id} className="animate-rise-in relative bg-sky-500/[0.04] rounded-xl p-3.5 pr-8 border border-sky-500/15 border-l-[3px] border-l-sky-500/50">
-                  <button
-                    onClick={() => setNewBookingNotices((prev) => prev.filter((x) => x.id !== n.id))}
-                    className="absolute top-2.5 right-2.5 text-muted-foreground hover:text-foreground transition-colors"
-                    aria-label="Dismiss"
-                  >
-                    <X size={14} />
-                  </button>
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="font-bold text-sm leading-tight truncate">{n.customerName}</span>
-                    <span className="text-sky-600 font-extrabold text-sm shrink-0">{fmtE(n.revenue)}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{n.option}</p>
-                  <div className="flex items-center justify-between mt-1.5 text-[11px] font-bold text-muted-foreground">
-                    <span>{n.pax} pax</span>
-                    <span>{n.travelDate}</span>
-                  </div>
-                </div>
-              ))}
-            </NoticeStream>
-
-            <NoticeStream
-              title="Just Checked In"
-              icon={UserCheck}
-              accentClass="text-green-700"
-              emptyText="Waiting for the next check-in…"
-            >
-              {checkinNotices.map((n) => (
-                <div key={n.id} className="animate-rise-in relative bg-green-600/[0.04] rounded-xl p-3.5 pr-8 border border-green-600/15 border-l-[3px] border-l-green-600/50">
-                  <button
-                    onClick={() => setCheckinNotices((prev) => prev.filter((x) => x.id !== n.id))}
-                    className="absolute top-2.5 right-2.5 text-muted-foreground hover:text-foreground transition-colors"
-                    aria-label="Dismiss"
-                  >
-                    <X size={14} />
-                  </button>
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="font-bold text-sm leading-tight truncate">{n.name}</span>
-                    <span className="text-gold font-extrabold text-sm shrink-0">{n.pax} pax</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{n.option}</p>
-                  <div className="flex items-center justify-between mt-1.5 text-[11px] font-bold">
-                    <span className="text-green-700 uppercase tracking-wide">{n.guideName}</span>
-                    <span className="text-muted-foreground">{fmtTime(n.time)}</span>
-                  </div>
-                </div>
-              ))}
-            </NoticeStream>
           </div>
         </section>
 
@@ -868,6 +879,74 @@ export default function LiveDashboardPage() {
             </div>
           </div>
         </section>
+
+        {/* LIVE ACTIVITY — two ephemeral "flying up" streams, additive to the persistent summary
+            containers elsewhere on the board (Checking In Now, New Bookings — Last 24h). Sits at
+            the bottom of the board — the operational summaries above are what the owner actually
+            works from; this is a secondary, ambient "things just happened" strip. Left/right
+            columns in landscape, stacked rows in portrait (xl breakpoint, same threshold used for
+            the Today/Tomorrow boxes) — always in normal page flow, never fixed/overlay, so it can
+            never cover another section. */}
+        <section className="space-y-4">
+          <h2 className="aurelia-section-title">Live Activity</h2>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 lg:gap-6">
+            <NoticeStream
+              title="New Bookings"
+              icon={ClipboardList}
+              accentClass="text-sky-600"
+              emptyText="Waiting for the next booking…"
+            >
+              {newBookingNotices.map((n) => (
+                <div key={n.id} className="animate-rise-in relative bg-sky-500/[0.04] rounded-xl p-3.5 pr-8 border border-sky-500/15 border-l-[3px] border-l-sky-500/50">
+                  <button
+                    onClick={() => setNewBookingNotices((prev) => prev.filter((x) => x.id !== n.id))}
+                    className="absolute top-2.5 right-2.5 text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label="Dismiss"
+                  >
+                    <X size={14} />
+                  </button>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-bold text-sm leading-tight truncate">{n.customerName}</span>
+                    <span className="text-sky-600 font-extrabold text-sm shrink-0">{fmtE(n.revenue)}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{n.option}</p>
+                  <div className="flex items-center justify-between mt-1.5 text-[11px] font-bold text-muted-foreground">
+                    <span>{n.pax} pax</span>
+                    <span>{n.travelDate}</span>
+                  </div>
+                </div>
+              ))}
+            </NoticeStream>
+
+            <NoticeStream
+              title="Just Checked In"
+              icon={UserCheck}
+              accentClass="text-green-700"
+              emptyText="Waiting for the next check-in…"
+            >
+              {checkinNotices.map((n) => (
+                <div key={n.id} className="animate-rise-in relative bg-green-600/[0.04] rounded-xl p-3.5 pr-8 border border-green-600/15 border-l-[3px] border-l-green-600/50">
+                  <button
+                    onClick={() => setCheckinNotices((prev) => prev.filter((x) => x.id !== n.id))}
+                    className="absolute top-2.5 right-2.5 text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label="Dismiss"
+                  >
+                    <X size={14} />
+                  </button>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-bold text-sm leading-tight truncate">{n.name}</span>
+                    <span className="text-gold font-extrabold text-sm shrink-0">{n.pax} pax</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{n.option}</p>
+                  <div className="flex items-center justify-between mt-1.5 text-[11px] font-bold">
+                    <span className="text-green-700 uppercase tracking-wide">{n.guideName}</span>
+                    <span className="text-muted-foreground">{fmtTime(n.time)}</span>
+                  </div>
+                </div>
+              ))}
+            </NoticeStream>
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -898,20 +977,22 @@ function StatTile({ label, value, icon: Icon, accent }: { label: string; value: 
 }
 
 /** Like StatTile, but for the "This Month" row — carries an explicit date-basis badge (so
-    travel-based vs. booking-based is never ambiguous at a glance) and an optional secondary
-    figure (the booking tile's revenue, under its headline count). A small color dot (not a hard
-    border bar) ties each tile to its lens without competing with the badge for attention. */
+    travel-based vs. booking-based is never ambiguous at a glance). Money is always the headline
+    figure (biggest = most important); the supporting booking/tour count sits directly below it in
+    small text, same position and style on both tiles, so the two read as one consistent pattern. */
 function MonthStatCard({
-  title, badge, badgeClass, icon: Icon, dotClass, value, sublabel, secondary,
+  title, badge, badgeClass, icon: Icon, dotClass, value, count, sublabel,
 }: {
   title: string;
   badge: string;
   badgeClass: string;
   icon: LucideIcon;
   dotClass: string;
+  /** Big headline figure — always the money amount for this lens. */
   value: string;
+  /** Small supporting count below the money, e.g. "162 bookings" / "148 tours". */
+  count?: string;
   sublabel: string;
-  secondary?: string;
 }) {
   return (
     <div className="aurelia-card p-5 lg:p-6">
@@ -926,10 +1007,10 @@ function MonthStatCard({
         </span>
       </div>
       <p className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tabular-nums leading-none">{value}</p>
-      <p className="text-xs lg:text-sm text-muted-foreground font-medium mt-2">{sublabel}</p>
-      {secondary && (
-        <p className="text-sm lg:text-base font-extrabold text-gold mt-1.5">{secondary} total</p>
+      {count && (
+        <p className="text-xs lg:text-sm font-bold text-muted-foreground mt-1.5">{count}</p>
       )}
+      <p className="text-xs lg:text-sm text-muted-foreground font-medium mt-2">{sublabel}</p>
     </div>
   );
 }

@@ -1,19 +1,11 @@
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { shortProductCode, isCancelled } from './utils';
+import { assignmentEarned, type GuideAssignmentRow } from './guidePerformance';
 
 interface Guide {
   name: string;
   guide_number: string;
-}
-
-interface GuideAssignment {
-  travel_date: string;
-  travel_time: string;
-  product_code: string;
-  option_name: string;
-  pax_count: number;
-  calculated_pay: number;
 }
 
 interface Booking {
@@ -38,7 +30,12 @@ interface Booking {
 
 export function generateGuideInvoice(
   guide: Guide,
-  assignments: GuideAssignment[],
+  // Accepts the SAME unified rows the dashboards render (imported guide_assignments +
+  // session-based pay via sessionGuidesToAssignmentRows — see guidePerformance.ts) so this PDF
+  // can never fall behind what's shown on screen. A session-based row has no product_code/
+  // pax_count (that data lives on the booking, not session_guides) — handled per-field below
+  // rather than assumed present.
+  assignments: GuideAssignmentRow[],
   companyName: string,
   dateRange: { from: string, to: string }
 ) {
@@ -74,18 +71,27 @@ export function generateGuideInvoice(
   doc.text(`ID: ${guide.guide_number}`, 20, 67);
   doc.text(`Period: ${dateRange.from} to ${dateRange.to}`, 20, 72);
 
-  // Table
-  const tableData = assignments.map(a => [
-    a.travel_date,
-    a.travel_time,
-    a.product_code,
-    a.option_name,
-    a.pax_count,
-    `€${(a.calculated_pay / a.pax_count).toFixed(2)}`,
-    `€${a.calculated_pay.toFixed(2)}`
-  ]);
+  // Table — amount per row uses assignmentEarned(), the SAME earned-pay logic the dashboards use
+  // (total_pay if set, else rate_override or calculated_pay, plus bonus), so every figure here
+  // matches what the guide/owner already see on screen. A session-based row has no pax_count on
+  // its own row (pax lives on the booking, not session_guides) — shown as "—" rather than a
+  // fabricated or divide-by-zero rate.
+  const tableData = assignments.map(a => {
+    const amount = assignmentEarned(a);
+    const pax = a.pax_count;
+    const rate = pax && pax > 0 ? `€${(amount / pax).toFixed(2)}` : '—';
+    return [
+      a.travel_date || '—',
+      a.travel_time || '—',
+      a.product_code ? shortProductCode(a.product_code) : '—',
+      a.tour_name || a.option_name || 'Tour',
+      pax != null ? String(pax) : '—',
+      rate,
+      `€${amount.toFixed(2)}`,
+    ];
+  });
 
-  const total = assignments.reduce((sum, a) => sum + Number(a.calculated_pay), 0);
+  const total = assignments.reduce((sum, a) => sum + assignmentEarned(a), 0);
 
   doc.autoTable({
     startY: 85,
