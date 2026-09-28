@@ -127,15 +127,17 @@ export interface AssignmentStats {
   pendingAmount: number;
 }
 
-/** `todayStr` must be a YYYY-MM-DD local date string (see localDateStr in lib/utils). A tour on
-    today's date counts as upcoming — it hasn't necessarily happened yet. */
+/** `todayStr` must be a YYYY-MM-DD local date string (see localDateStr in lib/utils). A tour dated
+    today counts as DONE (owed), matching the session-based pay rule ("tour_date <= today, or the
+    guest was checked in, counts as happened") — a tour dated after today is the only thing that
+    counts as upcoming/not-yet-owed. */
 export function computeAssignmentStats(assignments: GuideAssignmentRow[], todayStr: string): AssignmentStats {
   let toursDone = 0, toursUpcoming = 0, totalEarned = 0, paidAmount = 0, pendingAmount = 0;
   for (const a of assignments) {
     const earned = assignmentEarned(a);
     totalEarned += earned;
     if (a.is_paid) paidAmount += earned; else pendingAmount += earned;
-    if (a.travel_date && a.travel_date < todayStr) toursDone++;
+    if (a.travel_date && a.travel_date <= todayStr) toursDone++;
     else toursUpcoming++;
   }
   return { toursDone, toursUpcoming, totalEarned, paidAmount, pendingAmount };
@@ -372,4 +374,156 @@ export function computeGuideOverviewRows(
   });
 
   return [...realRows, ...virtualRows];
+}
+
+// ─── SESSION-BASED PAY UNIFICATION ──────────────────────────────────────────────────────────
+// The NEW per-session pay model (session_guides.base_pay/bonus, one row per guide per
+// tour_session) is a completely separate table from the imported guide_assignments/guide_monthly
+// history. Rather than forking every stats/chart/list component to understand two pay sources,
+// sessionGuidesToAssignmentRows() converts session_guides rows into GuideAssignmentRow-shaped
+// objects — the SAME shape assignmentEarned/computeAssignmentStats/groupMonthlyEarnings/
+// TourHistoryList already consume — so a caller just concatenates
+// `[...assignments, ...sessionGuidesToAssignmentRows(...)]` and every existing function works on
+// both sources at once, unmodified. This IS the unification chokepoint.
+
+export interface SessionGuideForEarnings {
+  session_id: string;
+  guide_id: string;
+  status: string;
+  base_pay: number | null;
+  bonus: number | null;
+}
+
+export interface SessionForEarnings {
+  id: string;
+  tour_date: string;
+  start_time: string | null;
+  label: string | null;
+}
+
+/**
+ * Converts accepted session_guides rows (with a pay figure set) into GuideAssignmentRow-shaped
+ * objects. `id` is prefixed "session:" so it can never collide with a real guide_assignments.id.
+ * `calculated_pay` carries base_pay, `bonus` carries bonus, `total_pay`/`rate_override` are always
+ * null (assignmentEarned() then correctly falls back to calculated_pay+bonus for these rows).
+ *
+ * PAID is tracked per MONTH for session-based pay (via guide_monthly.payment_sent — see
+ * buildUnifiedMonthlyRows below), not per assignment — there's no per-session "mark paid" UI, by
+ * design, matching how paid-out pay already works for this app's monthly invoice cycle. So
+ * `is_paid` here is DERIVED from whether the guide's `${guide_id}:${YYYY-MM}` key is in
+ * `paidMonthsByGuide`, which the caller computes once from the guide_monthly rows it already has
+ * (`payment_sent === true`) — this is what lets computeAssignmentStats' existing paid/pending
+ * split work correctly for session-derived rows with zero changes to that function.
+ *
+ * "Happened" (owed, not upcoming) is intentionally just `tour_date <= todayStr`, delegated to
+ * computeAssignmentStats' own comparison — the task's fuller rule ("tour_date <= today, OR the
+ * guest was checked in") adds no additional cases in practice, since this app's check-in flow only
+ * ever operates on TODAY-dated sessions, which `<=` already covers.
+ */
+export function sessionGuidesToAssignmentRows(
+  sessionGuides: SessionGuideForEarnings[],
+  sessions: SessionForEarnings[],
+  paidMonthsByGuide: Set<string>
+): GuideAssignmentRow[] {
+  const sessionById = new Map(sessions.map((s) => [s.id, s]));
+  const rows: GuideAssignmentRow[] = [];
+  for (const sg of sessionGuides) {
+    if (sg.status !== 'accepted') continue;
+    if (sg.base_pay == null && sg.bonus == null) continue; // nothing to show — pay is optional
+    const s = sessionById.get(sg.session_id);
+    if (!s) continue;
+    const month = s.tour_date.slice(0, 7);
+    rows.push({
+      id: `session:${sg.session_id}:${sg.guide_id}`,
+      guide_id: sg.guide_id,
+      travel_date: s.tour_date,
+      travel_time: s.start_time,
+      tour_name: s.label,
+      tour_type: null,
+      language: null,
+      calculated_pay: sg.base_pay,
+      rate_override: null,
+      bonus: sg.bonus,
+      total_pay: null,
+      is_paid: paidMonthsByGuide.has(`${sg.guide_id}:${month}`),
+      paid_date: null,
+      product_code: null,
+      option_name: s.label,
+      booking_ref: null,
+      clients: null,
+      notes: null,
+      pax_count: null,
+    });
+  }
+  return rows;
+}
+
+export interface UnifiedMonthlyRow extends GuideMonthlyRow {
+  /** false for a real, already-persisted guide_monthly row. true for a month whose ONLY earnings
+   *  are session-based and has no guide_monthly row yet — marking a virtual row paid for the first
+   *  time must INSERT a new guide_monthly row (see insertGuideMonthlyPayment in
+   *  lib/guideRatingActions.ts) rather than updating one, since `id` here is synthetic. */
+  isVirtual: boolean;
+}
+
+/**
+ * Merges a guide's real (imported) guide_monthly rows with their session-based earnings into ONE
+ * per-month list, so the existing MonthlyInvoiceList shows both without double-counting:
+ * - A month with a real guide_monthly row stays authoritative for invoice/TVA/payment fields —
+ *   any session-based earnings for that SAME month are added into its amount_owed/tours_completed
+ *   (handles the rare case of overlap; imported history is normally past, session-based pay is
+ *   normally going-forward, so in practice these are usually disjoint months).
+ * - A month with ONLY session-based earnings and no guide_monthly row gets a synthetic
+ *   (isVirtual: true) row, unpaid by default, so it's visible and markable-paid even though
+ *   nothing has been persisted for it yet.
+ */
+export function buildUnifiedMonthlyRows(
+  guideId: string,
+  guideName: string,
+  monthlyRows: GuideMonthlyRow[],
+  sessionAssignments: GuideAssignmentRow[]
+): UnifiedMonthlyRow[] {
+  const realByMonth = new Map(monthlyRows.filter((m) => m.guide_id === guideId).map((m) => [m.month, m]));
+
+  const sessionByMonth = new Map<string, { total: number; count: number }>();
+  for (const a of sessionAssignments) {
+    if (!a.travel_date) continue;
+    const month = a.travel_date.slice(0, 7);
+    const cur = sessionByMonth.get(month) || { total: 0, count: 0 };
+    cur.total += assignmentEarned(a);
+    cur.count += 1;
+    sessionByMonth.set(month, cur);
+  }
+
+  const months = new Set([...realByMonth.keys(), ...sessionByMonth.keys()].filter((m): m is string => !!m));
+  const result: UnifiedMonthlyRow[] = [];
+  for (const month of months) {
+    const real = realByMonth.get(month);
+    const sessionEarn = sessionByMonth.get(month);
+    if (real) {
+      result.push({
+        ...real,
+        amount_owed: (real.amount_owed || 0) + (sessionEarn?.total || 0),
+        tours_completed: (real.tours_completed || 0) + (sessionEarn?.count || 0),
+        isVirtual: false,
+      });
+    } else if (sessionEarn) {
+      result.push({
+        id: `virtual-month:${guideId}:${month}`,
+        guide_id: guideId,
+        guide_name: guideName,
+        month,
+        tours_completed: sessionEarn.count,
+        amount_owed: sessionEarn.total,
+        invoice_received: null,
+        invoice_amount: null,
+        tva: null,
+        difference: null,
+        payment_sent: false,
+        payment_date: null,
+        isVirtual: true,
+      });
+    }
+  }
+  return result.sort((a, b) => (b.month || '').localeCompare(a.month || ''));
 }

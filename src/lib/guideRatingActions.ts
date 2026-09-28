@@ -140,3 +140,42 @@ export async function updateGuideMonthlyPayment(
   });
   return { error: null };
 }
+
+/**
+ * Marking a VIRTUAL monthly row paid for the first time (see buildUnifiedMonthlyRows in
+ * lib/guidePerformance.ts) — a month whose only earnings are session-based pay has no real
+ * guide_monthly row yet, so this INSERTs one instead of updating one. Once inserted, that month
+ * behaves exactly like any imported guide_monthly row on every later load (a real id, editable via
+ * updateGuideMonthlyPayment above).
+ */
+export async function insertGuideMonthlyPayment(
+  supabase: SupabaseClient,
+  userId: string,
+  row: { guide_id: string | null; guide_name: string | null; month: string | null; amount_owed: number | null; tours_completed: number | null },
+  next: InvoicePaymentUpdate
+): Promise<{ error: string | null; id: string | null }> {
+  const { data, error } = await supabase
+    .from('guide_monthly')
+    .insert({
+      user_id: userId,
+      guide_id: row.guide_id,
+      guide_name: row.guide_name,
+      month: row.month,
+      amount_owed: row.amount_owed,
+      tours_completed: row.tours_completed,
+      payment_sent: next.payment_sent,
+      payment_date: next.payment_date,
+    })
+    .select('id')
+    .single();
+  if (error) return { error: error.message, id: null };
+
+  await logChange(supabase, userId, {
+    tableName: 'guide_monthly',
+    recordId: data.id,
+    fieldName: 'payment_sent',
+    newValue: next,
+    description: `${next.payment_sent ? 'Marked paid' : 'Created'}: ${row.guide_name || 'Guide'}'s ${row.month || 'this month'} invoice (session-based earnings)`,
+  });
+  return { error: null, id: data.id };
+}

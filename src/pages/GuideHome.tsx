@@ -5,8 +5,9 @@ import { Calendar as CalendarIcon, Compass, Users } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
 import {
   computeAssignmentStats, computeRatingStats, computePunctualityStats, computeGuideScore,
-  groupMonthlyEarnings,
+  groupMonthlyEarnings, sessionGuidesToAssignmentRows, buildUnifiedMonthlyRows,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type ArrivalPunctualityRow,
+  type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
 } from '@/lib/guidePerformance';
 import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
 import GuideStatCards from '@/components/guide/GuideStatCards';
@@ -76,6 +77,13 @@ export default function GuideHome() {
   const [assignments, setAssignments] = useState<GuideAssignmentRow[]>([]);
   const [monthlyRows, setMonthlyRows] = useState<GuideMonthlyRow[]>([]);
   const [ratings, setRatings] = useState<GuideRatingRow[]>([]);
+  // NEW per-session pay (session_guides.base_pay/bonus) — this guide's own rows only, ALL dates
+  // (unlike the "My Tours" sessionGuides/sessions state above, which is future/today-scoped and
+  // carries no pay fields). Converted to GuideAssignmentRow shape below and folded into every
+  // stats/chart/list alongside the imported guide_assignments history — see
+  // lib/guidePerformance.ts's "SESSION-BASED PAY UNIFICATION" section.
+  const [perfSessionGuides, setPerfSessionGuides] = useState<SessionGuideForEarnings[]>([]);
+  const [perfSessions, setPerfSessions] = useState<SessionForEarnings[]>([]);
   // All-time, not scoped to any date range — the score reflects the guide's whole track record,
   // same as ratings/assignments above.
   const [arrivals, setArrivals] = useState<ArrivalPunctualityRow[]>([]);
@@ -175,9 +183,9 @@ export default function GuideHome() {
 
   useEffect(() => {
     const loadPerformance = async () => {
-      if (!guideId) return;
+      if (!guideId || !guideUserId) return;
       setPerfLoading(true);
-      const [aRes, mRes, rRes, arrRes] = await Promise.all([
+      const [aRes, mRes, rRes, arrRes, sgRes] = await Promise.all([
         supabase.from('guide_assignments')
           .select('id, guide_id, travel_date, travel_time, tour_name, tour_type, language, calculated_pay, rate_override, bonus, total_pay, is_paid, paid_date, product_code, option_name, booking_ref, clients, notes, pax_count')
           .eq('guide_id', guideId),
@@ -186,18 +194,53 @@ export default function GuideHome() {
           .eq('guide_id', guideId),
         supabase.from('guide_ratings').select('*').eq('guide_id', guideId),
         supabase.from('guide_arrivals').select('minutes_late').eq('guide_id', guideId),
+        // NEW per-session pay — this guide's own rows, ALL dates (past + future), unlike the "My
+        // Tours" sessionGuides state above.
+        supabase.from('session_guides').select('session_id, guide_id, status, base_pay, bonus').eq('guide_id', guideId),
       ]);
       setAssignments(aRes.data || []);
       setMonthlyRows(mRes.data || []);
       setRatings(rRes.data || []);
       setArrivals(arrRes.data || []);
+      const mySessionGuides = sgRes.data || [];
+      setPerfSessionGuides(mySessionGuides);
+      const perfSessionIds = Array.from(new Set(mySessionGuides.map(sg => sg.session_id)));
+      if (perfSessionIds.length > 0) {
+        const { data: perfSessData } = await supabase.from('tour_sessions')
+          .select('id, tour_date, start_time, label')
+          .eq('user_id', guideUserId).in('id', perfSessionIds);
+        setPerfSessions(perfSessData || []);
+      } else {
+        setPerfSessions([]);
+      }
       setPerfLoading(false);
     };
     loadPerformance();
-  }, [guideId]);
+  }, [guideId, guideUserId]);
 
-  const assignmentStats = useMemo(() => computeAssignmentStats(assignments, today), [assignments, today]);
-  const monthlyEarnings = useMemo(() => groupMonthlyEarnings(assignments), [assignments]);
+  // SESSION-BASED PAY UNIFICATION — same pattern as GuideDashboard.tsx's owner view: convert
+  // session_guides rows into GuideAssignmentRow shape and fold them into ONE combined array that
+  // every stats/chart/list below consumes, so this guide's own dashboard shows both imported
+  // history and session-based pay in one timeline without double-counting.
+  const paidMonthsByGuide = useMemo(
+    () => new Set(monthlyRows.filter(m => m.payment_sent && m.guide_id).map(m => `${m.guide_id}:${m.month}`)),
+    [monthlyRows]
+  );
+  const sessionAssignmentRows = useMemo(
+    () => sessionGuidesToAssignmentRows(perfSessionGuides, perfSessions, paidMonthsByGuide),
+    [perfSessionGuides, perfSessions, paidMonthsByGuide]
+  );
+  const allAssignments = useMemo(
+    () => [...assignments, ...sessionAssignmentRows],
+    [assignments, sessionAssignmentRows]
+  );
+  const unifiedMonthlyRows: UnifiedMonthlyRow[] = useMemo(
+    () => guideId ? buildUnifiedMonthlyRows(guideId, guideName || '', monthlyRows, sessionAssignmentRows) : [],
+    [guideId, guideName, monthlyRows, sessionAssignmentRows]
+  );
+
+  const assignmentStats = useMemo(() => computeAssignmentStats(allAssignments, today), [allAssignments, today]);
+  const monthlyEarnings = useMemo(() => groupMonthlyEarnings(allAssignments), [allAssignments]);
   const ratingStats = useMemo(
     () => computeRatingStats(ratings, assignmentStats.toursDone),
     [ratings, assignmentStats.toursDone]
@@ -340,12 +383,12 @@ export default function GuideHome() {
             <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Tours &amp; Pay</h2>
             <GuideStatCards stats={assignmentStats} />
             <GuideEarningsChart data={monthlyEarnings} />
-            <TourHistoryList assignments={assignments} todayStr={today} />
+            <TourHistoryList assignments={allAssignments} todayStr={today} />
           </section>
 
           <section className="space-y-4">
             <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Invoices</h2>
-            <MonthlyInvoiceList rows={monthlyRows} />
+            <MonthlyInvoiceList rows={unifiedMonthlyRows} />
           </section>
 
           <section className="space-y-4">

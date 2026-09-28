@@ -557,68 +557,91 @@ export default function LiveDashboardPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="p-6 lg:p-10 space-y-8 max-w-[1800px] mx-auto">
+      <div className="p-5 sm:p-6 lg:p-10 space-y-8 lg:space-y-10 max-w-[1800px] mx-auto">
 
-        {/* HEADER */}
-        <div className="flex flex-wrap items-center justify-between gap-4">
+        {/* HEADER — a small "LIVE" pulse badge sits above the title (its own visual weight,
+            distinct from the page name) with the clock as a self-contained chip on the right,
+            rather than floating bare mono text — reads calmer, more like an instrument panel. */}
+        <div className="flex flex-wrap items-start justify-between gap-5">
           <div>
-            <div className="flex items-center gap-3">
-              <span className="relative flex h-3 w-3">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-60" />
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-600" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600" />
               </span>
-              <h1 className="text-3xl lg:text-4xl font-black tracking-tight">Live Board</h1>
+              <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-green-700">Live</span>
             </div>
-            <p className="text-muted-foreground font-medium mt-1 text-base lg:text-lg">{todayLabel}</p>
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight mt-1">Live Board</h1>
+            <p className="text-muted-foreground font-medium mt-1 text-sm lg:text-base">{todayLabel}</p>
           </div>
-          <div className="flex items-center gap-2 text-3xl lg:text-4xl font-mono font-black text-gold tabular-nums">
-            <Clock size={28} className="lg:hidden" />
-            <Clock size={32} className="hidden lg:block" />
-            <span>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+          <div className="flex items-center gap-2.5 px-4 py-2.5 lg:px-5 lg:py-3 rounded-2xl bg-card border border-border shadow-sm">
+            <Clock size={20} className="text-gold shrink-0" />
+            <span className="text-xl sm:text-2xl lg:text-3xl font-bold font-mono text-foreground tabular-nums">
+              {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
           </div>
         </div>
 
-        {/* TOP STAT STRIP */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
-          <StatCard label="Pax Expected Today" value={paxExpected} icon={Users} accent="blue" />
-          <StatCard label="Pax Checked In" value={paxCheckedIn} icon={CheckCircle2} accent="green" />
-          <StatCard label="Tours Today" value={todaySessions.length} icon={CalendarIcon} accent="gold" />
-          <StatCard label="Guides On Today" value={guidesOnToday} icon={UserCheck} accent="purple" />
-        </div>
+        {/* TODAY AT A GLANCE — the stat strip and check-in progress bar unified into one card
+            (they're both "today's headline status") instead of floating as separate elements,
+            so the most important numbers read as one coherent block. */}
+        <section className="aurelia-card p-5 sm:p-6 lg:p-8">
+          <h2 className="aurelia-section-title mb-5">Today at a Glance</h2>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
+            <StatTile label="Pax Expected" value={paxExpected} icon={Users} accent="blue" />
+            <StatTile label="Pax Checked In" value={paxCheckedIn} icon={CheckCircle2} accent="green" />
+            <StatTile label="Tours Today" value={todaySessions.length} icon={CalendarIcon} accent="gold" />
+            <StatTile label="Guides On Today" value={guidesOnToday} icon={UserCheck} accent="purple" />
+          </div>
+          <div className="mt-6 lg:mt-8 pt-5 lg:pt-6 border-t border-border/60">
+            <div className="flex items-center justify-between mb-2.5">
+              <span className="text-xs lg:text-sm font-bold text-muted-foreground uppercase tracking-wide">Check-in Progress</span>
+              <span className="text-xl lg:text-2xl font-extrabold text-gold tabular-nums">{checkinPct}%</span>
+            </div>
+            <div className="h-3 lg:h-3.5 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-gold transition-all duration-700 ease-out rounded-full" style={{ width: `${checkinPct}%` }} />
+            </div>
+          </div>
+        </section>
 
         {/* STAFFING ALERTS — the at-a-glance "does anything in the next 5 days need another
             guide" view, so the owner never has to hunt date by date. Admin-only (this whole page
             already is — see the file-top note); guides never see this. Live via the SAME
             realtime subscription that already drives every other section (session_guides/
-            session_bookings/bookings/tour_sessions changes all re-run loadData()). */}
-        <div className={`aurelia-card p-5 lg:p-6 ${staffingAlerts.length > 0 ? 'border-l-[4px] border-l-red-600' : ''}`}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
+            session_bookings/bookings/tour_sessions changes all re-run loadData()). Collapses to
+            a single calm line when clear; expands with a red-tinted zone only when something
+            actually needs attention. */}
+        <section className={`rounded-2xl border shadow-sm transition-colors ${
+          staffingAlerts.length > 0 ? 'border-red-600/25 bg-red-600/[0.025] p-5 lg:p-6' : 'border-border bg-card px-5 py-4 lg:px-6'
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
               {staffingAlerts.length > 0
-                ? <ShieldAlert size={20} className="text-red-600" />
-                : <ShieldCheck size={20} className="text-green-600" />}
-              <h2 className="text-lg lg:text-xl font-black uppercase tracking-widest">Staffing Alerts</h2>
+                ? <ShieldAlert size={18} className="text-red-600 shrink-0" />
+                : <ShieldCheck size={18} className="text-green-600 shrink-0" />}
+              <h2 className="aurelia-section-title shrink-0">Staffing Alerts</h2>
+              {staffingAlerts.length === 0 && (
+                <span className="text-sm text-muted-foreground truncate">All staffed — next 5 days clear</span>
+              )}
             </div>
             {staffingAlerts.length > 0 && (
-              <span className="text-xs font-black uppercase tracking-widest px-2.5 py-1 rounded-full bg-red-600/15 text-red-700">
+              <span className="text-[10px] font-extrabold uppercase tracking-wide px-2.5 py-1 rounded-full bg-red-600/15 text-red-700 shrink-0">
                 {staffingAlerts.length} session{staffingAlerts.length !== 1 ? 's' : ''}
               </span>
             )}
           </div>
-          {staffingAlerts.length === 0 ? (
-            <p className="text-muted-foreground text-sm italic py-4 text-center">
-              All staffed — nothing in the next 5 days needs another guide.
-            </p>
-          ) : (
-            <div className="space-y-2.5">
+          {staffingAlerts.length > 0 && (
+            <div className="space-y-2.5 mt-4">
               {staffingAlerts.map((a) => (
-                <div key={a.sessionId} className="flex flex-wrap items-center justify-between gap-3 bg-red-600/[0.04] border border-red-600/20 rounded-xl p-3.5">
+                <div key={a.sessionId} className="flex flex-wrap items-center justify-between gap-3 bg-card border border-red-600/15 rounded-xl p-3.5 lg:p-4 shadow-sm">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-black text-red-700 uppercase tracking-wide">{fmtShortDate(a.tourDate)}</span>
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-[10px] font-extrabold text-red-700 uppercase tracking-wide bg-red-600/10 px-2 py-0.5 rounded-full shrink-0">
+                        {fmtShortDate(a.tourDate)}
+                      </span>
                       <span className="font-bold text-sm truncate">{a.label}</span>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">
+                    <p className="text-xs text-muted-foreground">
                       Tour {a.startTime || '—'} &middot; {a.guideCount} guide{a.guideCount !== 1 ? 's' : ''} &middot; {a.totalPax} pax
                     </p>
                     <p className="text-xs font-semibold text-red-700 mt-1">{a.reasons.join(' · ')}</p>
@@ -627,274 +650,285 @@ export default function LiveDashboardPage() {
               ))}
             </div>
           )}
-        </div>
-
-        {/* OVERALL CHECK-IN PROGRESS */}
-        <div className="aurelia-card p-5 lg:p-6">
-          <div className="flex items-center justify-between mb-2.5">
-            <span className="text-sm lg:text-base font-bold uppercase tracking-widest text-muted-foreground">
-              Overall Check-in Progress
-            </span>
-            <span className="text-2xl lg:text-3xl font-black text-gold tabular-nums">{checkinPct}%</span>
-          </div>
-          <div className="h-4 lg:h-5 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-gold transition-all duration-700 ease-out" style={{ width: `${checkinPct}%` }} />
-          </div>
-        </div>
-
-        {/* TODAY'S MONEY — prominent, near the top ("motivating to see"), but still HIDDEN BY
-            DEFAULT behind its own toggle so the screen stays safe to leave on a monitor others
-            can see. Revealed values are sized to match the top stat strip's big numbers, not the
-            smaller figures used elsewhere on the board. */}
-        <section>
-          <button
-            onClick={() => setShowMoney((v) => !v)}
-            className="w-full flex items-center justify-between gap-3 aurelia-card p-5 lg:p-6 hover:border-gold/30 transition-colors"
-          >
-            <span className="text-lg lg:text-xl font-black uppercase tracking-widest">Today's Money</span>
-            <span className="flex items-center gap-2 text-xs font-bold uppercase text-muted-foreground">
-              {showMoney ? <><EyeOff size={16} /> Hide</> : <><Eye size={16} /> Tap to reveal</>}
-            </span>
-          </button>
-          {showMoney && (
-            <div className="grid grid-cols-2 gap-4 lg:gap-6 mt-4 animate-fade-in">
-              <div className="aurelia-card p-5 lg:p-6 border-l-[4px] border-l-green-600">
-                <p className="text-xs lg:text-sm font-bold text-muted-foreground uppercase tracking-widest mb-2">Revenue</p>
-                <p className="text-4xl lg:text-6xl font-black tabular-nums leading-none">{fmtE(moneyToday.revenue)}</p>
-              </div>
-              <div className="aurelia-card p-5 lg:p-6 border-l-[4px] border-l-gold">
-                <p className="text-xs lg:text-sm font-bold text-muted-foreground uppercase tracking-widest mb-2">Profit</p>
-                <p className="text-4xl lg:text-6xl font-black tabular-nums leading-none">{fmtE(moneyToday.profit)}</p>
-              </div>
-            </div>
-          )}
         </section>
 
-        {/* THIS MONTH — two deliberately DISTINCT lenses on the same month, so travel-based vs.
-            booking-based is never confused: tile 1 is TRAVEL DATE (grows as this month's tours
-            actually happen), tile 2 is BOOKING DATE (demand landing this month, however far in
-            the future the travel itself is). Different accent color + an explicit "By ___ date"
-            badge on each. A third "Net Profit This Month" tile slots in here later, once
-            per-session guide cost exists — deliberately not computed yet, gross only. */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 lg:gap-6">
-          <MonthStatCard
-            title="This Month — Earning"
-            badge="By travel date"
-            badgeClass="bg-sky-500/10 text-sky-700"
-            icon={Plane}
-            accentClass="border-l-sky-500"
-            value={fmtE(monthEarningTravel)}
-            sublabel={`Tours running in ${monthLabel} — grows as they happen`}
-          />
-          <MonthStatCard
-            title="This Month — Bookings"
-            badge="By booking date"
-            badgeClass="bg-amber-500/10 text-amber-700"
-            icon={ClipboardList}
-            accentClass="border-l-amber-500"
-            value={String(monthBookedStats.count)}
-            sublabel={`Booked in ${monthLabel} — demand, may travel later`}
-            secondary={fmtE(monthBookedStats.revenue)}
-          />
-        </div>
+        {/* FINANCIALS — Today's Money (revealable) and This Month grouped under one label, since
+            they're both money-shaped numbers, distinct from the operational zones around them. */}
+        <section className="space-y-4 lg:space-y-5">
+          <h2 className="aurelia-section-title">Financials</h2>
+
+          {/* TODAY'S MONEY — prominent, but still HIDDEN BY DEFAULT behind its own toggle so the
+              screen stays safe to leave on a monitor others can see. */}
+          <div>
+            <button
+              onClick={() => setShowMoney((v) => !v)}
+              className="w-full flex items-center justify-between gap-3 aurelia-card p-5 lg:p-6 hover:border-gold/30 transition-colors"
+            >
+              <span className="text-base lg:text-lg font-bold">Today's Money</span>
+              <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                {showMoney ? <><EyeOff size={16} /> Hide</> : <><Eye size={16} /> Tap to reveal</>}
+              </span>
+            </button>
+            {showMoney && (
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:gap-6 mt-4 animate-fade-in">
+                <div className="aurelia-card p-5 lg:p-6">
+                  <div className="flex items-center gap-2 text-green-700 mb-2">
+                    <span className="w-2 h-2 rounded-full bg-green-600 shrink-0" />
+                    <p className="text-xs lg:text-sm font-bold uppercase tracking-wide">Revenue</p>
+                  </div>
+                  <p className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tabular-nums leading-none">{fmtE(moneyToday.revenue)}</p>
+                </div>
+                <div className="aurelia-card p-5 lg:p-6">
+                  <div className="flex items-center gap-2 text-gold mb-2">
+                    <span className="w-2 h-2 rounded-full bg-gold shrink-0" />
+                    <p className="text-xs lg:text-sm font-bold uppercase tracking-wide">Profit</p>
+                  </div>
+                  <p className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tabular-nums leading-none">{fmtE(moneyToday.profit)}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* THIS MONTH — two deliberately DISTINCT lenses on the same month, so travel-based vs.
+              booking-based is never confused: tile 1 is TRAVEL DATE (grows as this month's tours
+              actually happen), tile 2 is BOOKING DATE (demand landing this month, however far in
+              the future the travel itself is). Different accent color + an explicit "By ___ date"
+              badge on each. A third "Net Profit This Month" tile slots in here later, once
+              per-session guide cost exists — deliberately not computed yet, gross only. */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 lg:gap-6">
+            <MonthStatCard
+              title="This Month — Earning"
+              badge="By travel date"
+              badgeClass="bg-sky-500/10 text-sky-700"
+              icon={Plane}
+              dotClass="bg-sky-500"
+              value={fmtE(monthEarningTravel)}
+              sublabel={`Tours running in ${monthLabel} — grows as they happen`}
+            />
+            <MonthStatCard
+              title="This Month — Bookings"
+              badge="By booking date"
+              badgeClass="bg-amber-500/10 text-amber-700"
+              icon={ClipboardList}
+              dotClass="bg-amber-500"
+              value={String(monthBookedStats.count)}
+              sublabel={`Booked in ${monthLabel} — demand, may travel later`}
+              secondary={fmtE(monthBookedStats.revenue)}
+            />
+          </div>
+        </section>
 
         {/* LIVE ACTIVITY — two ephemeral "flying up" streams, additive to the persistent summary
             containers elsewhere on the board (Checking In Now, New Bookings — Last 24h). Left/
             right columns in landscape, stacked rows in portrait (xl breakpoint, same threshold
             used for the Today/Tomorrow boxes) — always in normal page flow, never fixed/overlay,
             so they can never cover another section. */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          <NoticeStream
-            title="New Bookings"
-            icon={ClipboardList}
-            accentClass="text-sky-600"
-            emptyText="Waiting for the next booking…"
-          >
-            {newBookingNotices.map((n) => (
-              <div key={n.id} className="animate-rise-in relative bg-muted rounded-xl p-3.5 pr-8 border border-border/50">
-                <button
-                  onClick={() => setNewBookingNotices((prev) => prev.filter((x) => x.id !== n.id))}
-                  className="absolute top-2.5 right-2.5 text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label="Dismiss"
-                >
-                  <X size={14} />
-                </button>
-                <div className="flex items-start justify-between gap-2">
-                  <span className="font-bold text-sm leading-tight truncate">{n.customerName}</span>
-                  <span className="text-sky-600 font-black text-sm shrink-0">{fmtE(n.revenue)}</span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">{n.option}</p>
-                <div className="flex items-center justify-between mt-1.5 text-[11px] font-bold text-muted-foreground">
-                  <span>{n.pax} pax</span>
-                  <span>{n.travelDate}</span>
-                </div>
-              </div>
-            ))}
-          </NoticeStream>
-
-          <NoticeStream
-            title="Just Checked In"
-            icon={UserCheck}
-            accentClass="text-green-700"
-            emptyText="Waiting for the next check-in…"
-          >
-            {checkinNotices.map((n) => (
-              <div key={n.id} className="animate-rise-in relative bg-muted rounded-xl p-3.5 pr-8 border border-border/50">
-                <button
-                  onClick={() => setCheckinNotices((prev) => prev.filter((x) => x.id !== n.id))}
-                  className="absolute top-2.5 right-2.5 text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label="Dismiss"
-                >
-                  <X size={14} />
-                </button>
-                <div className="flex items-start justify-between gap-2">
-                  <span className="font-bold text-sm leading-tight truncate">{n.name}</span>
-                  <span className="text-gold font-black text-sm shrink-0">{n.pax} pax</span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">{n.option}</p>
-                <div className="flex items-center justify-between mt-1.5 text-[11px] font-bold">
-                  <span className="text-green-700 uppercase tracking-wide">{n.guideName}</span>
-                  <span className="text-muted-foreground">{fmtTime(n.time)}</span>
-                </div>
-              </div>
-            ))}
-          </NoticeStream>
-        </div>
-
-        {/* MAIN GRID — single column in portrait, feed rail + content in landscape */}
-        <div className="grid grid-cols-1 2xl:grid-cols-[420px_1fr] gap-6 lg:gap-8 items-start">
-
-          {/* CHECKING IN NOW — the heartbeat */}
-          <div className="aurelia-card p-5 lg:p-6 2xl:sticky 2xl:top-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Sparkles size={20} className="text-gold" />
-              <h2 className="text-lg lg:text-xl font-black uppercase tracking-widest">Checking In Now</h2>
-            </div>
-            {checkingInFeed.length === 0 ? (
-              <p className="text-muted-foreground text-sm py-8 text-center italic">No check-ins yet today.</p>
-            ) : (
-              <div className="space-y-2.5 max-h-[560px] overflow-y-auto aurelia-scrollbar pr-1">
-                {checkingInFeed.map((c) => (
-                  <div key={c.bookingRef} className="animate-slide-in bg-muted rounded-xl p-3.5 border border-border/50">
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="font-bold text-base leading-tight truncate">{c.name}</span>
-                      <span className="text-gold font-black text-lg shrink-0">{c.pax}</span>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-0.5 truncate">{c.option}</p>
-                    <div className="flex items-center justify-between mt-1.5 text-xs font-bold">
-                      <span className="text-green-700 uppercase tracking-wide">{c.guideName}</span>
-                      <span className="text-muted-foreground">{fmtTime(c.checkedInAt)}</span>
-                    </div>
+        <section className="space-y-4">
+          <h2 className="aurelia-section-title">Live Activity</h2>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 lg:gap-6">
+            <NoticeStream
+              title="New Bookings"
+              icon={ClipboardList}
+              accentClass="text-sky-600"
+              emptyText="Waiting for the next booking…"
+            >
+              {newBookingNotices.map((n) => (
+                <div key={n.id} className="animate-rise-in relative bg-sky-500/[0.04] rounded-xl p-3.5 pr-8 border border-sky-500/15 border-l-[3px] border-l-sky-500/50">
+                  <button
+                    onClick={() => setNewBookingNotices((prev) => prev.filter((x) => x.id !== n.id))}
+                    className="absolute top-2.5 right-2.5 text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label="Dismiss"
+                  >
+                    <X size={14} />
+                  </button>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-bold text-sm leading-tight truncate">{n.customerName}</span>
+                    <span className="text-sky-600 font-extrabold text-sm shrink-0">{fmtE(n.revenue)}</span>
                   </div>
-                ))}
-              </div>
-            )}
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{n.option}</p>
+                  <div className="flex items-center justify-between mt-1.5 text-[11px] font-bold text-muted-foreground">
+                    <span>{n.pax} pax</span>
+                    <span>{n.travelDate}</span>
+                  </div>
+                </div>
+              ))}
+            </NoticeStream>
+
+            <NoticeStream
+              title="Just Checked In"
+              icon={UserCheck}
+              accentClass="text-green-700"
+              emptyText="Waiting for the next check-in…"
+            >
+              {checkinNotices.map((n) => (
+                <div key={n.id} className="animate-rise-in relative bg-green-600/[0.04] rounded-xl p-3.5 pr-8 border border-green-600/15 border-l-[3px] border-l-green-600/50">
+                  <button
+                    onClick={() => setCheckinNotices((prev) => prev.filter((x) => x.id !== n.id))}
+                    className="absolute top-2.5 right-2.5 text-muted-foreground hover:text-foreground transition-colors"
+                    aria-label="Dismiss"
+                  >
+                    <X size={14} />
+                  </button>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-bold text-sm leading-tight truncate">{n.name}</span>
+                    <span className="text-gold font-extrabold text-sm shrink-0">{n.pax} pax</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">{n.option}</p>
+                  <div className="flex items-center justify-between mt-1.5 text-[11px] font-bold">
+                    <span className="text-green-700 uppercase tracking-wide">{n.guideName}</span>
+                    <span className="text-muted-foreground">{fmtTime(n.time)}</span>
+                  </div>
+                </div>
+              ))}
+            </NoticeStream>
           </div>
+        </section>
 
-          {/* RIGHT COLUMN — Today's tours, tomorrow's tours, new bookings, money */}
-          <div className="space-y-8 min-w-0">
+        {/* OPERATIONS — the main working grid: sticky check-in rail in landscape, full-width
+            stacked in portrait/phone. */}
+        <section className="space-y-4">
+          <h2 className="aurelia-section-title">Operations</h2>
+          <div className="grid grid-cols-1 2xl:grid-cols-[400px_1fr] gap-5 lg:gap-8 items-start">
 
-            {/* TODAY / TOMORROW — each with its own Sessions/General toggle */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <DayBox
-                title="Today"
-                dateLabel={todayLabel}
-                defaultView="sessions"
-                sessionCards={todayTourCards}
-                general={todayGeneral}
-              />
-              <DayBox
-                title="Tomorrow"
-                dateLabel={tomorrowLabel}
-                defaultView="general"
-                sessionCards={tomorrowTourCards}
-                general={tomorrowGeneral}
-              />
-            </div>
-
-            {/* NEW BOOKINGS (LAST 24H) */}
-            <section>
-              <h2 className="text-lg lg:text-xl font-black uppercase tracking-widest mb-4">New Bookings — Last 24h</h2>
-              {newBookingsFeed.length === 0 ? (
-                <div className="aurelia-card p-6 text-center text-muted-foreground text-sm">No new bookings in the last 24 hours.</div>
+            {/* CHECKING IN NOW — the heartbeat */}
+            <div className="aurelia-card p-5 lg:p-6 2xl:sticky 2xl:top-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Sparkles size={18} className="text-gold" />
+                <h3 className="aurelia-section-title">Checking In Now</h3>
+              </div>
+              {checkingInFeed.length === 0 ? (
+                <p className="text-muted-foreground text-sm py-8 text-center italic">No check-ins yet today.</p>
               ) : (
-                <div className="aurelia-card divide-y divide-border max-h-[360px] overflow-y-auto aurelia-scrollbar">
-                  {newBookingsFeed.map((b) => (
-                    <div key={b.id} className="flex items-center justify-between gap-3 p-3.5">
-                      <div className="min-w-0">
-                        <p className="font-bold text-sm truncate">{b.customer_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {shortProductCode(b.product_code) || 'Unknown'} — {b.option_name || 'Standard'}
-                          <span className="mx-1">&middot;</span>
-                          {b.channel || 'Unknown'}
-                        </p>
-                        <p className="text-xs font-semibold text-foreground/70 mt-0.5">
-                          Travel: {fmtShortDate(b.travel_date)}
-                        </p>
+                <div className="space-y-2.5 max-h-[560px] overflow-y-auto aurelia-scrollbar pr-1">
+                  {checkingInFeed.map((c) => (
+                    <div key={c.bookingRef} className="animate-slide-in bg-muted/60 rounded-xl p-3.5 border border-border/50">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-bold text-base leading-tight truncate">{c.name}</span>
+                        <span className="text-gold font-extrabold text-lg shrink-0">{c.pax}</span>
                       </div>
-                      <span className="text-gold font-black text-sm shrink-0">{paxTotal(b)} pax</span>
+                      <p className="text-sm text-muted-foreground mt-0.5 truncate">{c.option}</p>
+                      <div className="flex items-center justify-between mt-1.5 text-xs font-bold">
+                        <span className="text-green-700 uppercase tracking-wide">{c.guideName}</span>
+                        <span className="text-muted-foreground">{fmtTime(c.checkedInAt)}</span>
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
-            </section>
+            </div>
 
+            {/* RIGHT COLUMN — Today's tours, tomorrow's tours, new bookings */}
+            <div className="space-y-6 lg:space-y-8 min-w-0">
+
+              {/* TODAY / TOMORROW — each with its own Sessions/General toggle */}
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 lg:gap-6">
+                <DayBox
+                  title="Today"
+                  dateLabel={todayLabel}
+                  defaultView="sessions"
+                  sessionCards={todayTourCards}
+                  general={todayGeneral}
+                />
+                <DayBox
+                  title="Tomorrow"
+                  dateLabel={tomorrowLabel}
+                  defaultView="general"
+                  sessionCards={tomorrowTourCards}
+                  general={tomorrowGeneral}
+                />
+              </div>
+
+              {/* NEW BOOKINGS (LAST 24H) */}
+              <div className="aurelia-card p-5 lg:p-6">
+                <h3 className="aurelia-section-title mb-4">New Bookings — Last 24h</h3>
+                {newBookingsFeed.length === 0 ? (
+                  <p className="text-muted-foreground text-sm italic text-center py-6">No new bookings in the last 24 hours.</p>
+                ) : (
+                  <div className="divide-y divide-border/70 -mx-1 max-h-[360px] overflow-y-auto aurelia-scrollbar">
+                    {newBookingsFeed.map((b) => (
+                      <div key={b.id} className="flex items-center justify-between gap-3 px-1 py-3">
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm truncate">{b.customer_name}</p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {shortProductCode(b.product_code) || 'Unknown'} — {b.option_name || 'Standard'}
+                            <span className="mx-1">&middot;</span>
+                            {b.channel || 'Unknown'}
+                          </p>
+                          <p className="text-xs font-semibold text-foreground/70 mt-0.5">
+                            Travel: {fmtShortDate(b.travel_date)}
+                          </p>
+                        </div>
+                        <span className="text-gold font-extrabold text-sm shrink-0">{paxTotal(b)} pax</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+            </div>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );
 }
 
-const STAT_ACCENTS: Record<string, string> = {
-  blue: 'border-l-blue-500',
-  green: 'border-l-green-500',
-  gold: 'border-l-gold',
-  purple: 'border-l-purple-500',
+const STAT_ACCENTS: Record<string, { chip: string; icon: string }> = {
+  blue: { chip: 'bg-blue-500/10', icon: 'text-blue-600' },
+  green: { chip: 'bg-green-500/10', icon: 'text-green-600' },
+  gold: { chip: 'bg-gold/10', icon: 'text-gold' },
+  purple: { chip: 'bg-purple-500/10', icon: 'text-purple-600' },
 };
 
-function StatCard({ label, value, icon: Icon, accent }: { label: string; value: number; icon: LucideIcon; accent: string }) {
+/** One tile inside the "Today at a Glance" card — a soft tinted icon chip above a big number,
+    rather than a loud colored border bar, so the NUMBER (not the label) carries the visual
+    weight. Nested directly in the parent card's grid rather than being its own elevated card, so
+    four related stats read as one glanceable group instead of four separate floating boxes. */
+function StatTile({ label, value, icon: Icon, accent }: { label: string; value: number; icon: LucideIcon; accent: string }) {
+  const a = STAT_ACCENTS[accent];
   return (
-    <div className={`aurelia-card p-5 lg:p-6 border-l-[4px] ${STAT_ACCENTS[accent]}`}>
-      <div className="flex items-center gap-2 text-muted-foreground mb-2">
-        <Icon size={16} />
-        <p className="text-xs lg:text-sm font-bold uppercase tracking-widest">{label}</p>
+    <div className="rounded-2xl p-4 lg:p-5 bg-muted/40 border border-border/60">
+      <div className={`inline-flex items-center justify-center w-9 h-9 rounded-xl mb-3 ${a.chip}`}>
+        <Icon size={16} className={a.icon} />
       </div>
-      <p className="text-4xl lg:text-6xl font-black tabular-nums leading-none">{value}</p>
+      <p className="text-[10px] lg:text-[11px] font-bold uppercase tracking-wide text-muted-foreground mb-1">{label}</p>
+      <p className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tabular-nums leading-none">{value}</p>
     </div>
   );
 }
 
-/** Like StatCard, but for the "This Month" row — carries an explicit date-basis badge (so
+/** Like StatTile, but for the "This Month" row — carries an explicit date-basis badge (so
     travel-based vs. booking-based is never ambiguous at a glance) and an optional secondary
-    figure (the booking tile's revenue, under its headline count). */
+    figure (the booking tile's revenue, under its headline count). A small color dot (not a hard
+    border bar) ties each tile to its lens without competing with the badge for attention. */
 function MonthStatCard({
-  title, badge, badgeClass, icon: Icon, accentClass, value, sublabel, secondary,
+  title, badge, badgeClass, icon: Icon, dotClass, value, sublabel, secondary,
 }: {
   title: string;
   badge: string;
   badgeClass: string;
   icon: LucideIcon;
-  accentClass: string;
+  dotClass: string;
   value: string;
   sublabel: string;
   secondary?: string;
 }) {
   return (
-    <div className={`aurelia-card p-5 lg:p-6 border-l-[4px] ${accentClass}`}>
-      <div className="flex items-center justify-between gap-2 mb-2">
+    <div className="aurelia-card p-5 lg:p-6">
+      <div className="flex items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2 text-muted-foreground min-w-0">
-          <Icon size={16} className="shrink-0" />
-          <p className="text-xs lg:text-sm font-bold uppercase tracking-widest truncate">{title}</p>
+          <span className={`w-2 h-2 rounded-full shrink-0 ${dotClass}`} />
+          <Icon size={15} className="shrink-0" />
+          <p className="text-xs lg:text-sm font-bold truncate">{title}</p>
         </div>
-        <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full shrink-0 ${badgeClass}`}>
+        <span className={`text-[10px] font-extrabold uppercase tracking-wide px-2 py-0.5 rounded-full shrink-0 ${badgeClass}`}>
           {badge}
         </span>
       </div>
-      <p className="text-4xl lg:text-5xl font-black tabular-nums leading-none">{value}</p>
+      <p className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tabular-nums leading-none">{value}</p>
       <p className="text-xs lg:text-sm text-muted-foreground font-medium mt-2">{sublabel}</p>
       {secondary && (
-        <p className="text-sm lg:text-base font-black text-gold mt-1.5">{secondary} total</p>
+        <p className="text-sm lg:text-base font-extrabold text-gold mt-1.5">{secondary} total</p>
       )}
     </div>
   );
@@ -918,10 +952,10 @@ function NoticeStream({
   return (
     <div className="aurelia-card p-5 lg:p-6">
       <div className="flex items-center gap-2 mb-4">
-        <Icon size={18} className={accentClass} />
-        <h2 className="text-lg lg:text-xl font-black uppercase tracking-widest">{title}</h2>
+        <Icon size={16} className={accentClass} />
+        <h3 className="aurelia-section-title">{title}</h3>
       </div>
-      <div className="h-[420px] overflow-hidden flex flex-col justify-end gap-2.5">
+      <div className="h-[380px] lg:h-[420px] overflow-hidden flex flex-col justify-end gap-2.5">
         {hasChildren ? children : (
           <p className="text-muted-foreground text-sm italic text-center">{emptyText}</p>
         )}
@@ -949,19 +983,19 @@ function DayBox({
     <div className="aurelia-card p-5 lg:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
-          <h2 className="text-lg lg:text-xl font-black uppercase tracking-widest">{title}</h2>
+          <h3 className="aurelia-section-title">{title}</h3>
           <p className="text-xs text-muted-foreground font-medium mt-0.5">{dateLabel}</p>
         </div>
         <div className="flex bg-muted p-1 rounded-xl shrink-0">
           <button
             onClick={() => setView('sessions')}
-            className={`min-h-9 px-3 text-[11px] font-bold uppercase tracking-widest rounded-lg transition-all ${view === 'sessions' ? 'bg-gold text-black' : 'text-muted-foreground'}`}
+            className={`min-h-9 px-3 text-[11px] font-bold uppercase tracking-wide rounded-lg transition-all ${view === 'sessions' ? 'bg-gold text-black' : 'text-muted-foreground'}`}
           >
             Sessions
           </button>
           <button
             onClick={() => setView('general')}
-            className={`min-h-9 px-3 text-[11px] font-bold uppercase tracking-widest rounded-lg transition-all ${view === 'general' ? 'bg-gold text-black' : 'text-muted-foreground'}`}
+            className={`min-h-9 px-3 text-[11px] font-bold uppercase tracking-wide rounded-lg transition-all ${view === 'general' ? 'bg-gold text-black' : 'text-muted-foreground'}`}
           >
             General
           </button>
@@ -974,9 +1008,9 @@ function DayBox({
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             {sessionCards.map((s) => (
-              <div key={s.id} className="bg-muted/50 border border-border rounded-xl p-4 space-y-2.5">
+              <div key={s.id} className="bg-muted/40 border border-border/70 rounded-xl p-4 space-y-2.5">
                 <div>
-                  <p className="font-black text-sm leading-snug truncate">{s.label}</p>
+                  <p className="font-bold text-sm leading-snug truncate">{s.label}</p>
                   <p className="text-xs text-muted-foreground font-medium mt-0.5">
                     {s.startTime ? `Check-in ${checkinTime(s.startTime)} · Tour ${s.startTime}` : '—'}
                   </p>
@@ -995,7 +1029,7 @@ function DayBox({
                       <span className="text-gold">{s.pct}%</span>
                     </div>
                     <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div className="h-full bg-gold transition-all duration-500" style={{ width: `${s.pct}%` }} />
+                      <div className="h-full bg-gold transition-all duration-500 rounded-full" style={{ width: `${s.pct}%` }} />
                     </div>
                   </div>
                 ) : (
@@ -1011,23 +1045,23 @@ function DayBox({
         <div className="space-y-4">
           {general.upcoming.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Upcoming</p>
+              <p className="text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground">Upcoming</p>
               {general.upcoming.map((g) => (
-                <div key={g.key} className="flex items-center justify-between gap-3 bg-muted/50 rounded-lg px-3 py-2">
+                <div key={g.key} className="flex items-center justify-between gap-3 bg-muted/40 rounded-lg px-3 py-2">
                   <div className="min-w-0">
                     <p className="text-sm font-bold truncate">{g.label}</p>
                     <p className="text-xs text-muted-foreground">{g.time} &middot; {g.count} booking{g.count !== 1 ? 's' : ''}</p>
                   </div>
-                  <span className="text-gold font-black text-sm shrink-0">{g.pax} pax</span>
+                  <span className="text-gold font-extrabold text-sm shrink-0">{g.pax} pax</span>
                 </div>
               ))}
             </div>
           )}
           {general.cancelled.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">Cancelled</p>
+              <p className="text-[10px] font-extrabold uppercase tracking-wide text-muted-foreground">Cancelled</p>
               {general.cancelled.map((b) => (
-                <div key={b.id} className="flex items-center justify-between gap-3 bg-muted/30 rounded-lg px-3 py-2 opacity-60">
+                <div key={b.id} className="flex items-center justify-between gap-3 bg-muted/20 rounded-lg px-3 py-2 opacity-60">
                   <div className="min-w-0">
                     <p className="text-sm font-bold truncate line-through">{b.customer_name}</p>
                     <p className="text-xs text-muted-foreground truncate line-through">{optionLabel(b)}</p>

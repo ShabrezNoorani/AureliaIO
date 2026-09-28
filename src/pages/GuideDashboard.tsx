@@ -8,12 +8,13 @@ import { localDateStr } from '@/lib/utils';
 import {
   computeGuideOverviewRows, computeAssignmentStats, computeRatingStats, computePunctualityStats,
   computeGuideScore, groupMonthlyEarnings, groupOrphanedMonthlyByName, getDateRangeBounds,
-  filterAssignmentsByDateRange,
+  filterAssignmentsByDateRange, assignmentEarned, sessionGuidesToAssignmentRows, buildUnifiedMonthlyRows,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type DateRangePreset,
-  type ArrivalPunctualityRow,
+  type ArrivalPunctualityRow, type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
 } from '@/lib/guidePerformance';
 import {
   verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, updateGuideMonthlyPayment,
+  insertGuideMonthlyPayment,
 } from '@/lib/guideRatingActions';
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import GuideEarningsChart from '@/components/guide/GuideEarningsChart';
@@ -38,6 +39,12 @@ export default function GuideDashboard() {
   // All-time, company-wide arrivals — the owner sees every guide's punctuality history, same
   // scope as ratings/assignments above. Score computation is per-guide (see detailGuideScore).
   const [arrivals, setArrivals] = useState<GuideArrivalRow[]>([]);
+  // NEW per-session pay (session_guides.base_pay/bonus) — company-wide, all dates. Converted to
+  // GuideAssignmentRow shape below (sessionAssignmentRows) and folded into every stats/chart/list
+  // alongside the imported guide_assignments history — see lib/guidePerformance.ts's "SESSION-BASED
+  // PAY UNIFICATION" section for the full rationale.
+  const [sessionGuidesForPay, setSessionGuidesForPay] = useState<SessionGuideForEarnings[]>([]);
+  const [sessionsForPay, setSessionsForPay] = useState<SessionForEarnings[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<DateRangePreset>('month');
 
@@ -60,7 +67,7 @@ export default function GuideDashboard() {
     if (!user) return;
     setLoading(true);
 
-    const [gRes, aRes, rRes, ratingsRes, monthlyRes, arrivalsRes] = await Promise.all([
+    const [gRes, aRes, rRes, ratingsRes, monthlyRes, arrivalsRes, sgRes, sessRes] = await Promise.all([
       supabase.from('guides').select('*').eq('user_id', user.id).order('name'),
       // Previously filtered to `sync_source in (gsheet_assignments, manual, null)`, which silently
       // excluded every row tagged `sync_source = 'import'` — that batch holds 96 of the 97 rows
@@ -78,6 +85,8 @@ export default function GuideDashboard() {
       supabase.from('guide_ratings').select('*').eq('user_id', user.id),
       supabase.from('guide_monthly').select('*').eq('user_id', user.id),
       supabase.from('guide_arrivals').select('guide_id, minutes_late').eq('user_id', user.id),
+      supabase.from('session_guides').select('session_id, guide_id, status, base_pay, bonus').eq('user_id', user.id),
+      supabase.from('tour_sessions').select('id, tour_date, start_time, label').eq('user_id', user.id),
     ]);
 
     if (gRes.data) setGuides(gRes.data);
@@ -86,6 +95,8 @@ export default function GuideDashboard() {
     setRatings(ratingsRes.data || []);
     setMonthlyRows(monthlyRes.data || []);
     setArrivals(arrivalsRes.data || []);
+    setSessionGuidesForPay(sgRes.data || []);
+    setSessionsForPay(sessRes.data || []);
     setLoading(false);
   };
 
@@ -94,14 +105,33 @@ export default function GuideDashboard() {
     fetchData();
   }, [user]);
 
-  // All-time performance overview — deliberately built from the FULL `assignments` array, not
+  // SESSION-BASED PAY UNIFICATION — converts session_guides.base_pay/bonus into the same
+  // GuideAssignmentRow shape as imported guide_assignments rows, then concatenates the two into
+  // ONE combined array (`allAssignments`) that every stats/overview/chart/list function below
+  // consumes instead of raw `assignments` — see lib/guidePerformance.ts for the full rationale.
+  // Paid status for session-based pay is derived per MONTH (payment_sent on guide_monthly), not
+  // per row, matching how monthly invoicing already works for imported history.
+  const paidMonthsByGuide = useMemo(
+    () => new Set(monthlyRows.filter(m => m.payment_sent && m.guide_id).map(m => `${m.guide_id}:${m.month}`)),
+    [monthlyRows]
+  );
+  const sessionAssignmentRows = useMemo(
+    () => sessionGuidesToAssignmentRows(sessionGuidesForPay, sessionsForPay, paidMonthsByGuide),
+    [sessionGuidesForPay, sessionsForPay, paidMonthsByGuide]
+  );
+  const allAssignments = useMemo(
+    () => [...assignments, ...sessionAssignmentRows],
+    [assignments, sessionAssignmentRows]
+  );
+
+  // All-time performance overview — deliberately built from the FULL `allAssignments` array, not
   // `filteredAssignments` below (which only covers the dateRange picker's period). A guide's
   // lifetime totals here must match what they see on their own dashboard; the dateRange filter
   // only ever scoped the pre-existing period cards/grid further down this page.
   const todayStr = localDateStr();
   const overviewRows = useMemo(
-    () => computeGuideOverviewRows(guides, assignments, ratings, monthlyRows, todayStr),
-    [guides, assignments, ratings, monthlyRows, todayStr]
+    () => computeGuideOverviewRows(guides, allAssignments, ratings, monthlyRows, todayStr),
+    [guides, allAssignments, ratings, monthlyRows, todayStr]
   );
   const unattributedAssignmentCount = useMemo(
     () => assignments.filter(a => !a.guide_id).length,
@@ -110,17 +140,21 @@ export default function GuideDashboard() {
 
   const detailGuide = detailGuideId ? guides.find(g => g.id === detailGuideId) || null : null;
   const detailGuideAssignments = useMemo(
-    () => detailGuideId ? assignments.filter(a => a.guide_id === detailGuideId) : [],
-    [assignments, detailGuideId]
+    () => detailGuideId ? allAssignments.filter(a => a.guide_id === detailGuideId) : [],
+    [allAssignments, detailGuideId]
   );
   const detailGuideRatings = useMemo(
     () => detailGuideId ? ratings.filter(r => r.guide_id === detailGuideId) : [],
     [ratings, detailGuideId]
   );
-  const detailGuideMonthly = useMemo(
-    () => detailGuideId ? monthlyRows.filter(m => m.guide_id === detailGuideId) : [],
-    [monthlyRows, detailGuideId]
-  );
+  // Unified per-month view — real (imported) guide_monthly rows plus a synthetic row for any
+  // month whose ONLY earnings are session-based (no guide_monthly row yet) — see
+  // buildUnifiedMonthlyRows in lib/guidePerformance.ts.
+  const detailGuideMonthly: UnifiedMonthlyRow[] = useMemo(() => {
+    if (!detailGuideId) return [];
+    const mySessionRows = sessionAssignmentRows.filter(a => a.guide_id === detailGuideId);
+    return buildUnifiedMonthlyRows(detailGuideId, detailGuide?.name || '', monthlyRows, mySessionRows);
+  }, [detailGuideId, detailGuide, monthlyRows, sessionAssignmentRows]);
   const detailGuideStats = useMemo(
     () => computeAssignmentStats(detailGuideAssignments, todayStr),
     [detailGuideAssignments, todayStr]
@@ -154,6 +188,13 @@ export default function GuideDashboard() {
     setMonthlyRows(monthlyRes.data || []);
   };
 
+  // Session-based pay is stored on session_guides, never guide_monthly, so "Mark Paid" on a
+  // session-based month can't be a plain UPDATE — there's no row to update yet the first time.
+  // `id` on a not-yet-persisted month is always "virtual-month:<guideId>:<month>" (see
+  // buildUnifiedMonthlyRows) — detected here purely from the id string so MonthlyInvoiceList
+  // itself never needs to know about the real/virtual distinction.
+  const isVirtualMonthlyId = (id: string) => id.startsWith('virtual-month:');
+
   const handleVerifyRating = async (rating: GuideRatingRow) => {
     if (!user || !detailGuide) return;
     const { error } = await verifyGuideRating(supabase, user.id, rating, detailGuide.name);
@@ -186,6 +227,18 @@ export default function GuideDashboard() {
   const handleUpdatePayment = async (row: GuideMonthlyRow, next: { payment_sent: boolean; payment_date: string | null }) => {
     if (!user) return;
     const guideLabel = row.guide_name || detailGuide?.name || 'Guide';
+
+    if (isVirtualMonthlyId(row.id)) {
+      const { error } = await insertGuideMonthlyPayment(
+        supabase, user.id,
+        { guide_id: row.guide_id, guide_name: row.guide_name, month: row.month, amount_owed: row.amount_owed, tours_completed: row.tours_completed },
+        next
+      );
+      if (error) { alert(`Failed to save payment status: ${error}`); return; }
+      await refreshRatingsAndMonthly();
+      return;
+    }
+
     const { error } = await updateGuideMonthlyPayment(
       supabase, user.id, row.id, guideLabel, row.month || 'this month',
       { payment_sent: !!row.payment_sent, payment_date: row.payment_date }, next
@@ -195,19 +248,22 @@ export default function GuideDashboard() {
   };
 
   // ONE shared date-range function (getDateRangeBounds/filterAssignmentsByDateRange, in
-  // guidePerformance.ts) computes the window and filters `assignments` down to it — both the
-  // header totals and the per-guide cards below are then derived from this SAME filtered array,
-  // so they're structurally incapable of disagreeing the way they used to.
+  // guidePerformance.ts) computes the window and filters `allAssignments` (imported + session-based
+  // combined) down to it — both the header totals and the per-guide cards below are then derived
+  // from this SAME filtered array, so they're structurally incapable of disagreeing the way they
+  // used to.
   const filteredAssignments = useMemo(
-    () => filterAssignmentsByDateRange(assignments, getDateRangeBounds(dateRange)),
-    [assignments, dateRange]
+    () => filterAssignmentsByDateRange(allAssignments, getDateRangeBounds(dateRange)),
+    [allAssignments, dateRange]
   );
 
   const guideStats = useMemo(() => {
     return guides.map(g => {
       const myAsns = filteredAssignments.filter(a => a.guide_id === g.id);
       const tours = myAsns.length;
-      const earnings = myAsns.reduce((sum, a) => sum + (Number(a.calculated_pay) || 0), 0);
+      // assignmentEarned() — not raw calculated_pay — so bonus/rate_override/total_pay (and now
+      // session-based base_pay+bonus) are all correctly folded in, not just the base rate.
+      const earnings = myAsns.reduce((sum, a) => sum + assignmentEarned(a), 0);
       return { ...g, tours, earnings };
     });
   }, [guides, filteredAssignments]);
@@ -487,7 +543,7 @@ export default function GuideDashboard() {
                         <td className="px-3 py-3 text-muted-foreground">{a.tour_type || '—'}</td>
                         <td className="px-3 py-3 text-right font-mono">€{Number(a.calculated_pay || 0).toFixed(2)}</td>
                         <td className="px-3 py-3 text-right font-mono text-gold">{a.bonus ? `€${Number(a.bonus).toFixed(2)}` : '—'}</td>
-                        <td className="px-3 py-3 text-right font-black text-green-700">€{Number(a.total_pay || a.calculated_pay || 0).toFixed(2)}</td>
+                        <td className="px-3 py-3 text-right font-black text-green-700">€{assignmentEarned(a).toFixed(2)}</td>
                         <td className="px-3 py-3 text-center">
                           {a.is_paid
                             ? <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-green-600/20 text-green-700">Paid</span>
