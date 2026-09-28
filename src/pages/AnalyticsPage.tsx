@@ -10,6 +10,7 @@ import { Filter, Calendar, TrendingUp, AlertTriangle, ArrowLeft, Package } from 
 
 import { useChartColors } from '@/lib/theme';
 import { shortProductCode, isCancelled } from '@/lib/utils';
+import { attributeSessionGuideCostByBooking } from '@/lib/guidePerformance';
 
 // const COLORS = ['#3b82f6', '#10b981', '#f5a623', '#8b5cf6', '#64748b', '#f43f5e', '#06b6d4'];
 
@@ -70,6 +71,11 @@ function AnalyticsPage() {
   const colors = useChartColors();
   const [loading, setLoading] = useState(true);
   const [bookings, setBookings] = useState<any[]>([]);
+  // Session-based guide pay — the real, current source of truth for guide cost (bookings.guide_cost
+  // is stale/unset once a booking has a session). Unfiltered, all-time, same scope as `bookings`
+  // above — see bookingGuideCost below for how it's attributed per booking.
+  const [sessionBookings, setSessionBookings] = useState<{ booking_ref: string; session_id: string }[]>([]);
+  const [sessionGuides, setSessionGuides] = useState<{ session_id: string; status: string; base_pay: number | null; bonus: number | null }[]>([]);
 
   // Filters state
   const [dateMode, setDateMode] = useState<'travel' | 'booking'>('travel');
@@ -85,9 +91,29 @@ function AnalyticsPage() {
     setLoading(true);
     const loadData = async () => {
       try {
-        const { data, error } = await supabase.from('bookings').select('*').eq('user_id', user.id);
-        if (error) console.error("Error fetching bookings:", error);
-        setBookings(data || []);
+        const [bRes, sbRes, sgRes] = await Promise.all([
+          supabase.from('bookings').select('*').eq('user_id', user.id),
+          supabase.from('session_bookings').select('booking_ref, session_id').eq('user_id', user.id),
+          supabase.from('session_guides').select('session_id, status, base_pay, bonus').eq('user_id', user.id),
+        ]);
+        if (bRes.error) console.error("Error fetching bookings:", bRes.error);
+        if (sbRes.error) console.error("Error fetching session_bookings:", sbRes.error);
+        if (sgRes.error) console.error("Error fetching session_guides:", sgRes.error);
+        // Defensive dedup by booking_ref — a genuine duplicate row (e.g. the same booking synced
+        // in twice from two sources) would otherwise double-count that one booking's revenue in
+        // every sum below, regardless of any session/guide logic. Keeps the first occurrence.
+        const rawBookings = bRes.data || [];
+        const seenRefs = new Set<string>();
+        const dedupedBookings = rawBookings.filter((b: any) => {
+          const ref = b?.booking_ref;
+          if (!ref) return true; // nothing to dedup against — keep as-is
+          if (seenRefs.has(ref)) return false;
+          seenRefs.add(ref);
+          return true;
+        });
+        setBookings(dedupedBookings);
+        setSessionBookings(sbRes.data || []);
+        setSessionGuides(sgRes.data || []);
       } catch (err) {
         console.error("Caught error fetching bookings:", err);
         setBookings([]);
@@ -97,6 +123,42 @@ function AnalyticsPage() {
     };
     loadData();
   }, [user]);
+
+  // ── SESSION-BASED GUIDE COST (see also the identical Live Board / Breakdown P&L fix) ────────
+  // Every figure on this page that touches "profit" is a BOOKING-LEVEL sum (by channel, by
+  // product/option, by month, KPI totals) — unlike Breakdown P&L, which only ever buckets by
+  // PERIOD. A session's real guide cost (session_guides.base_pay+bonus, summed once per accepted
+  // guide — never per booking) can't be assigned whole to every one of its bookings without
+  // inflating any sum that later adds several of those bookings together. Instead it's SPLIT once,
+  // proportionally by each booking's share of that session's total gross_revenue (evenly if the
+  // session's bookings have no revenue at all) — so no matter how the bookings are later grouped
+  // (channel/product/option/month), the shares always sum back to exactly the session's real total,
+  // never more. A booking not linked to any session keeps using its own bookings.guide_cost,
+  // unchanged — the same fallback rule the Live Board uses.
+  const sessionedRefs = useMemo(
+    () => new Set(sessionBookings.map((sb) => sb.booking_ref)),
+    [sessionBookings]
+  );
+
+  // Extracted to lib/guidePerformance.ts (attributeSessionGuideCostByBooking) so this money-math
+  // logic is unit-tested directly — see its own doc comment for why revenue and guide-cost are
+  // guaranteed to never be produced by the same join/loop.
+  const bookingGuideCost = useMemo(
+    () => attributeSessionGuideCostByBooking({ bookings, sessionBookings, sessionGuides }),
+    [bookings, sessionBookings, sessionGuides]
+  );
+
+  // Single source of truth for a booking's profit, replacing every direct use of the stale
+  // bookings.net_profit column below. Other costs (ticket/extra/gyg/commission/marketplace) are
+  // unchanged from before; only guide cost is now session-pay-aware.
+  const profitOf = useMemo(() => (b: any) => {
+    const otherCosts = (b?.ticket_cost || 0) + (b?.extra_cost || 0) + (b?.gyg_cost || 0)
+      + (b?.commission_amount || 0) + (b?.marketplace_fee || 0);
+    const guideCost = sessionedRefs.has(b?.booking_ref)
+      ? (bookingGuideCost.get(b?.booking_ref) || 0)
+      : (b?.guide_cost || 0);
+    return (b?.gross_revenue || 0) - otherCosts - guideCost;
+  }, [sessionedRefs, bookingGuideCost]);
 
   // Derived filter options
   // Grouped/labeled by the short product code, not product_name — old (gsheet) rows and new
@@ -157,10 +219,10 @@ function AnalyticsPage() {
       totBk++;
       totPax += (b?.pax_adult||0) + (b?.pax_youth||0) + (b?.pax_child||0) + (b?.pax_infant||0);
       gross += (b?.gross_revenue||0);
-      net += (b?.net_profit||0); 
+      net += profitOf(b);
     });
     return { totBk, totPax, gross, net, margin: gross > 0 ? net / gross : 0 };
-  }, [filteredBookings]);
+  }, [filteredBookings, profitOf]);
 
   // 2. REVENUE TREND
   const [trendMode, setTrendMode] = useState<'Monthly' | 'By Product' | 'By Channel'>('Monthly');
@@ -180,7 +242,7 @@ function AnalyticsPage() {
         
         if (trendMode === 'Monthly') {
           map[monStr].Gross += (b?.gross_revenue||0);
-          map[monStr].Net += (b?.net_profit||0);
+          map[monStr].Net += profitOf(b);
         } else if (trendMode === 'By Product') {
           const p = shortProductCode(b?.product_code) || 'Unknown';
           map[monStr][p] = (map[monStr][p] || 0) + (b?.gross_revenue||0);
@@ -191,7 +253,7 @@ function AnalyticsPage() {
       } catch (e) {}
     });
     return Object.values(map).sort((a,b) => a.sort - b.sort);
-  }, [filteredBookings, trendMode, dateMode]);
+  }, [filteredBookings, trendMode, dateMode, profitOf]);
 
   const trendKeys = useMemo(() => {
     if (trendMode === 'Monthly') return [];
@@ -220,10 +282,10 @@ function AnalyticsPage() {
       const c = b?.channel || 'Unknown';
       if (!map[c]) map[c] = {Gross:0, Net:0};
       map[c].Gross += (b?.gross_revenue||0);
-      map[c].Net += (b?.net_profit||0);
+      map[c].Net += profitOf(b);
     });
     return Object.entries(map).map(([name, vals]) => ({ name, ...vals })).sort((a,b) => b.Gross - a.Gross);
-  }, [filteredBookings]);
+  }, [filteredBookings, profitOf]);
 
   // 4. MONTHLY BREAKDOWN TABLE
   const monthlyTable = useMemo(() => {
@@ -248,8 +310,11 @@ function AnalyticsPage() {
           map[monStr].gross += (b?.gross_revenue||0);
           map[monStr].comm += (b?.marketplace_fee||0);
           map[monStr].netr += (b?.net_revenue||0);
-          map[monStr].costs += (b?.ticket_cost||0) + (b?.guide_cost||0) + (b?.extra_cost||0);
-          map[monStr].netp += (b?.net_profit||0);
+          const guideCost = sessionedRefs.has(b?.booking_ref)
+            ? (bookingGuideCost.get(b?.booking_ref) || 0)
+            : (b?.guide_cost || 0);
+          map[monStr].costs += (b?.ticket_cost||0) + guideCost + (b?.extra_cost||0);
+          map[monStr].netp += profitOf(b);
         }
 
         // Cancel Loss: a dedicated call-out of ticket cost specifically lost to cancellations —
@@ -277,7 +342,7 @@ function AnalyticsPage() {
       arr.push(tot);
     }
     return arr;
-  }, [filteredBookings, dateMode]);
+  }, [filteredBookings, dateMode, profitOf, sessionedRefs, bookingGuideCost]);
 
   // 5. PRODUCT DEEP DIVE
   const [productDrilldown, setProductDrilldown] = useState<string | null>(null);
@@ -291,12 +356,12 @@ function AnalyticsPage() {
       if (!map[p]) map[p] = {bk: 0, gross: 0, net: 0};
       map[p].bk++;
       map[p].gross += (b?.gross_revenue||0);
-      map[p].net += (b?.net_profit||0);
+      map[p].net += profitOf(b);
     });
     return Object.entries(map).map(([name, vals]) => ({
       name, ...vals, margin: vals.gross > 0 ? vals.net / vals.gross : 0
     })).sort((a,b) => b.gross - a.gross);
-  }, [filteredBookings]);
+  }, [filteredBookings, profitOf]);
 
   const activeProductData = useMemo(() => {
     if (!productDrilldown) return null;
@@ -319,7 +384,7 @@ function AnalyticsPage() {
       
       const opt = b?.option_name || 'Default';
       if (!optMap[opt]) optMap[opt] = { opt, bk: 0, gross: 0, net: 0 };
-      optMap[opt].bk++; optMap[opt].gross += (b?.gross_revenue||0); optMap[opt].net += (b?.net_profit||0);
+      optMap[opt].bk++; optMap[opt].gross += (b?.gross_revenue||0); optMap[opt].net += profitOf(b);
       
       const c = b?.channel || 'Unknown';
       chanMap[c] = (chanMap[c] || 0) + (b?.gross_revenue||0);
@@ -335,7 +400,7 @@ function AnalyticsPage() {
     monthBars.forEach(mb => { if (mb.rev > bestMon.v) bestMon = {name: mb.month, v: mb.rev}; });
 
     return { monthBars, options, topChan: topChan.name, bestMon: bestMon.name };
-  }, [filteredBookings, productDrilldown, dateMode]);
+  }, [filteredBookings, productDrilldown, dateMode, profitOf]);
 
   // 6. PIPELINE SCATTER PLOT
   const scatterData = useMemo(() => {

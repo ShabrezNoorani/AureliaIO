@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeRatingStats, computePunctualityStats, computeGuideScore, computeAssignmentStats,
   assignmentEarned, sessionGuidesToAssignmentRows, buildUnifiedMonthlyRows,
+  attributeSessionGuideCostByBooking,
   PUNCTUALITY_GRACE_MINUTES,
   type GuideRatingRow, type GuideAssignmentRow, type GuideMonthlyRow,
   type SessionGuideForEarnings, type SessionForEarnings,
@@ -260,5 +261,92 @@ describe('buildUnifiedMonthlyRows', () => {
     ];
     const rows = buildUnifiedMonthlyRows('g1', 'Maria', [], sessionRows);
     expect(rows.map(r => r.month)).toEqual(['2026-09', '2026-07', '2026-06']);
+  });
+});
+
+describe('attributeSessionGuideCostByBooking', () => {
+  it('REGRESSION: a booking in a 2-guide session gets guide cost attributed once, and its own revenue is never touched/duplicated', () => {
+    const out = attributeSessionGuideCostByBooking({
+      bookings: [{ booking_ref: 'VIA-99883843', gross_revenue: 85 }],
+      sessionBookings: [{ booking_ref: 'VIA-99883843', session_id: 'S1' }],
+      sessionGuides: [
+        { session_id: 'S1', status: 'accepted', base_pay: 100, bonus: 0 },
+        { session_id: 'S1', status: 'accepted', base_pay: 30, bonus: 0 },
+      ],
+    });
+    // The lone booking gets the FULL, single, combined session pay (100+30=130) — never doubled,
+    // halved, or otherwise scaled by the number of guides.
+    expect(out.get('VIA-99883843')).toBe(130);
+    expect(out.size).toBe(1);
+  });
+
+  it('splits one session\'s pay proportionally by revenue share across its bookings — shares sum back to exactly the total', () => {
+    const out = attributeSessionGuideCostByBooking({
+      bookings: [
+        { booking_ref: 'B1', gross_revenue: 300 },
+        { booking_ref: 'B2', gross_revenue: 100 },
+      ],
+      sessionBookings: [
+        { booking_ref: 'B1', session_id: 'S1' },
+        { booking_ref: 'B2', session_id: 'S1' },
+      ],
+      sessionGuides: [{ session_id: 'S1', status: 'accepted', base_pay: 80, bonus: 20 }], // 100 total
+    });
+    // B1 has 75% of the session's revenue (300/400), B2 has 25%.
+    expect(out.get('B1')).toBeCloseTo(75);
+    expect(out.get('B2')).toBeCloseTo(25);
+    expect((out.get('B1') || 0) + (out.get('B2') || 0)).toBeCloseTo(100);
+  });
+
+  it('splits evenly when a session\'s bookings have zero revenue', () => {
+    const out = attributeSessionGuideCostByBooking({
+      bookings: [
+        { booking_ref: 'B1', gross_revenue: 0 },
+        { booking_ref: 'B2', gross_revenue: null },
+      ],
+      sessionBookings: [
+        { booking_ref: 'B1', session_id: 'S1' },
+        { booking_ref: 'B2', session_id: 'S1' },
+      ],
+      sessionGuides: [{ session_id: 'S1', status: 'accepted', base_pay: 50, bonus: 0 }],
+    });
+    expect(out.get('B1')).toBe(25);
+    expect(out.get('B2')).toBe(25);
+  });
+
+  it('a non-accepted guide row contributes no pay', () => {
+    const out = attributeSessionGuideCostByBooking({
+      bookings: [{ booking_ref: 'B1', gross_revenue: 100 }],
+      sessionBookings: [{ booking_ref: 'B1', session_id: 'S1' }],
+      sessionGuides: [{ session_id: 'S1', status: 'offered', base_pay: 100, bonus: 0 }],
+    });
+    expect(out.has('B1')).toBe(false);
+  });
+
+  it('a booking not linked to any session gets no entry at all (caller falls back to its own guide_cost)', () => {
+    const out = attributeSessionGuideCostByBooking({
+      bookings: [{ booking_ref: 'UNSESSIONED', gross_revenue: 100 }],
+      sessionBookings: [{ booking_ref: 'OTHER', session_id: 'S1' }],
+      sessionGuides: [{ session_id: 'S1', status: 'accepted', base_pay: 100, bonus: 0 }],
+    });
+    expect(out.has('UNSESSIONED')).toBe(false);
+  });
+
+  it('many bookings in one session never inflate the session\'s total pay — shares always sum back to the true total', () => {
+    const bookings = [
+      { booking_ref: 'B1', gross_revenue: 200 },
+      { booking_ref: 'B2', gross_revenue: 200 },
+      { booking_ref: 'B3', gross_revenue: 200 },
+    ];
+    const out = attributeSessionGuideCostByBooking({
+      bookings,
+      sessionBookings: bookings.map((b) => ({ booking_ref: b.booking_ref, session_id: 'S1' })),
+      sessionGuides: [
+        { session_id: 'S1', status: 'accepted', base_pay: 100, bonus: 0 },
+        { session_id: 'S1', status: 'accepted', base_pay: 50, bonus: 0 },
+      ],
+    });
+    const total = Array.from(out.values()).reduce((s, v) => s + v, 0);
+    expect(total).toBeCloseTo(150); // 100 + 50, NOT (100+50) * 3 bookings
   });
 });

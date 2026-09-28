@@ -527,3 +527,64 @@ export function buildUnifiedMonthlyRows(
   }
   return result.sort((a, b) => (b.month || '').localeCompare(a.month || ''));
 }
+
+// ── SESSION-GUIDE-COST ATTRIBUTION FOR BOOKING-LEVEL AGGREGATIONS (Analytics, etc.) ──────────
+// Used anywhere profit is summed BY BOOKING (by channel/product/option/month) rather than by
+// period like Breakdown P&L. A session's real guide cost (session_guides.base_pay+bonus) must be
+// summed EXACTLY ONCE per (session, guide) row — never once per booking in that session — so
+// these are computed as two deliberately independent passes: this function only ever iterates
+// `sessionGuides` once (to total each session's pay) and `sessionBookings` once (to find which
+// bookings share that total); it reads gross_revenue only as a READ-ONLY WEIGHT for splitting that
+// already-fixed total proportionally, never adds it to anything or sums it across guides. Callers
+// still read a booking's own gross_revenue directly from the booking row for revenue — this
+// function returns ONLY a per-booking guide-cost attribution, nothing else, so revenue and guide
+// cost can never be produced by the same join/loop.
+export interface AttributeSessionGuideCostInputs {
+  bookings: { booking_ref: string | null; gross_revenue: number | null }[];
+  sessionBookings: { booking_ref: string; session_id: string }[];
+  sessionGuides: { session_id: string; status: string; base_pay: number | null; bonus: number | null }[];
+}
+
+export function attributeSessionGuideCostByBooking({
+  bookings, sessionBookings, sessionGuides,
+}: AttributeSessionGuideCostInputs): Map<string, number> {
+  // Pass 1: each session's real guide cost, summed once per accepted (session, guide) row —
+  // never touches a booking, so it can't be inflated by how many bookings the session has.
+  const sessionPayById = new Map<string, number>();
+  sessionGuides.forEach((sg) => {
+    if (sg.status !== 'accepted') return;
+    const amt = (Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0);
+    sessionPayById.set(sg.session_id, (sessionPayById.get(sg.session_id) || 0) + amt);
+  });
+
+  // Pass 2: which booking_refs share each session — a separate, independent pass over
+  // sessionBookings, still no reference to session_guides or revenue.
+  const refsBySession = new Map<string, string[]>();
+  sessionBookings.forEach((sb) => {
+    if (!refsBySession.has(sb.session_id)) refsBySession.set(sb.session_id, []);
+    refsBySession.get(sb.session_id)!.push(sb.booking_ref);
+  });
+
+  // Pass 3: each booking's OWN revenue, read once per booking — used only as a split WEIGHT
+  // below, never summed or duplicated.
+  const revenueByRef = new Map<string, number>();
+  bookings.forEach((b) => {
+    if (b?.booking_ref) revenueByRef.set(b.booking_ref, Number(b.gross_revenue) || 0);
+  });
+
+  // Combine: split each session's ALREADY-FIXED total pay proportionally across its bookings by
+  // revenue share (evenly if the session's bookings have no revenue at all) — the shares always
+  // sum back to exactly that session's total, so grouping the results by channel/product/month
+  // afterward can never exceed the true total no matter how many guides or bookings are involved.
+  const out = new Map<string, number>();
+  sessionPayById.forEach((totalPay, sessionId) => {
+    const refs = refsBySession.get(sessionId) || [];
+    if (refs.length === 0) return; // nowhere to attribute this session's pay — dropped, not fabricated
+    const totalRevenue = refs.reduce((s, ref) => s + (revenueByRef.get(ref) || 0), 0);
+    refs.forEach((ref) => {
+      const share = totalRevenue > 0 ? (revenueByRef.get(ref) || 0) / totalRevenue : 1 / refs.length;
+      out.set(ref, (out.get(ref) || 0) + totalPay * share);
+    });
+  });
+  return out;
+}

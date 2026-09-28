@@ -13,6 +13,7 @@ import {
   attachAdminCosts, uniqueChannelsFrom, PNL_GRANULARITIES, DEFAULT_PNL_STATUSES, PNL_STATUS_BUCKETS,
   type PnlDatePreset, type PnlStatusBucket, type PnlBooking, type PnlAdminCost,
   type PnlGranularity, type PnlDateField, type PeriodRowWithAdmin,
+  type PnlSessionBookingLink, type PnlSessionGuidePay, type PnlSession,
 } from '@/lib/monthlyPnl';
 
 const fmtE = (v: number) => `€${(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -27,6 +28,12 @@ export default function BreakdownPnlPage() {
   const [loading, setLoading] = useState(true);
   const [bookings, setBookings] = useState<PnlBooking[]>([]);
   const [adminCosts, setAdminCosts] = useState<PnlAdminCost[]>([]);
+  // Session-based guide pay inputs — real guide cost now lives here (session_guides.base_pay/
+  // bonus), not on bookings.guide_cost, which is stale once a booking has a session. See
+  // groupBookingsByPeriod's sessionPay param in lib/monthlyPnl.ts for how these are used.
+  const [sessionBookings, setSessionBookings] = useState<PnlSessionBookingLink[]>([]);
+  const [sessionGuides, setSessionGuides] = useState<PnlSessionGuidePay[]>([]);
+  const [sessions, setSessions] = useState<PnlSession[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -35,12 +42,33 @@ export default function BreakdownPnlPage() {
     Promise.all([
       supabase.from('bookings').select('*').eq('user_id', user.id),
       supabase.from('admin_costs').select('amount, month, year, expense_date').eq('user_id', user.id),
-    ]).then(([bRes, aRes]) => {
+      supabase.from('session_bookings').select('booking_ref, session_id').eq('user_id', user.id),
+      supabase.from('session_guides').select('session_id, status, base_pay, bonus').eq('user_id', user.id),
+      supabase.from('tour_sessions').select('id, tour_date').eq('user_id', user.id),
+    ]).then(([bRes, aRes, sbRes, sgRes, sessRes]) => {
       if (cancelled) return;
       if (bRes.error) console.error('Error fetching bookings:', bRes.error);
       if (aRes.error) console.error('Error fetching admin_costs:', aRes.error);
-      setBookings(bRes.data || []);
+      if (sbRes.error) console.error('Error fetching session_bookings:', sbRes.error);
+      if (sgRes.error) console.error('Error fetching session_guides:', sgRes.error);
+      if (sessRes.error) console.error('Error fetching tour_sessions:', sessRes.error);
+      // Defensive dedup by booking_ref — a genuine duplicate row (e.g. the same booking synced in
+      // twice from two sources) would otherwise double-count that one booking's revenue in every
+      // period row below, regardless of any session/guide logic. Keeps the first occurrence.
+      const rawBookings = bRes.data || [];
+      const seenRefs = new Set<string>();
+      const dedupedBookings = rawBookings.filter((b) => {
+        const ref = b?.booking_ref;
+        if (!ref) return true;
+        if (seenRefs.has(ref)) return false;
+        seenRefs.add(ref);
+        return true;
+      });
+      setBookings(dedupedBookings);
       setAdminCosts(aRes.data || []);
+      setSessionBookings(sbRes.data || []);
+      setSessionGuides(sgRes.data || []);
+      setSessions(sessRes.data || []);
       setLoading(false);
     });
     return () => { cancelled = true; };
@@ -85,8 +113,8 @@ export default function BreakdownPnlPage() {
   );
 
   const baseRows = useMemo(
-    () => groupBookingsByPeriod(filtered, dateBasis, granularity),
-    [filtered, dateBasis, granularity]
+    () => groupBookingsByPeriod(filtered, dateBasis, granularity, { sessionBookings, sessionGuides, sessions }),
+    [filtered, dateBasis, granularity, sessionBookings, sessionGuides, sessions]
   );
 
   // Admin costs are only ever meaningful on the Travel basis (they're a whole-company cost tied

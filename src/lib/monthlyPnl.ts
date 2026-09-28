@@ -84,12 +84,19 @@ export function statusBucket(status: string | null): PnlStatusBucket | null {
 }
 
 export interface PnlBooking {
+  /** Needed to cross-reference session_bookings links — see groupBookingsByPeriod's sessionPay
+      param. Optional so existing callers/tests that never pass sessionPay don't need it either. */
+  booking_ref?: string | null;
   travel_date: string | null;
   booking_date: string | null;
   status: string | null;
   channel: string | null;
   gross_revenue: number | null;
   ticket_cost: number | null;
+  /** FALLBACK guide cost, used only for a booking not linked to any tour_session — a session-
+      linked booking's real guide cost comes from that session's session_guides pay instead (see
+      groupBookingsByPeriod's sessionPay param), since this column is stale/unset once a booking
+      has a session. */
   guide_cost: number | null;
   extra_cost: number | null;
   gyg_cost: number | null;
@@ -147,9 +154,10 @@ export function uniqueChannelsFrom(bookings: { channel: string | null }[]): stri
 const paxTotal = (b: PnlBooking) =>
   (b.pax_adult || 0) + (b.pax_youth || 0) + (b.pax_child || 0) + (b.pax_infant || 0);
 
-/** ticket_cost + guide_cost + extra_cost + gyg_cost, null treated as 0. */
-const tourCostOf = (b: PnlBooking) =>
-  (b.ticket_cost || 0) + (b.guide_cost || 0) + (b.extra_cost || 0) + (b.gyg_cost || 0);
+/** ticket_cost + extra_cost + gyg_cost, always; guide_cost only when includeGuideCost is true
+    (false for a session-linked booking — see groupBookingsByPeriod). Null treated as 0. */
+const tourCostOf = (b: PnlBooking, includeGuideCost: boolean) =>
+  (b.ticket_cost || 0) + (includeGuideCost ? (b.guide_cost || 0) : 0) + (b.extra_cost || 0) + (b.gyg_cost || 0);
 
 // ── GRANULARITY ─────────────────────────────────────────────────────────────────────────────
 export const PNL_GRANULARITIES = ['day', 'week', 'month'] as const;
@@ -218,17 +226,67 @@ export interface PeriodRow {
   tourProfit: number;
 }
 
+export interface PnlSessionBookingLink {
+  booking_ref: string;
+  session_id: string;
+}
+
+export interface PnlSessionGuidePay {
+  session_id: string;
+  status: string;
+  base_pay: number | null;
+  bonus: number | null;
+}
+
+export interface PnlSession {
+  id: string;
+  tour_date: string | null;
+}
+
+/**
+ * Optional session-based guide pay inputs (see Live Board's identical fix). When provided:
+ *  - A booking linked to any session (via sessionBookings) has its bookings.guide_cost excluded
+ *    from tourCost — that column is stale/unset once a booking has a session, so it's never
+ *    trusted for a session-linked booking, on EITHER date basis.
+ *  - The REAL guide cost (session_guides.base_pay + bonus, accepted guides only) is summed once
+ *    per (session, guide) row — never per booking, so a session with many bookings can't inflate
+ *    it — and attributed to the period containing that SESSION's own tour_date. This only happens
+ *    on TRAVEL-date grouping: a session's pay has no natural "date booked" home, the exact same
+ *    reasoning the existing admin-cost allocation already uses to stay travel-basis-only. On
+ *    booking-date grouping, a session-linked booking's guide_cost is still excluded (it's stale
+ *    either way) but no replacement is added — matches the Live Board's fallback rule, which is
+ *    itself always travel-scoped ("today").
+ *  - A booking NOT linked to any session keeps using its own guide_cost, on either date basis,
+ *    exactly as before — the same fallback rule the Live Board uses.
+ *  - Like admin costs below, session pay only reaches a period that already has at least one
+ *    qualifying booking row; a period with session pay but zero qualifying bookings (e.g. every
+ *    booking in that session was filtered out) doesn't get a row created just to carry it — same
+ *    "zero-activity periods are omitted" philosophy this function already documents.
+ */
+export interface PnlSessionPayInputs {
+  sessionBookings: PnlSessionBookingLink[];
+  sessionGuides: PnlSessionGuidePay[];
+  sessions: PnlSession[];
+}
+
 /**
  * Groups already-filtered bookings into day/week/month rows by the given date field. Rows are
  * generated strictly from periods that have at least one qualifying booking — a period with
  * admin costs but no bookings simply doesn't appear (zero-activity periods are omitted, not
- * padded with empty rows). Tour cost = ticket_cost+guide_cost+extra_cost+gyg_cost, null as 0.
+ * padded with empty rows). Tour cost = ticket_cost+extra_cost+gyg_cost, plus guide cost — see
+ * PnlSessionPayInputs for how guide cost is now session-pay-aware rather than always trusting
+ * bookings.guide_cost.
  */
 export function groupBookingsByPeriod(
   bookings: PnlBooking[],
   dateField: PnlDateField,
-  granularity: PnlGranularity
+  granularity: PnlGranularity,
+  sessionPay?: PnlSessionPayInputs
 ): PeriodRow[] {
+  const sessionedRefs = sessionPay
+    ? new Set(sessionPay.sessionBookings.map((sb) => sb.booking_ref))
+    : null;
+
   const map = new Map<string, { bookings: number; travellers: number; gross: number; tourCost: number; tourProfit: number }>();
   bookings.forEach((b) => {
     const raw = dateField === 'travel' ? b.travel_date : b.booking_date;
@@ -237,13 +295,36 @@ export function groupBookingsByPeriod(
     if (!map.has(key)) map.set(key, { bookings: 0, travellers: 0, gross: 0, tourCost: 0, tourProfit: 0 });
     const row = map.get(key)!;
     const gross = b.gross_revenue || 0;
-    const cost = tourCostOf(b);
+    const isSessioned = !!(sessionedRefs && b.booking_ref && sessionedRefs.has(b.booking_ref));
+    const cost = tourCostOf(b, !isSessioned);
     row.bookings++;
     row.travellers += paxTotal(b);
     row.gross += gross;
     row.tourCost += cost;
     row.tourProfit += gross - cost;
   });
+
+  // Real session-based guide pay — travel-date grouping only (see PnlSessionPayInputs doc above).
+  // Summed once per accepted (session, guide) row, independent of booking count, so this can never
+  // be inflated by a join; only attaches to periods that already have a qualifying-booking row.
+  if (sessionPay && dateField === 'travel') {
+    const sessionById = new Map(sessionPay.sessions.map((s) => [s.id, s]));
+    const payByPeriod = new Map<string, number>();
+    sessionPay.sessionGuides.forEach((sg) => {
+      if (sg.status !== 'accepted') return;
+      const tourDate = sessionById.get(sg.session_id)?.tour_date;
+      if (!tourDate) return;
+      const key = periodKeyOf(tourDate, granularity);
+      const amount = (Number(sg.base_pay) || 0) + (Number(sg.bonus) || 0);
+      payByPeriod.set(key, (payByPeriod.get(key) || 0) + amount);
+    });
+    payByPeriod.forEach((amount, key) => {
+      const row = map.get(key);
+      if (!row) return;
+      row.tourCost += amount;
+      row.tourProfit -= amount;
+    });
+  }
 
   return Array.from(map.entries())
     .sort(([a], [b]) => b.localeCompare(a))
