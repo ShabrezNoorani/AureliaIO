@@ -16,6 +16,54 @@ export const localDateStr = (d: Date = new Date()) => {
   return `${y}-${m}-${day}`;
 };
 
+export type DatePresetKey = 'today' | 'yesterday' | 'tomorrow' | 'thisWeek' | 'thisMonth';
+
+export interface InclusiveDateRange {
+  /** Inclusive YYYY-MM-DD bounds. */
+  start: string;
+  end: string;
+}
+
+/** Inclusive YYYY-MM-DD bounds for a named relative-date preset (used by the Ledger filter bar's
+    date presets), anchored to `now` (defaults to the real current moment). Always computed from
+    the LOCAL calendar day via localDateStr — never `new Date().toISOString()`, which would shift
+    by a day near midnight in timezones ahead of UTC. "This week" is Monday-to-Sunday of the week
+    containing `now`; "this month" is the 1st to the last day of `now`'s calendar month. */
+export function datePresetRange(preset: DatePresetKey, now: Date = new Date()): InclusiveDateRange {
+  switch (preset) {
+    case 'today': {
+      const s = localDateStr(now);
+      return { start: s, end: s };
+    }
+    case 'yesterday': {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 1);
+      const s = localDateStr(d);
+      return { start: s, end: s };
+    }
+    case 'tomorrow': {
+      const d = new Date(now);
+      d.setDate(d.getDate() + 1);
+      const s = localDateStr(d);
+      return { start: s, end: s };
+    }
+    case 'thisWeek': {
+      const dow = now.getDay(); // 0=Sun..6=Sat
+      const mondayOffset = dow === 0 ? -6 : 1 - dow;
+      const monday = new Date(now);
+      monday.setDate(monday.getDate() + mondayOffset);
+      const sunday = new Date(monday);
+      sunday.setDate(sunday.getDate() + 6);
+      return { start: localDateStr(monday), end: localDateStr(sunday) };
+    }
+    case 'thisMonth': {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { start: localDateStr(first), end: localDateStr(last) };
+    }
+  }
+}
+
 // The ONE definition of "is this booking cancelled?" — bookings.status only ever stores the bare
 // "CANCELLED" value now (the old CANCELLED_EARLY/CANCELLED_LATE split was normalized away at the
 // DB level), matched case-insensitively so a stray lowercase value can't silently slip through.

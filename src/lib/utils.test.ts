@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isCancelled, shortProductCode, checkinTime, normalizeTime } from './utils';
+import { isCancelled, shortProductCode, checkinTime, normalizeTime, datePresetRange } from './utils';
 
 describe('isCancelled', () => {
   it('matches the single "CANCELLED" status the DB now writes', () => {
@@ -109,5 +109,43 @@ describe('normalizeTime', () => {
     expect(normalizeTime(undefined)).toBeNull();
     expect(normalizeTime('')).toBeNull();
     expect(normalizeTime('   ')).toBeNull();
+  });
+});
+
+describe('datePresetRange', () => {
+  // Wednesday — a mid-week anchor so "this week" isn't accidentally right on a boundary.
+  const wed = new Date(2026, 8, 30); // 2026-09-30
+
+  it('today/yesterday/tomorrow are each a single-day range, in LOCAL time', () => {
+    expect(datePresetRange('today', wed)).toEqual({ start: '2026-09-30', end: '2026-09-30' });
+    expect(datePresetRange('yesterday', wed)).toEqual({ start: '2026-09-29', end: '2026-09-29' });
+    expect(datePresetRange('tomorrow', wed)).toEqual({ start: '2026-10-01', end: '2026-10-01' });
+  });
+
+  it('this week is Monday-to-Sunday of the week containing the anchor', () => {
+    expect(datePresetRange('thisWeek', wed)).toEqual({ start: '2026-09-28', end: '2026-10-04' });
+  });
+
+  it('this week anchored on a Sunday still resolves to THAT week (not the next one)', () => {
+    const sunday = new Date(2026, 9, 4); // 2026-10-04, the Sunday from the range above
+    expect(datePresetRange('thisWeek', sunday)).toEqual({ start: '2026-09-28', end: '2026-10-04' });
+  });
+
+  it('this week anchored on a Monday starts on that same Monday', () => {
+    const monday = new Date(2026, 8, 28); // 2026-09-28
+    expect(datePresetRange('thisWeek', monday)).toEqual({ start: '2026-09-28', end: '2026-10-04' });
+  });
+
+  it('this month is the 1st to the last day of the anchor\'s calendar month', () => {
+    expect(datePresetRange('thisMonth', wed)).toEqual({ start: '2026-09-01', end: '2026-09-30' });
+  });
+
+  it('tomorrow correctly rolls over a year boundary', () => {
+    const newYearsEve = new Date(2026, 11, 31); // 2026-12-31
+    expect(datePresetRange('tomorrow', newYearsEve)).toEqual({ start: '2027-01-01', end: '2027-01-01' });
+  });
+
+  it('this month handles a 31-day month correctly (no drift into next month)', () => {
+    expect(datePresetRange('thisMonth', new Date(2026, 11, 15))).toEqual({ start: '2026-12-01', end: '2026-12-31' });
   });
 });

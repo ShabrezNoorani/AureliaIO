@@ -42,7 +42,31 @@ export default defineConfig(({ mode }) => ({
         // connection. Supabase traffic is deliberately excluded from precaching and handled
         // below instead — bookings/check-ins must never be served stale.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff,woff2}"],
+        // vite-plugin-pwa defaults navigateFallback to "index.html", which makes workbox-build's
+        // generated template register its OWN cache-first NavigationRoute — and it registers that
+        // BEFORE any runtimeCaching entries below, so it would silently win over a custom
+        // navigation rule no matter what (confirmed by inspecting the generated dist/sw.js: the
+        // default NavigationRoute appeared first in the route list even with a custom rule
+        // present). Setting this to undefined here suppresses that route entirely, so the
+        // NetworkFirst rule below is the ONLY thing handling navigations.
+        navigateFallback: undefined,
         runtimeCaching: [
+          {
+            // NAVIGATIONS (loading "/", "/app/live", reopening the installed PWA, etc.) —
+            // network-first so a connected device always gets the current index.html/JS bundle
+            // instead of whatever was precached at the last deploy. Its own cache (cacheName
+            // below) is what serves navigations when offline — populated automatically by
+            // Workbox after the first successful online visit, which every real install already
+            // requires (you can't install/first-load the PWA itself while offline), so this
+            // covers true offline use without ever defaulting to a stale precached shell.
+            urlPattern: ({ request }) => request.mode === 'navigate',
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "app-shell",
+              networkTimeoutSeconds: 5,
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
           {
             // REST/Auth/Storage calls to Supabase — network-first so the app always tries a
             // live request before ever touching the cache, with only a short-lived fallback

@@ -1,20 +1,78 @@
-import { useState, useMemo, useRef } from 'react';
-import { Plus, Upload, Trash2, Pencil, FileSpreadsheet, RefreshCw, AlertTriangle, FileDown } from 'lucide-react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import { Plus, Upload, Trash2, Pencil, FileSpreadsheet, RefreshCw, AlertTriangle, FileDown, Search, CalendarDays } from 'lucide-react';
 import { useAppData } from '@/lib/useAppData';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { syncMasterData } from '@/lib/gsheetSync';
-import { shortProductCode } from '@/lib/utils';
+import { shortProductCode, datePresetRange, type DatePresetKey } from '@/lib/utils';
 import { EMPTY_BOOKING, type Booking } from '@/lib/useBookings';
 import { saveBooking } from '@/lib/bookingActions';
+import { attributeSessionGuideCostByBooking } from '@/lib/guidePerformance';
 import BookingPanel from './BookingPanel';
 import CsvUploadModal from './CsvUploadModal';
-import MultiSelect from './MultiSelect';
+import { TogglePill, FilterChip } from './analytics/PnlFilterBar';
 
-const CHANNELS = ['All', 'Viator', 'GYG', 'Airbnb', 'Website', 'Agent', 'Other'];
-const STATUSES = ['All', 'UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED'];
-const MONTHS = ['All', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const CHANNELS = ['Viator', 'GYG', 'Airbnb', 'Website', 'Agent', 'Other'];
+const STATUSES = ['UPCOMING', 'DONE', 'NO_SHOW', 'CANCELLED'];
+const SOURCES: { value: string; label: string }[] = [
+  { value: 'bokun', label: 'Bokun' },
+  { value: 'gsheet', label: 'Sheet' },
+  { value: 'manual', label: 'Manual' },
+];
+const DATE_PRESETS: { key: DatePresetKey; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: 'yesterday', label: 'Yesterday' },
+  { key: 'tomorrow', label: 'Tomorrow' },
+  { key: 'thisWeek', label: 'This Week' },
+  { key: 'thisMonth', label: 'This Month' },
+];
 const PER_PAGE = 50;
+
+type DateFilterMode = 'none' | 'preset' | 'day' | 'range';
+
+// Toggles a value in/out of a MultiSelect-style ['All', ...] selection array — 'All' resets to
+// itself alone; selecting the last remaining real value snaps back to ['All'] rather than leaving
+// an empty (and ambiguous — "nothing selected" vs "everything selected") array.
+function toggleMultiValue(current: string[], value: string): string[] {
+  if (value === 'All') return ['All'];
+  let next = current.filter((s) => s !== 'All');
+  if (next.includes(value)) {
+    next = next.filter((s) => s !== value);
+    if (next.length === 0) next = ['All'];
+  } else {
+    next = [...next, value];
+  }
+  return next;
+}
+
+/** One row of toggle pills for a MultiSelect-style filter (channel/status/source) — an explicit
+    "All" pill plus one per real option, all using the same TogglePill the Breakdown P&L filter
+    bar uses, for a consistent look across every filter surface in the app. */
+function FilterPillGroup({
+  label, options, selected, onToggle,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  selected: string[];
+  onToggle: (value: string) => void;
+}) {
+  return (
+    <div className="flex items-start gap-2 flex-wrap">
+      <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground shrink-0 pt-1.5">{label}</span>
+      <div className="flex flex-wrap gap-1.5">
+        <TogglePill active={selected.includes('All')} onClick={() => onToggle('All')}>All</TogglePill>
+        {options.map((o) => (
+          <TogglePill key={o.value} active={selected.includes(o.value)} onClick={() => onToggle(o.value)}>
+            {o.label}
+          </TogglePill>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const fmtDayChip = (iso: string) =>
+  new Date(`${iso}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
 const DEFAULT_COLS = [
   { id: 'ref', label: 'Booking Ref', width: 140, sticky: 'left', stickyZ: 20 },
@@ -87,6 +145,7 @@ function calcTotalPax(b: any) {
   return (b.pax_adult || 0) + (b.pax_youth || 0) + (b.pax_child || 0) + (b.pax_infant || 0);
 }
 
+
 // Any channel can leave revenue/cost blank in the source booking data — that's stored as null,
 // distinct from a genuine €0, so it renders as a "Needs input" flag rather than silently reading
 // as zero. Only used for gross_revenue/guide_cost/extra_cost/ticket_cost, the four fields that can
@@ -121,6 +180,53 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   const { user, profile } = useAuth();
   const productNames = useMemo(() => appData.products.map((p) => p.name), [appData.products]);
 
+  // SESSION-BASED GUIDE COST — the real, current source of truth for guide cost once a booking
+  // has a session (bookings.guide_cost goes stale at that point). Fetched once when the Ledger
+  // opens, same as `bookings` itself. See liveNetProfit below.
+  const [sessionBookings, setSessionBookings] = useState<{ booking_ref: string; session_id: string }[]>([]);
+  const [sessionGuides, setSessionGuides] = useState<{ session_id: string; status: string; base_pay: number | null; bonus: number | null }[]>([]);
+  const [sessionPayLoaded, setSessionPayLoaded] = useState(false);
+
+  useEffect(() => {
+    if (!user || sessionPayLoaded) return;
+    Promise.all([
+      supabase.from('session_bookings').select('booking_ref, session_id').eq('user_id', user.id),
+      supabase.from('session_guides').select('session_id, status, base_pay, bonus').eq('user_id', user.id),
+    ]).then(([sbRes, sgRes]) => {
+      setSessionBookings(sbRes.data || []);
+      setSessionGuides(sgRes.data || []);
+      setSessionPayLoaded(true);
+    });
+  }, [user, sessionPayLoaded]);
+
+  const sessionedRefs = useMemo(() => new Set(sessionBookings.map((sb) => sb.booking_ref)), [sessionBookings]);
+
+  // Reuses the exact same attribution logic as the Analytics profit fix (see
+  // lib/guidePerformance.ts) rather than reinventing it, so a session-linked booking's guide cost
+  // is identical across the Ledger, Analytics, Breakdown P&L and Live Board.
+  const bookingGuideCost = useMemo(
+    () => attributeSessionGuideCostByBooking({ bookings, sessionBookings, sessionGuides }),
+    [bookings, sessionBookings, sessionGuides]
+  );
+
+  // Computed LIVE for display rather than trusting the stored bookings.net_profit column, which can
+  // go stale (edited costs, a corrected gross_revenue, etc. don't retroactively update it). Every
+  // blank ("needs input") cost is treated as 0 for this calculation only — the cost CELLS still show
+  // their own "Needs input" flag via MoneyCell, this just means a still-incomplete booking always has
+  // a real, current profit figure rather than showing blank/€0 by default. Guide cost: a
+  // session-linked booking uses that session's real pay (never its own stale guide_cost); a booking
+  // not in any session falls back to its own guide_cost — never both, matching the Live Board/
+  // Analytics/Breakdown P&L rule exactly, so all four surfaces agree on the same booking's profit.
+  const liveNetProfit = useMemo(() => (b: any): number => {
+    const gross = b.gross_revenue || 0;
+    const otherCosts = (b.ticket_cost || 0) + (b.extra_cost || 0) + (b.gyg_cost || 0)
+      + (b.commission_amount || 0) + (b.marketplace_fee || 0);
+    const guideCost = sessionedRefs.has(b.booking_ref)
+      ? (bookingGuideCost.get(b.booking_ref) || 0)
+      : (b.guide_cost || 0);
+    return gross - otherCosts - guideCost;
+  }, [sessionedRefs, bookingGuideCost]);
+
   // Panel state
   const [panelOpen, setPanelOpen] = useState(false);
   const [editBooking, setEditBooking] = useState<Booking | null>(null);
@@ -133,11 +239,54 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
   const [channelFilter, setChannelFilter] = useState<string[]>(['All']);
   const [statusFilter, setStatusFilter] = useState<string[]>(['All']);
   const [sourceFilter, setSourceFilter] = useState<string[]>(['All']);
-  const [travelMonth, setTravelMonth] = useState('All');
-  const [travelYear, setTravelYear] = useState('');
-  const [bookingMonth, setBookingMonth] = useState('All');
-  const [bookingYear, setBookingYear] = useState('');
+  // DATE FILTER — a single active mechanism at a time (preset / single day / custom range),
+  // applied to whichever date field (travel_date or booking_date) dateBasis selects. Picking any
+  // one of the three replaces whichever was active before, rather than stacking.
+  const [dateBasis, setDateBasis] = useState<'travel' | 'booking'>('travel');
+  const [dateMode, setDateMode] = useState<DateFilterMode>('none');
+  const [datePreset, setDatePreset] = useState<DatePresetKey | null>(null);
+  const [singleDay, setSingleDay] = useState('');
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
   const [page, setPage] = useState(0);
+
+  const selectPreset = (p: DatePresetKey) => {
+    setDateMode('preset'); setDatePreset(p); setSingleDay(''); setRangeFrom(''); setRangeTo(''); setPage(0);
+  };
+  const selectDay = (day: string) => {
+    setDatePreset(null); setRangeFrom(''); setRangeTo(''); setSingleDay(day);
+    setDateMode(day ? 'day' : 'none');
+    setPage(0);
+  };
+  const selectRange = (from: string, to: string) => {
+    setDatePreset(null); setSingleDay(''); setRangeFrom(from); setRangeTo(to);
+    setDateMode(from || to ? 'range' : 'none');
+    setPage(0);
+  };
+  const clearDate = () => {
+    setDateMode('none'); setDatePreset(null); setSingleDay(''); setRangeFrom(''); setRangeTo(''); setPage(0);
+  };
+
+  // Inclusive { start, end } YYYY-MM-DD bounds for whichever date mechanism is active, or null
+  // when no date filter is set at all.
+  const activeDateRange = useMemo((): { start: string | null; end: string | null } | null => {
+    if (dateMode === 'preset' && datePreset) return datePresetRange(datePreset);
+    if (dateMode === 'day' && singleDay) return { start: singleDay, end: singleDay };
+    if (dateMode === 'range' && (rangeFrom || rangeTo)) return { start: rangeFrom || null, end: rangeTo || null };
+    return null;
+  }, [dateMode, datePreset, singleDay, rangeFrom, rangeTo]);
+
+  const dateChipLabel = useMemo(() => {
+    const basisLabel = dateBasis === 'travel' ? 'Travel' : 'Booking';
+    if (dateMode === 'preset' && datePreset) {
+      return `${basisLabel}: ${DATE_PRESETS.find((p) => p.key === datePreset)?.label || datePreset}`;
+    }
+    if (dateMode === 'day' && singleDay) return `${basisLabel}: ${fmtDayChip(singleDay)}`;
+    if (dateMode === 'range' && (rangeFrom || rangeTo)) {
+      return `${basisLabel}: ${rangeFrom ? fmtDayChip(rangeFrom) : '…'} → ${rangeTo ? fmtDayChip(rangeTo) : '…'}`;
+    }
+    return null;
+  }, [dateBasis, dateMode, datePreset, singleDay, rangeFrom, rangeTo]);
 
   // Column Widths — defaults first, then overlaid with any saved widths, so a column added after
   // a user already has localStorage state (like gygcost) still gets a sane width instead of
@@ -165,10 +314,9 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
     });
   };
 
-  const clearFilters = () => {
-    setSearch(''); setChannelFilter(['All']); setStatusFilter(['All']);
-    setTravelMonth('All'); setTravelYear(''); setBookingMonth('All'); setBookingYear('');
-    setPage(0);
+  const clearAllFilters = () => {
+    setSearch(''); setChannelFilter(['All']); setStatusFilter(['All']); setSourceFilter(['All']);
+    clearDate();
   };
 
   // Filtered bookings
@@ -191,27 +339,27 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
     if (!sourceFilter.includes('All')) {
       out = out.filter((b) => sourceFilter.includes(b.sync_source || 'manual'));
     }
-    if (travelMonth !== 'All') {
-      const mi = MONTHS.indexOf(travelMonth); 
-      out = out.filter((b) => b.travel_date && new Date(b.travel_date).getMonth() + 1 === mi);
+    if (activeDateRange) {
+      out = out.filter((b) => {
+        const raw = dateBasis === 'travel' ? b.travel_date : b.booking_date;
+        if (!raw) return false;
+        const day = String(raw).slice(0, 10);
+        if (activeDateRange.start && day < activeDateRange.start) return false;
+        if (activeDateRange.end && day > activeDateRange.end) return false;
+        return true;
+      });
     }
-    if (travelYear) out = out.filter((b) => b.travel_date && new Date(b.travel_date).getFullYear() === Number(travelYear));
-    if (bookingMonth !== 'All') {
-      const mi = MONTHS.indexOf(bookingMonth);
-      out = out.filter((b) => b.booking_date && new Date(b.booking_date).getMonth() + 1 === mi);
-    }
-    if (bookingYear) out = out.filter((b) => b.booking_date && new Date(b.booking_date).getFullYear() === Number(bookingYear));
     return out;
-  }, [bookings, search, channelFilter, statusFilter, travelMonth, travelYear, bookingMonth, bookingYear]);
+  }, [bookings, search, channelFilter, statusFilter, sourceFilter, dateBasis, activeDateRange]);
 
   // Summary
   const summary = useMemo(() => {
     const rev = filtered.reduce((s, b) => s + (b.gross_revenue || 0), 0);
     const comm = filtered.reduce((s, b) => s + (b.marketplace_fee || 0), 0);
     const costs = filtered.reduce((s, b) => s + (b.ticket_cost || 0) + (b.guide_cost || 0) + (b.extra_cost || 0) + (b.gyg_cost || 0), 0);
-    const profit = filtered.reduce((s, b) => s + (b.net_profit || 0), 0);
+    const profit = filtered.reduce((s, b) => s + liveNetProfit(b), 0);
     return { rev, comm, costs, profit };
-  }, [filtered]);
+  }, [filtered, liveNetProfit]);
 
   // Pagination
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
@@ -361,55 +509,140 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
       )}
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-2 mb-6 items-end">
-        <input
-          className="aurelia-input w-48 text-[11px]"
-          placeholder="Search ref, customer, product..."
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(0); }}
-        />
-        <MultiSelect 
-          label="OTA / Channel" 
-          options={CHANNELS.map(c => ({ value: c, label: c }))}
-          selected={channelFilter}
-          onChange={(s) => { setChannelFilter(s); setPage(0); }}
-        />
-        <MultiSelect 
-          label="Status" 
-          options={STATUSES.map(s => ({ value: s, label: s.replace(/_/g, ' ') }))}
-          selected={statusFilter}
-          onChange={(s) => { setStatusFilter(s); setPage(0); }}
-        />
-        <MultiSelect 
-          label="Source" 
-          options={[
-            { value: 'All', label: 'All Sources' },
-            { value: 'bokun', label: 'Bokun' },
-            { value: 'gsheet', label: 'Sheet' },
-            { value: 'manual', label: 'Manual' }
-          ]}
-          selected={sourceFilter}
-          onChange={(s) => { setSourceFilter(s); setPage(0); }}
-        />
-        <div className="flex items-center gap-1">
-          <select className="aurelia-input w-28 text-[11px]" value={travelMonth} onChange={(e) => { setTravelMonth(e.target.value); setPage(0); }}>
-            <option value="All">Travel Month</option>
-            {MONTHS.filter(m=>m!=='All').map((m) => <option key={'t' + m} value={m}>{m}</option>)}
-          </select>
-          <input className="aurelia-input w-16 text-[11px]" placeholder="Year" value={travelYear}
-            onChange={(e) => { setTravelYear(e.target.value); setPage(0); }} />
+      <div className="aurelia-card p-4 sm:p-5 mb-6 space-y-4">
+        {/* SEARCH + DATE BASIS — stacked on phone, side by side from sm up. */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="relative flex-1 min-w-0 sm:max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <input
+              className="aurelia-input w-full pl-9 text-[12px] min-h-10"
+              placeholder="Search ref, customer, product…"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+            />
+          </div>
+          <div className="flex bg-muted p-1 rounded-xl border border-border w-fit shrink-0">
+            <button
+              onClick={() => setDateBasis('travel')}
+              className={`px-3 sm:px-4 py-2 min-h-9 rounded-lg text-[11px] sm:text-xs font-bold uppercase tracking-wide transition-all ${
+                dateBasis === 'travel' ? 'bg-background text-foreground shadow-sm border border-border/50' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              By Travel Date
+            </button>
+            <button
+              onClick={() => setDateBasis('booking')}
+              className={`px-3 sm:px-4 py-2 min-h-9 rounded-lg text-[11px] sm:text-xs font-bold uppercase tracking-wide transition-all ${
+                dateBasis === 'booking' ? 'bg-background text-foreground shadow-sm border border-border/50' : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              By Booking Date
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          <select className="aurelia-input w-28 text-[11px]" value={bookingMonth} onChange={(e) => { setBookingMonth(e.target.value); setPage(0); }}>
-            <option value="All">Booking Month</option>
-            {MONTHS.filter(m=>m!=='All').map((m) => <option key={'b' + m} value={m}>{m}</option>)}
-          </select>
-          <input className="aurelia-input w-16 text-[11px]" placeholder="Year" value={bookingYear}
-            onChange={(e) => { setBookingYear(e.target.value); setPage(0); }} />
+
+        {/* DATE CONTROLS — presets, a single-day picker, and a custom range, all acting on
+            whichever basis is selected above. Only ONE of these three is ever "the" active date
+            filter — picking one clears whichever of the other two was set (see selectPreset/
+            selectDay/selectRange). */}
+        <div className="flex flex-wrap items-center gap-2">
+          <CalendarDays size={14} className="text-muted-foreground shrink-0 hidden sm:block" />
+          <div className="flex flex-wrap gap-1 bg-muted p-1 rounded-xl border border-border">
+            {DATE_PRESETS.map((p) => (
+              <button
+                key={p.key}
+                onClick={() => selectPreset(p.key)}
+                className={`px-3 py-1.5 min-h-9 rounded-lg text-[11px] font-bold uppercase tracking-wide transition-all ${
+                  dateMode === 'preset' && datePreset === p.key
+                    ? 'bg-background text-foreground shadow-sm border border-border/50'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground font-medium whitespace-nowrap">Pick a day</span>
+            <input
+              type="date"
+              className="aurelia-input w-auto min-h-9 py-1.5 text-[12px]"
+              value={singleDay}
+              onChange={(e) => selectDay(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground font-medium whitespace-nowrap">Range</span>
+            <input
+              type="date"
+              className="aurelia-input w-auto min-h-9 py-1.5 text-[12px]"
+              value={rangeFrom}
+              max={rangeTo || undefined}
+              onChange={(e) => selectRange(e.target.value, rangeTo)}
+            />
+            <span className="text-muted-foreground text-xs shrink-0">→</span>
+            <input
+              type="date"
+              className="aurelia-input w-auto min-h-9 py-1.5 text-[12px]"
+              value={rangeTo}
+              min={rangeFrom || undefined}
+              onChange={(e) => selectRange(rangeFrom, e.target.value)}
+            />
+          </div>
+
+          {dateMode !== 'none' && (
+            <button onClick={clearDate} className="text-[11px] font-bold text-muted-foreground hover:text-gold transition-colors whitespace-nowrap">
+              Clear date
+            </button>
+          )}
         </div>
-        <button onClick={clearFilters} className="text-[11px] font-bold text-muted-foreground hover:text-gold transition-colors ml-2 pb-2">
-          Clear filters
-        </button>
+
+        <div className="h-px bg-border" />
+
+        {/* OTHER FILTERS — channel/status/source, redesigned as toggle-pill groups matching the
+            Breakdown P&L filter bar (TogglePill/FilterChip, reused from there for consistency). */}
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+          <FilterPillGroup
+            label="Channel"
+            options={CHANNELS.map((c) => ({ value: c, label: c }))}
+            selected={channelFilter}
+            onToggle={(v) => { setChannelFilter(toggleMultiValue(channelFilter, v)); setPage(0); }}
+          />
+          <FilterPillGroup
+            label="Status"
+            options={STATUSES.map((s) => ({ value: s, label: s === 'NO_SHOW' ? 'No Show' : s.replace(/_/g, ' ') }))}
+            selected={statusFilter}
+            onToggle={(v) => { setStatusFilter(toggleMultiValue(statusFilter, v)); setPage(0); }}
+          />
+          <FilterPillGroup
+            label="Source"
+            options={SOURCES}
+            selected={sourceFilter}
+            onToggle={(v) => { setSourceFilter(toggleMultiValue(sourceFilter, v)); setPage(0); }}
+          />
+        </div>
+
+        {/* ACTIVE FILTER CHIPS */}
+        {(search || dateChipLabel || !channelFilter.includes('All') || !statusFilter.includes('All') || !sourceFilter.includes('All')) && (
+          <div className="flex flex-wrap items-center gap-2 pt-1 animate-fade-in">
+            {search && <FilterChip label={`"${search}"`} onRemove={() => setSearch('')} />}
+            {dateChipLabel && <FilterChip label={dateChipLabel} onRemove={clearDate} />}
+            {!channelFilter.includes('All') && channelFilter.map((c) => (
+              <FilterChip key={`chan-${c}`} label={c} onRemove={() => setChannelFilter(toggleMultiValue(channelFilter, c))} />
+            ))}
+            {!statusFilter.includes('All') && statusFilter.map((s) => (
+              <FilterChip key={`stat-${s}`} label={s === 'NO_SHOW' ? 'No Show' : s.replace(/_/g, ' ')} onRemove={() => setStatusFilter(toggleMultiValue(statusFilter, s))} />
+            ))}
+            {!sourceFilter.includes('All') && sourceFilter.map((s) => (
+              <FilterChip key={`src-${s}`} label={SOURCES.find((o) => o.value === s)?.label || s} onRemove={() => setSourceFilter(toggleMultiValue(sourceFilter, s))} />
+            ))}
+            <button onClick={clearAllFilters} className="text-[11px] font-bold text-muted-foreground hover:text-foreground underline-offset-2 hover:underline ml-1">
+              Clear all
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Summary cards */}
@@ -531,7 +764,10 @@ export default function LedgerPage({ bookings, setBookings, onSync, bookingsLoad
                           case 'ecost': return <MoneyCell value={b.extra_cost} className="text-muted-foreground" />;
                           case 'tcost': return <MoneyCell value={b.ticket_cost} className="text-muted-foreground" />;
                           case 'gygcost': return <MoneyCell value={b.gyg_cost} className="text-muted-foreground" />;
-                          case 'profit': return <span className={`font-bold tabular-nums ${b.net_profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>{fmtEuro(b.net_profit)}</span>;
+                          case 'profit': {
+                            const profit = liveNetProfit(b);
+                            return <span className={`font-bold tabular-nums ${profit >= 0 ? 'text-profit-positive' : 'text-profit-negative'}`}>{fmtEuro(profit)}</span>;
+                          }
                           case 'status': return <StatusBadge status={b.status} />;
                           case 'guide': return <span className="text-muted-foreground">{b.assigned_guide || '—'}</span>;
                           case 'actions': return (
