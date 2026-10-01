@@ -608,14 +608,23 @@ export default function TodayToursPage() {
   };
 
   // Owner-only: lock/unlock a guide on a session — locked guides and their guests are excluded
-  // from Balance entirely.
+  // from Balance entirely. .select() + checking the returned rows (not just `error`) matters here:
+  // an RLS policy that silently narrows the UPDATE's visible rows reports no error at all, just
+  // zero rows affected — without this check a blocked write would look identical to a successful
+  // one until the next refresh quietly showed the old state again.
   const handleToggleLock = async (sessionId: string, guideId: string, locked: boolean) => {
     if (!user) return;
-    await supabase.from('session_guides')
+    const { data, error } = await supabase.from('session_guides')
       .update({ shuffle_locked: locked })
       .eq('user_id', user.id)
       .eq('session_id', sessionId)
-      .eq('guide_id', guideId);
+      .eq('guide_id', guideId)
+      .select();
+    if (error || !data || data.length === 0) {
+      console.error('Failed to toggle lock:', error || 'no rows updated');
+      toast.error('Could not update lock — please try again.');
+      return;
+    }
     await refreshSessionGuides();
   };
 

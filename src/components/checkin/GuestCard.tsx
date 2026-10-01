@@ -202,87 +202,91 @@ export default function GuestCard({
         )}
       </p>
 
-      {/* ACTIONS — compact icons, not full-width bars; checking in toggles this row in place */}
-      <div className="flex flex-wrap items-center gap-1 pl-[19px]">
-        {booking.customer_phone && (
-          <>
-            <a
-              href={`tel:${booking.customer_phone}`}
-              className="p-1 bg-green-600/10 hover:bg-green-600/20 active:scale-95 rounded-md text-green-700 transition-all"
-              title="Call"
-            >
-              <Phone size={12} />
-            </a>
-            <a
-              href={`sms:${booking.customer_phone}`}
-              className="p-1 bg-blue-600/10 hover:bg-blue-600/20 active:scale-95 rounded-md text-blue-700 transition-all"
-              title="Message"
-            >
-              <MessageCircle size={12} />
-            </a>
-          </>
-        )}
-
-        {guides && onSelectGuide && (
-          <select
-            value={selectedGuideId || ''}
-            onChange={(e) => onSelectGuide(e.target.value)}
-            className="bg-background border border-border text-foreground rounded-md text-[9px] py-0.5 px-1 outline-none max-w-[84px] disabled:opacity-50"
-            disabled={locked}
-          >
-            <option value="">No guide</option>
-            {guides.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-          </select>
-        )}
-
-        {sessions && onMoveToSession && (
-          <select
-            value={currentSessionId || ''}
-            onChange={(e) => onMoveToSession(e.target.value || null)}
-            className="bg-background border border-border text-foreground rounded-md text-[9px] py-0.5 px-1 outline-none max-w-[92px]"
-          >
-            <option value="">Unassigned</option>
-            {sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        )}
-
-        <div className="ml-auto flex items-center gap-1">
-          {!locked ? (
+      {/* ACTIONS — a compact row of secondary controls (call/message/guide/session), then the
+          Check-in control gets its OWN row below with a genuinely large tap target: it must never
+          be squeezed in next to other small controls where a mistap on something else could land
+          on it (or vice versa). Tapping the card/name above never checks anyone in — only this
+          explicit button does. */}
+      <div className="pl-[19px] space-y-1.5">
+        <div className="flex flex-wrap items-center gap-1">
+          {booking.customer_phone && (
             <>
-              <button
-                onClick={onCheckIn}
-                className="flex items-center gap-1 px-2 py-1 bg-gold text-black rounded-md font-black text-[9px] uppercase tracking-wide active:scale-95 transition-all"
+              <a
+                href={`tel:${booking.customer_phone}`}
+                className="p-1 bg-green-600/10 hover:bg-green-600/20 active:scale-95 rounded-md text-green-700 transition-all"
+                title="Call"
               >
-                <Check size={11} /> In
-              </button>
-              {onNoShow && (
-                <button
-                  onClick={onNoShow}
-                  className="p-1 bg-red-600/10 hover:bg-red-600/20 active:scale-95 rounded-md text-red-700 transition-all"
-                  title="No Show"
-                >
-                  <XCircle size={12} />
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              {!isCancelled && <CheckinPhotoThumb photo={ticketPhoto} />}
-              <span className="text-[9px] font-bold uppercase text-muted-foreground tracking-wide whitespace-nowrap">
-                {isCancelled ? 'Cancelled' : isCheckedIn ? 'Checked in' : 'No show'}
-                {!isCancelled && checkedInAt ? ` · ${new Date(checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
-              </span>
-              {onReset && !isCancelled && (
-                <button
-                  onClick={onReset}
-                  className="text-[10px] font-bold uppercase text-red-700/80 hover:text-red-700 transition-colors whitespace-nowrap"
-                >
-                  Reset
-                </button>
-              )}
+                <Phone size={12} />
+              </a>
+              <a
+                href={`sms:${booking.customer_phone}`}
+                className="p-1 bg-blue-600/10 hover:bg-blue-600/20 active:scale-95 rounded-md text-blue-700 transition-all"
+                title="Message"
+              >
+                <MessageCircle size={12} />
+              </a>
             </>
           )}
+
+          {guides && onSelectGuide && (
+            <select
+              value={selectedGuideId || ''}
+              onChange={(e) => onSelectGuide(e.target.value)}
+              className="bg-background border border-border text-foreground rounded-md text-[9px] py-0.5 px-1 outline-none max-w-[84px] disabled:opacity-50"
+              disabled={locked}
+            >
+              <option value="">No guide</option>
+              {guides.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+          )}
+
+          {sessions && onMoveToSession && (
+            <select
+              value={currentSessionId || ''}
+              onChange={(e) => onMoveToSession(e.target.value || null)}
+              className="bg-background border border-border text-foreground rounded-md text-[9px] py-0.5 px-1 outline-none max-w-[92px]"
+            >
+              <option value="">Unassigned</option>
+              {sessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          )}
         </div>
+
+        {!locked ? (
+          <div className="flex items-stretch gap-2">
+            <button
+              onClick={onCheckIn}
+              className="flex-1 min-h-11 flex items-center justify-center gap-1.5 px-4 bg-gold text-black rounded-lg font-black text-xs uppercase tracking-wide active:scale-95 transition-all"
+            >
+              <Check size={16} /> Check In
+            </button>
+            {onNoShow && (
+              <button
+                onClick={onNoShow}
+                className="min-h-11 min-w-11 shrink-0 flex items-center justify-center bg-red-600/10 hover:bg-red-600/20 active:scale-95 rounded-lg text-red-700 transition-all"
+                title="No Show"
+              >
+                <XCircle size={16} />
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 flex-wrap">
+            {!isCancelled && <CheckinPhotoThumb photo={ticketPhoto} />}
+            <span className="text-[9px] font-bold uppercase text-muted-foreground tracking-wide whitespace-nowrap">
+              {isCancelled ? 'Cancelled' : isCheckedIn ? 'Checked in' : 'No show'}
+              {!isCancelled && checkedInAt ? ` · ${new Date(checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+            </span>
+            {onReset && !isCancelled && (
+              <button
+                onClick={onReset}
+                className="min-h-11 px-2 text-[10px] font-bold uppercase text-red-700/80 hover:text-red-700 transition-colors whitespace-nowrap"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

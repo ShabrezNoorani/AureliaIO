@@ -865,16 +865,27 @@ export default function GuideCheckin() {
     });
   };
 
-  // Lock/unlock a guide on a session — locked guides and their guests are excluded from Balance
-  // entirely. Not queued (same as the owner's version): small, single-row write, awaited directly
-  // so the confirm state on the button itself is the only feedback needed.
+  // Lock/unlock a guide on a session — same capability as the owner's, since any accepted guide
+  // on a session can balance/lock/move (RLS's guide_update_session_guides policy is what actually
+  // permits a guide to update any teammate's row on a shared session, not just their own). Not
+  // queued (same as the owner's version): small, single-row write, awaited directly so the confirm
+  // state on the button itself is the only feedback needed. .select() + checking the returned rows
+  // (not just `error`) matters here: an RLS rejection reports no error at all, just zero rows
+  // affected — without this check a blocked write would look identical to a successful one until
+  // the next refresh quietly showed the old state again.
   const handleToggleLock = async (sessionId: string, guideId: string, locked: boolean) => {
     if (!guideUserId) return;
-    await supabase.from('session_guides')
+    const { data, error } = await supabase.from('session_guides')
       .update({ shuffle_locked: locked })
       .eq('user_id', guideUserId)
       .eq('session_id', sessionId)
-      .eq('guide_id', guideId);
+      .eq('guide_id', guideId)
+      .select();
+    if (error || !data || data.length === 0) {
+      console.error('Failed to toggle lock:', error || 'no rows updated');
+      toast.error('Could not update lock — please try again.');
+      return;
+    }
     await refreshSessionTeam();
   };
 
