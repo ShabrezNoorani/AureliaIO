@@ -119,7 +119,12 @@ export default function GuideCheckin() {
   // Sessions whose arrival tap is mid-flight (waiting on the location fix) — distinct from the
   // retry queue, which only takes over once there's a payload to write.
   const [arrivingSessionIds, setArrivingSessionIds] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
+  // Split from a single "loading" flag so the page can render progressively: sessions (known
+  // after the tour_sessions stage) show almost immediately, with each session's guest list
+  // showing its own small inline loader until bookings/checkins (the slower, later stage) land —
+  // instead of one all-or-nothing full-screen spinner gating everything on the slowest stage.
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [guestsLoaded, setGuestsLoaded] = useState(false);
   const [showConfirm, setShowConfirm] = useState<Booking | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Allocation board controls — a guide gets the exact same move/lock/balance capability the
@@ -155,36 +160,40 @@ export default function GuideCheckin() {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
   });
 
-  // `silent` skips the setLoading toggle — used by the realtime effect below so an incoming
-  // session_guides change (this guide gaining/losing a session, or a teammate's roster changing
-  // on a shared one) quietly re-derives state instead of flashing the full-page spinner. The
-  // initial mount load and the manual refresh button both want the spinner, so they leave it false.
+  // `silent` skips resetting sessionsLoaded/guestsLoaded — used by the realtime effect below so
+  // an incoming session_guides change (this guide gaining/losing a session, or a teammate's
+  // roster changing on a shared one) quietly re-derives state instead of flashing the loaders.
+  // The initial mount load and the manual refresh button both want the progressive loaders, so
+  // they leave it false.
   const loadData = async (silent = false) => {
     if (!guideId || !guideUserId) return;
-    if (!silent) setLoading(true);
+    if (!silent) {
+      setSessionsLoaded(false);
+      setGuestsLoaded(false);
+    }
 
     // Only sessions this guide has actually ACCEPTED show up for check-in — offered-but-unanswered
-    // and declined/reassigned sessions must never appear here.
-    const [sgRes, otherGuidesData, sessionTeamRes, unsessionedRes] = await Promise.all([
-      supabase.from('session_guides').select('session_id')
-        .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted'),
-      // Transfer picker only — deliberately excludes self and is fine being case-sensitive on
-      // status, since it's just "everyone else at the company".
-      fetchCompanyGuides(supabase, guideId),
-      // Allocation board's name lookup — every guide on any session this guide belongs to
-      // (including themself), not status-case-sensitive. my_company_guides() is wrong here: it
-      // excludes the caller and filters status = 'Active' against rows stored as 'active'.
-      supabase.rpc('my_session_team'),
-      // "Unassigned — last-minute" candidates — see the my_company_unsessioned_bookings() SQL
-      // handed over separately; RLS otherwise never lets a guide see a booking with no session at
-      // all. A missing RPC just yields an error here (data: null), so this degrades to an empty
-      // list rather than breaking the page.
-      supabase.rpc('my_company_unsessioned_bookings', { p_date: today }),
-    ]);
+    // and declined/reassigned sessions must never appear here. Fired ALONE, first: it's the only
+    // query the tour_sessions fetch below actually needs (its result), so tour_sessions no longer
+    // has to wait for the three unrelated queries below too — they run concurrently with it
+    // instead of gating it, cutting a full round-trip off the time-to-see-sessions.
+    const sgRes = await supabase.from('session_guides').select('session_id')
+      .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted');
     if (!mountedRef.current) return;
-    setOtherGuides(otherGuidesData);
-    setSessionTeamRows(sessionTeamRes.data || []);
-    setUnsessionedBookings((unsessionedRes.data as unknown as Booking[]) || []);
+
+    // None of these three feed tour_sessions' query — fired now so they run CONCURRENTLY with it
+    // (and with the session-scoped queries further down), awaited only where their actual values
+    // are needed, never blocking the "do we know the sessions yet" critical path.
+    const otherGuidesPromise = fetchCompanyGuides(supabase, guideId);
+    // Allocation board's name lookup — every guide on any session this guide belongs to
+    // (including themself), not status-case-sensitive. my_company_guides() is wrong here: it
+    // excludes the caller and filters status = 'Active' against rows stored as 'active'.
+    const sessionTeamPromise = supabase.rpc('my_session_team');
+    // "Unassigned — last-minute" candidates — see the my_company_unsessioned_bookings() SQL
+    // handed over separately; RLS otherwise never lets a guide see a booking with no session at
+    // all. A missing RPC just yields an error here (data: null), so this degrades to an empty
+    // list rather than breaking the page.
+    const unsessionedPromise = supabase.rpc('my_company_unsessioned_bookings', { p_date: today });
 
     const acceptedSessionIds = (sgRes.data || []).map(sg => sg.session_id);
     if (acceptedSessionIds.length === 0) {
@@ -194,7 +203,13 @@ export default function GuideCheckin() {
       setBookings([]);
       setCheckins([]);
       setArrivals([]);
-      if (!silent) setLoading(false);
+      setSessionsLoaded(true);
+      setGuestsLoaded(true);
+      const [otherGuidesData, sessionTeamRes, unsessionedRes] = await Promise.all([otherGuidesPromise, sessionTeamPromise, unsessionedPromise]);
+      if (!mountedRef.current) return;
+      setOtherGuides(otherGuidesData);
+      setSessionTeamRows(sessionTeamRes.data || []);
+      setUnsessionedBookings((unsessionedRes.data as unknown as Booking[]) || []);
       return;
     }
 
@@ -209,6 +224,9 @@ export default function GuideCheckin() {
 
     const mySessions = sessionsData || [];
     setSessions(mySessions);
+    // PROGRESSIVE RENDER: the guide sees their sessions now — guest lists below still show their
+    // own small inline loader (guestsLoaded) until bookings/checkins actually arrive.
+    setSessionsLoaded(true);
 
     const sessionIds = mySessions.map(s => s.id);
     if (sessionIds.length === 0) {
@@ -217,11 +235,18 @@ export default function GuideCheckin() {
       setBookings([]);
       setCheckins([]);
       setArrivals([]);
-      if (!silent) setLoading(false);
+      setGuestsLoaded(true);
+      const [otherGuidesData, sessionTeamRes, unsessionedRes] = await Promise.all([otherGuidesPromise, sessionTeamPromise, unsessionedPromise]);
+      if (!mountedRef.current) return;
+      setOtherGuides(otherGuidesData);
+      setSessionTeamRows(sessionTeamRes.data || []);
+      setUnsessionedBookings((unsessionedRes.data as unknown as Booking[]) || []);
       return;
     }
 
-    const [sbRes, payRes, arrRes] = await Promise.all([
+    // The three "other" queries (fired above, already in flight) are awaited HERE, alongside the
+    // session-scoped ones — not before them — so they never add their own sequential stage.
+    const [sbRes, payRes, arrRes, otherGuidesData, sessionTeamRes, unsessionedRes] = await Promise.all([
       supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id')
         .eq('user_id', guideUserId).in('session_id', sessionIds),
       // This guide's OWN pay + check-in time only — RLS permits a guide to SELECT their own
@@ -234,8 +259,16 @@ export default function GuideCheckin() {
       // recorded status instead of offering the button a second time.
       supabase.from('guide_arrivals').select(ARRIVAL_COLUMNS)
         .eq('user_id', guideUserId).eq('guide_id', guideId).in('session_id', sessionIds),
+      otherGuidesPromise,
+      sessionTeamPromise,
+      unsessionedPromise,
     ]);
     if (!mountedRef.current) return;
+
+    setOtherGuides(otherGuidesData);
+    setSessionTeamRows(sessionTeamRes.data || []);
+    const unsessionedData = (unsessionedRes.data as unknown as Booking[]) || [];
+    setUnsessionedBookings(unsessionedData);
 
     const mySessionBookings = sbRes.data || [];
     setMyPay(payRes.data || []);
@@ -247,7 +280,7 @@ export default function GuideCheckin() {
     // for whenever a guide's own INSERT on session_bookings is permitted too — see the SQL handed
     // over separately. Never touches allotted_guide_id, never runs Balance either way.
     let finalLinks = mySessionBookings;
-    const autoMatches = matchBookingsToSessions(mySessions, mySessionBookings, unsessionedRes.data as unknown as Booking[] || []);
+    const autoMatches = matchBookingsToSessions(mySessions, mySessionBookings, unsessionedData);
     if (autoMatches.length > 0) {
       await autoPopulateSessionBookings(supabase, guideUserId, autoMatches);
       const { data: freshLinks } = await supabase.from('session_bookings')
@@ -262,7 +295,7 @@ export default function GuideCheckin() {
     if (refs.length === 0) {
       setBookings([]);
       setCheckins([]);
-      if (!silent) setLoading(false);
+      setGuestsLoaded(true);
       return;
     }
 
@@ -275,12 +308,13 @@ export default function GuideCheckin() {
 
     setBookings(bRes.data || []);
     setCheckins(prev => mergeGuardingPending(cRes.data || [], prev, pendingBookingRefs));
-    if (!silent) setLoading(false);
+    setGuestsLoaded(true);
   };
 
   // Lightweight, silent refreshes of just one table's worth of state — used both after this
   // guide's own writes and as the target of the realtime subscriptions below. Neither touches
-  // `loading`, so neither triggers the full-page spinner; only the very first mount does. Both
+  // sessionsLoaded/guestsLoaded, so neither triggers the progressive loaders again; only the very
+  // first mount (and a non-silent loadData()) does. Both
   // guard any booking_ref with a write still in flight (queued/retrying) — a realtime event or a
   // manual refresh landing mid-retry must never revert an optimistic card back to its pre-tap
   // state.
@@ -958,6 +992,12 @@ export default function GuideCheckin() {
   };
 
   const sessionsWithBookings = sessions.filter(s => (sessionBookingsMap.get(s.id) || []).length > 0);
+  // While guest data is still loading, every session technically has "zero bookings so far" (the
+  // map hasn't been populated yet) — showing sessionsWithBookings during that window would
+  // incorrectly read as "no tours today". Show all known sessions (with their own inline loader)
+  // until guestsLoaded settles, then narrow to the real, final list — same settled behavior as
+  // before, just not applied prematurely to an in-flight state.
+  const sessionsToShow = guestsLoaded ? sessionsWithBookings : sessions;
   const sessionById = useMemo(() => new Map(sessions.map(s => [s.id, s])), [sessions]);
 
   const arrivalStatusBySession = useMemo(() => {
@@ -994,7 +1034,7 @@ export default function GuideCheckin() {
             checking one in attaches it to whichever of this guide's own sessions BEST matches, or
             their earliest if none does (see handleCheckInLastMinute /
             pickBestSessionForBooking). */}
-        {!loading && sessions.length > 0 && unsessionedBookings.length > 0 && (
+        {sessionsLoaded && sessions.length > 0 && unsessionedBookings.length > 0 && (
           <div className="border border-amber-600/20 bg-amber-600/5 rounded-2xl overflow-hidden">
             <div className="flex items-start gap-3 text-sm text-amber-700 p-4 pb-2">
               <AlertTriangle size={16} className="shrink-0 mt-0.5" />
@@ -1028,19 +1068,19 @@ export default function GuideCheckin() {
           </div>
         )}
 
-        {loading ? (
+        {!sessionsLoaded ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4 opacity-50">
             <div className="w-8 h-8 border-4 border-gold border-t-transparent animate-spin rounded-full" />
-            <div className="text-[10px] font-bold uppercase tracking-[0.2em]">Synchronizing...</div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.2em]">Loading your sessions...</div>
           </div>
-        ) : sessionsWithBookings.length === 0 ? (
+        ) : sessionsToShow.length === 0 ? (
           <div className="text-center py-20 opacity-30">
             <div className="text-6xl mb-4 text-center">📭</div>
             <p className="text-sm font-bold uppercase tracking-widest">No tours assigned today</p>
           </div>
         ) : (
           <div className="space-y-6">
-            {sessionsWithBookings.map(session => {
+            {sessionsToShow.map(session => {
               const sessionBookingsList = sessionBookingsMap.get(session.id) || [];
               // A cancelled guest never counts toward the pax total used for allocation/balancing.
               const totalPax = sessionBookingsList.reduce((sum, b) => sum + (isCancelled(b.status) ? 0 : paxTotal(b)), 0);
@@ -1060,6 +1100,7 @@ export default function GuideCheckin() {
                   teamGuides={teamGuides}
                   allocationGuests={allocationGuests}
                   myPay={myPayForSession}
+                  guestsLoaded={guestsLoaded}
                   arrivalStatus={arrivalStatusBySession.get(session.id) ?? null}
                   arriving={arrivingSessionIds.has(session.id)}
                   arrivalSyncStuck={stuckArrivalSessionIds.has(session.id)}
@@ -1117,6 +1158,7 @@ function GuideSessionCard({
   teamGuides,
   allocationGuests,
   myPay,
+  guestsLoaded,
   arrivalStatus,
   arriving,
   arrivalSyncStuck,
@@ -1143,6 +1185,10 @@ function GuideSessionCard({
   /** This guide's OWN base_pay/bonus/checkin_time for this session — never any other guide's.
       Null until the owner has set a pay figure or check-in override for this guide. */
   myPay: MyPayRow | null;
+  /** False while bookings/checkins/allocation data is still loading (sessions are already known
+      by the time this card renders at all) — shows a small inline loader in place of the guest
+      list/allocation board below instead of a misleading "empty" state. */
+  guestsLoaded: boolean;
   arrivalStatus: string | null;
   arriving: boolean;
   arrivalSyncStuck: boolean;
@@ -1215,7 +1261,14 @@ function GuideSessionCard({
           </button>
         </div>
 
-        {tab === 'checkin' ? (
+        {!guestsLoaded ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+            <div className="w-4 h-4 border-2 border-gold border-t-transparent rounded-full animate-spin" />
+            <span className="text-[10px] font-bold uppercase tracking-widest">
+              {tab === 'checkin' ? 'Loading guests…' : 'Loading allocation…'}
+            </span>
+          </div>
+        ) : tab === 'checkin' ? (
           <TourGroup
             time={session.start_time || ''}
             code={session.label || 'Session'}

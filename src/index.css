@@ -1,4 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Fraunces:opsz,wght@9..144,400..900&display=swap');
+/* Google Fonts now loaded via <link> tags in index.html's <head> (preconnect + stylesheet) — a
+   CSS @import here was render-blocking and chained extra round-trips (index.css -> googleapis.com
+   -> gstatic.com) before first paint on every route. */
 
 @tailwind base;
 @tailwind components;
