@@ -49,22 +49,36 @@ describe('computeBalance', () => {
     expect(result.totalsByGuideId).toEqual({ a: 0, b: 0 });
   });
 
-  it('never touches an already-allotted checked-in guest (locked to whoever checked them in), and never moves a not-checked-in guest even if also unallotted', () => {
-    const guides = [guide('a'), guide('b')];
+  // REGRESSION / NEW RULE: a checked-in guest's allotment does NOT lock them in place by itself
+  // — only a guide actually being LOCKED does. Exercises all four cases together: movable off an
+  // unlocked guide, untouched on a locked guide, a plain unallotted guest still placed, and a
+  // not-checked-in guest excluded regardless of anything else.
+  it('pool = checked-in guests on unlocked guides + unallotted; checked-in guests on a locked guide are untouched; not-checked-in guests are always excluded', () => {
+    const guides = [guide('a'), guide('b'), guide('locked', true)];
     const guests = [
-      guest('CHECKED_IN_ON_A', 4, 'a', true),      // locked to 'a' (checked in there), must never move
-      guest('NOT_CHECKED_IN', 3, null, false),     // not checked in — must never appear as a move
-      guest('UNALLOTTED_CHECKED_IN', 2, null, true), // checked in, but not yet placed — the only movable guest
+      guest('ON_A_1', 6, 'a', true),         // checked-in, on UNLOCKED 'a' — movable
+      guest('ON_A_2', 6, 'a', true),         // checked-in, on UNLOCKED 'a' — movable (second group)
+      guest('ON_LOCKED', 10, 'locked', true), // checked-in, on a LOCKED guide — must stay, excluded
+      guest('UNALLOTTED', 4, null, true),     // checked-in, unallotted — movable
+      guest('NOT_CHECKED_IN', 99, null, false), // not checked in — excluded no matter what
     ];
     const result = computeBalance(guides, guests);
     if ('error' in result) throw new Error('unexpected error');
 
-    // Only the checked-in, unallotted guest gets a move.
-    expect(result.moves).toEqual([{ bookingRef: 'UNALLOTTED_CHECKED_IN', newGuideId: 'b' }]);
-    // 'a' started at 4 (the already-allotted checked-in guest's pax, seeded not moved). 'b'
-    // started at 0 and receives the new 2-pax guest since 0 < 4. The not-checked-in guest never
-    // seeds anything (it has no allottedGuideId) and never moves.
-    expect(result.totalsByGuideId).toEqual({ a: 4, b: 2 });
+    const movedRefs = result.moves.map(m => m.bookingRef);
+    // ON_LOCKED never moves and never even appears — it's excluded from the pool entirely.
+    expect(movedRefs).not.toContain('ON_LOCKED');
+    // NOT_CHECKED_IN is never touched regardless of its (null) allotment.
+    expect(movedRefs).not.toContain('NOT_CHECKED_IN');
+    // At least one of guide 'a's own checked-in guests gets moved off 'a' during redistribution —
+    // proving they were NOT locked in place just by having checked in there.
+    const onA = guests.filter(g => g.allottedGuideId === 'a').map(g => g.bookingRef);
+    expect(result.moves.some(m => onA.includes(m.bookingRef))).toBe(true);
+    // The unallotted guest is still placed somewhere, same as before.
+    expect(movedRefs).toContain('UNALLOTTED');
+    // Locked guide 'locked' has no entry at all — its guests (and their pax) are invisible here.
+    expect(result.totalsByGuideId).not.toHaveProperty('locked');
+    expect(Object.keys(result.totalsByGuideId).sort()).toEqual(['a', 'b']);
   });
 
   it('excludes a locked guide from both the pool and the totals summary, even for its own guests', () => {
@@ -79,35 +93,62 @@ describe('computeBalance', () => {
     expect(result.totalsByGuideId).toEqual({ b: 1 }); // 'a' (locked) never appears here
   });
 
-  // The exact scenario the check-in-locks-allocation safety rule depends on: check a guest in
-  // (landing them on a specific guide), then run Balance with a mixed pool of that guest plus
-  // freshly checked-in-but-unplaced guests, and confirm the already-placed guest is never among
-  // the moves — matching "check a guest in, run Balance, confirm that guest stays with the guide
-  // who checked them in."
-  it('worked example: a guest checked in by Guide A stays with Guide A after Balance redistributes the rest', () => {
+  // WORKED EXAMPLE from the fix spec: 2 unlocked guides, all guests checked-in and currently all
+  // on guide A — after Balance they split across A and B instead of staying put ("already
+  // balanced"). This is the exact scenario that was previously broken: the old rule treated
+  // CHECKED_IN_BY_A-style guests as untouchable, so Balance reported nothing to do.
+  it('worked example: guests all checked in under guide A split across A and B once both are unlocked', () => {
     const guides = [guide('guideA'), guide('guideB')];
     const guests = [
-      guest('CHECKED_IN_BY_A', 4, 'guideA', true),  // X: checked in directly under A
-      guest('LATE_ARRIVAL_1', 2, null, true),        // Y: checked in, not yet placed
-      guest('LATE_ARRIVAL_2', 2, null, true),        // Z: checked in, not yet placed
+      guest('ON_A_BIG', 8, 'guideA', true),
+      guest('ON_A_SMALL', 2, 'guideA', true),
+    ];
+    const result = computeBalance(guides, guests);
+    if ('error' in result) throw new Error('unexpected error');
+
+    // The smaller group moves off guideA onto guideB — proving a checked-in guest is NOT locked
+    // to the guide who checked them in merely because that guide isn't locked.
+    expect(result.moves).toEqual([{ bookingRef: 'ON_A_SMALL', newGuideId: 'guideB' }]);
+    expect(result.totalsByGuideId).toEqual({ guideA: 8, guideB: 2 });
+  });
+
+  // Second half of the same worked example: lock guideA and re-run. guideA's guests must now stay
+  // put (locked guides are entirely out of the redistribution); only guests on the remaining
+  // unlocked guide(s) are eligible to move.
+  it('worked example continued: locking guide A keeps its guests in place; only the rest redistribute', () => {
+    const guides = [guide('guideA', true), guide('guideB'), guide('guideC')];
+    const guests = [
+      guest('ON_A', 8, 'guideA', true),        // locked guide's own guest — stays, excluded
+      guest('ON_C_BIG', 7, 'guideC', true),     // on unlocked guideC, the larger pool group
+      guest('ON_B_SMALL', 1, 'guideB', true),   // on unlocked guideB, the smaller pool group
     ];
     const result = computeBalance(guides, guests);
     if ('error' in result) throw new Error('unexpected error');
 
     const movedRefs = result.moves.map(m => m.bookingRef);
-    expect(movedRefs).not.toContain('CHECKED_IN_BY_A');
-    expect(movedRefs.sort()).toEqual(['LATE_ARRIVAL_1', 'LATE_ARRIVAL_2']);
-    // Both late arrivals land on guideB (starts at 0, below guideA's seeded 4) until they're
-    // roughly even; guideA never receives anything since it's already ahead.
-    result.moves.forEach(m => expect(m.newGuideId).toBe('guideB'));
-    expect(result.totalsByGuideId.guideA).toBe(4); // unchanged — X never moved
+    // Nothing on locked guideA ever appears as a move.
+    expect(movedRefs).not.toContain('ON_A');
+    // guideA has no entry at all in the totals — entirely out of the redistribution.
+    expect(result.totalsByGuideId).not.toHaveProperty('guideA');
+    expect(Object.keys(result.totalsByGuideId).sort()).toEqual(['guideB', 'guideC']);
+    // Largest-group-first picks the tied (both start at 0) FIRST unlocked guide (guideB) for the
+    // 7-pax group, then the now-least-loaded guideC for the 1-pax group — redistributing both,
+    // proving neither was locked in place just by already being checked in somewhere.
+    expect(result.moves).toEqual([
+      { bookingRef: 'ON_C_BIG', newGuideId: 'guideB' },
+      { bookingRef: 'ON_B_SMALL', newGuideId: 'guideC' },
+    ]);
+    expect(result.totalsByGuideId).toEqual({ guideB: 7, guideC: 1 });
   });
 
-  it('reports zero moves (not an error) when the pool is already empty', () => {
+  it('reports zero GENUINE moves when every guest already resolves back to its own (sole) guide', () => {
     const guides = [guide('a')];
     const guests = [guest('X', 3, 'a', true)];
     const result = computeBalance(guides, guests);
     if ('error' in result) throw new Error('unexpected error');
+    // X is in the pool now (its guide 'a' is unlocked), but with only one unlocked guide it
+    // always resolves right back to 'a' — a no-op, so no move is recorded for it.
     expect(result.moves).toEqual([]);
+    expect(result.totalsByGuideId).toEqual({ a: 3 });
   });
 });

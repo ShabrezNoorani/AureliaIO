@@ -23,8 +23,10 @@ interface ChangeLogInsert {
 function makeSupabaseMock(opts: {
   updateResult?: { data: Row | null; error: { message: string } | null };
   insertResult?: { data: Row | null; error: { message: string } | null };
+  sessionBookingsDeleteError?: { message: string } | null;
 } = {}) {
   const changeLogInserts: ChangeLogInsert[] = [];
+  const sessionBookingsDeleteCalls: Row[] = [];
   let lastUpdatePayload: Row | null = null;
   let lastInsertPayload: Row | null = null;
 
@@ -59,12 +61,27 @@ function makeSupabaseMock(opts: {
         },
       };
     }
+    if (table === 'session_bookings') {
+      return {
+        // .delete().eq('user_id', ...).eq('booking_ref', ...) — the second .eq() is itself
+        // awaited directly (matches the real client's query-builder-is-also-a-thenable shape).
+        delete: () => ({
+          eq: (col1: string, val1: unknown) => ({
+            eq: (col2: string, val2: unknown) => {
+              sessionBookingsDeleteCalls.push({ [col1]: val1, [col2]: val2 });
+              return Promise.resolve({ error: opts.sessionBookingsDeleteError ?? null });
+            },
+          }),
+        }),
+      };
+    }
     throw new Error(`Unexpected table in test: ${table}`);
   });
 
   return {
     client: { from } as unknown as SupabaseClient,
     changeLogInserts,
+    sessionBookingsDeleteCalls,
     getLastUpdatePayload: () => lastUpdatePayload,
     getLastInsertPayload: () => lastInsertPayload,
   };
@@ -157,6 +174,69 @@ describe('saveBooking — editing an existing booking', () => {
     expect(result.error).toBe('boom');
     expect(result.booking).toBeNull();
     expect(changeLogInserts).toHaveLength(0);
+  });
+
+  // FIX 3(b): a session_bookings link is scoped to a specific day's session — changing
+  // travel_date must remove any stale link rather than leaving it pointing at the wrong day.
+  describe('travel_date change unlinks any stale session_bookings row', () => {
+    it('removes the booking\'s session_bookings link when travel_date actually changes', async () => {
+      const { client, sessionBookingsDeleteCalls } = makeSupabaseMock();
+      const after: Booking = { ...existingBooking, travel_date: '2026-10-08' };
+
+      const result = await saveBooking(client, 'user-1', existingBooking, after);
+
+      expect(result.error).toBeNull();
+      expect(sessionBookingsDeleteCalls).toHaveLength(1);
+      expect(sessionBookingsDeleteCalls[0]).toEqual({ user_id: 'user-1', booking_ref: 'BR-1' });
+    });
+
+    it('does NOT touch session_bookings when travel_date is unchanged', async () => {
+      const { client, sessionBookingsDeleteCalls } = makeSupabaseMock();
+      const after: Booking = { ...existingBooking, customer_name: 'New Name' }; // travel_date untouched
+
+      await saveBooking(client, 'user-1', existingBooking, after);
+
+      expect(sessionBookingsDeleteCalls).toHaveLength(0);
+    });
+
+    it('does NOT attempt to unlink session_bookings for a brand-new booking', async () => {
+      const { client, sessionBookingsDeleteCalls } = makeSupabaseMock();
+      const fresh: Booking = { ...EMPTY_BOOKING, booking_ref: 'BR-NEW', travel_date: '2026-10-08', status: 'UPCOMING' };
+
+      // EMPTY_BOOKING -> fresh technically "changes" travel_date, but there's no prior row (no id)
+      // and so nothing to unlink.
+      await saveBooking(client, 'user-1', EMPTY_BOOKING, fresh);
+
+      expect(sessionBookingsDeleteCalls).toHaveLength(0);
+    });
+
+    it('still reports success even if the session_bookings cleanup itself fails (non-fatal)', async () => {
+      const { client, changeLogInserts } = makeSupabaseMock({
+        sessionBookingsDeleteError: { message: 'unlink failed' },
+      });
+      const after: Booking = { ...existingBooking, travel_date: '2026-10-08' };
+
+      const result = await saveBooking(client, 'user-1', existingBooking, after);
+
+      // The booking's own save (and its change log) must succeed regardless — a failed
+      // session_bookings cleanup is logged, not surfaced as a save error.
+      expect(result.error).toBeNull();
+      expect(result.booking).toBeTruthy();
+      expect(changeLogInserts.length).toBeGreaterThan(0);
+    });
+
+    it('never touches manual_overrides as a side effect of the session_bookings cleanup', async () => {
+      const withPriorOverride: Booking = { ...existingBooking, manual_overrides: ['guide_cost'] };
+      const { client, getLastUpdatePayload } = makeSupabaseMock();
+      const after: Booking = { ...withPriorOverride, travel_date: '2026-10-08' };
+
+      await saveBooking(client, 'user-1', withPriorOverride, after);
+
+      // travel_date joins the overrides (it's protectable and changed), guide_cost is preserved
+      // (addManualOverrides sorts alphabetically) — the session_bookings cleanup is an unrelated,
+      // separate write and never touches this array.
+      expect(getLastUpdatePayload()?.manual_overrides).toEqual(['guide_cost', 'travel_date']);
+    });
   });
 });
 

@@ -33,14 +33,19 @@ export interface SaveBookingResult {
 
 /**
  * Single write path for every owner edit to a booking from the Financial Ledger — mirrors
- * updateGuideDetails() in lib/guideActions.ts. Three things happen together, in order, so they
+ * updateGuideDetails() in lib/guideActions.ts. Four things happen together, in order, so they
  * can never drift apart:
  *   1. total_pax/commission_amount/net_revenue/net_profit are recomputed fresh from `after`
  *      (never trusts whatever the edit panel already had in state).
  *   2. Whichever PROTECTABLE_BOOKING_FIELDS actually changed value vs `before` get folded into
  *      manual_overrides, so a later Bokun/gsheet sync can never revert them (see
  *      lib/bookingOverrides.ts).
- *   3. One change_logs row is written per changed field, old -> new.
+ *   3. If travel_date just changed on an EXISTING booking, any session_bookings link it had is
+ *      removed — that link is scoped to a specific day's session, so a date change leaves it
+ *      pointing at the wrong day (or nothing at all) otherwise. See the dedicated comment below;
+ *      re-attaching to a session on the NEW date is left to the existing auto-populate logic
+ *      (TodayToursPage/GuideCheckin's own loadData), not duplicated here.
+ *   4. One change_logs row is written per changed field, old -> new.
  *
  * `before` is EMPTY_BOOKING for a brand-new booking — every protectable field the owner fills in
  * on a fresh manual entry is treated as "changed" and flagged, since a from-scratch manual
@@ -86,6 +91,28 @@ export async function saveBooking(
   }
 
   if (error) return { error, booking: null, changedFields: [] };
+
+  // CRITICAL: a session_bookings row links a booking to a specific day's session — if
+  // travel_date just changed on an EXISTING booking (Oct 1 -> Oct 8), any such link now points at
+  // a session for the WRONG day. Remove it so the booking stops showing on the old day's session;
+  // it's picked back up and linked to a matching session on the NEW date the next time
+  // TodayToursPage/Dispatch/GuideCheckin loads, via the SAME auto-populate matching every other
+  // unsessioned booking already goes through — never duplicated or reimplemented here. A
+  // brand-new booking (no `after.id` yet) has no prior link to clean up. This never touches
+  // manual_overrides (a separate, already-handled concern above) and only ever DELETEs — it can't
+  // leave session_bookings in a partial/corrupt state.
+  if (after.id && changedFields.includes('travel_date') && saved?.booking_ref) {
+    const { error: unlinkError } = await supabase
+      .from('session_bookings')
+      .delete()
+      .eq('user_id', userId)
+      .eq('booking_ref', saved.booking_ref);
+    if (unlinkError) {
+      // Not fatal to the save — the booking row itself is already correctly saved above; a
+      // left-behind stale link would need manual cleanup, logged here for visibility.
+      console.error('Failed to unlink booking from its old session after a travel_date change:', unlinkError);
+    }
+  }
 
   for (const field of changedFields) {
     await logChange(supabase, userId, {

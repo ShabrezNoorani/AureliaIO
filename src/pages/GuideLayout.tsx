@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Home, CalendarCheck, User, Star, LogOut, Menu, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Logo from '@/components/Logo';
+import PullToRefreshChrome from '@/components/PullToRefreshChrome';
 import GuideHome from './GuideHome';
 import GuideCheckin from './GuideCheckin';
 import GuideProfile from './GuideProfile';
@@ -121,6 +122,7 @@ export default function GuideLayout() {
         {view === 'profile' && <GuideProfile />}
         {view === 'reviews' && <GuideReviews />}
       </main>
+      <PullToRefreshChrome />
     </div>
   );
 }

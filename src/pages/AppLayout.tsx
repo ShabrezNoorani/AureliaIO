@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Menu } from 'lucide-react';
 import AureliaSidebar from '@/components/AureliaSidebar';
+import PullToRefreshChrome from '@/components/PullToRefreshChrome';
 import Dashboard from '@/components/Dashboard';
 import ProductsPage from '@/components/ProductsPage';
 import OptionEditor from '@/components/OptionEditor';
@@ -340,6 +341,7 @@ const AppLayout = () => {
           Last synced: {Math.floor((now - lastSynced) / 60000)} mins ago
         </div>
       )}
+      <PullToRefreshChrome />
     </div>
   );
 };

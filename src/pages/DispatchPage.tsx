@@ -198,11 +198,42 @@ export default function DispatchPage() {
     setSessionGuides(data || []);
   };
 
+  // Targeted refresh of today's bookings — so a brand-new/last-minute booking (a Bokun/gsheet
+  // sync landing while this page is already open) shows up in the natural groups below and can be
+  // attached to an existing session via "Move group"/the per-booking select, without the owner
+  // needing to manually reload the page first.
+  const refreshBookings = async () => {
+    if (!user) return;
+    const { data } = await supabase.from('bookings').select('*')
+      .eq('user_id', user.id).eq('travel_date', selectedDate)
+      .order('travel_time', { ascending: true });
+    if (!mountedRef.current) return;
+    setBookings(data || []);
+  };
+
+  // Targeted refresh of session_bookings — reflects a booking's session assignment changing from
+  // elsewhere (another browser tab, a guide-side auto-populate) live, same as session_guides above.
+  const refreshSessionBookings = async () => {
+    if (!user) return;
+    const sessionIds = sessions.map(s => s.id);
+    if (sessionIds.length === 0) {
+      setSessionBookings([]);
+      return;
+    }
+    const { data } = await supabase.from('session_bookings').select('*').eq('user_id', user.id).in('session_id', sessionIds);
+    if (!mountedRef.current) return;
+    setSessionBookings(data || []);
+  };
+
   // Keeps the realtime subscription below always calling the LATEST refresher — it closes over
-  // `sessions`, which changes on every date switch, far more often than the subscription itself
-  // needs to re-establish.
+  // `sessions`/`selectedDate`, which change on every date switch, far more often than the
+  // subscription itself needs to re-establish.
   const refreshSessionGuidesRef = useRef(refreshSessionGuides);
   refreshSessionGuidesRef.current = refreshSessionGuides;
+  const refreshBookingsRef = useRef(refreshBookings);
+  refreshBookingsRef.current = refreshBookings;
+  const refreshSessionBookingsRef = useRef(refreshSessionBookings);
+  refreshSessionBookingsRef.current = refreshSessionBookings;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -216,7 +247,10 @@ export default function DispatchPage() {
 
   // Live: an assignment, reassignment or guide-initiated transfer (reassign_my_slot) reflects
   // here without a manual refresh — whether it came from this owner, another browser tab, or a
-  // guide transferring their own tour away.
+  // guide transferring their own tour away. Also covers new/changed bookings and session_bookings
+  // links, so a last-minute booking (or a move made from another tab) shows up and can be acted
+  // on immediately — see FIX 3(a): the "Move group"/per-booking session selects below are only
+  // actually useful for a brand-new booking if it appears here live.
   useEffect(() => {
     if (!user) return;
 
@@ -224,6 +258,10 @@ export default function DispatchPage() {
       .channel(`dispatch-${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'session_guides', filter: `user_id=eq.${user.id}` },
         () => { refreshSessionGuidesRef.current(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings', filter: `user_id=eq.${user.id}` },
+        () => { refreshBookingsRef.current(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'session_bookings', filter: `user_id=eq.${user.id}` },
+        () => { refreshSessionBookingsRef.current(); })
       .subscribe();
 
     return () => {

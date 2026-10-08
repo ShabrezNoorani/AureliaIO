@@ -749,12 +749,21 @@ export default function GuideCheckin() {
 
     const coords = await getArrivalCoords();
 
+    // Punctuality is judged against THIS GUIDE'S OWN check-in time — an owner override
+    // (session_guides.checkin_time via myPay) when set, otherwise the standard tour-minus-15
+    // default — never the tour's own start_time, which is a later, different moment. Mirrors the
+    // exact same resolution GuideSessionCard's header already displays ("Check-in {myPay?.
+    // checkin_time || checkinTime(session.start_time)}"), so the number computed here always
+    // agrees with what the guide is shown on screen.
+    const myPayForSession = myPay.find(p => p.session_id === session.id);
+    const guideCheckinTime = myPayForSession?.checkin_time || checkinTime(session.start_time);
+
     const payload = buildArrivalPayload({
       ownerUserId: guideUserId,
       sessionId: session.id,
       guideId,
       tourDate: session.tour_date,
-      startTime: session.start_time,
+      startTime: guideCheckinTime,
       arrivedAt,
       coords,
     });

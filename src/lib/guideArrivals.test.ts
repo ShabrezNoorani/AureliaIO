@@ -45,6 +45,16 @@ describe('computeMinutesLate', () => {
     expect(computeMinutesLate(at(2026, 9, 21, 9, 7), '2026-09-21', '')).toBeNull();
     expect(computeMinutesLate(at(2026, 9, 21, 9, 7), '2026-09-21', 'No Time')).toBeNull();
   });
+
+  // REGRESSION: the caller (GuideCheckin.tsx's handleArrive) must pass the guide's own
+  // session_guides.checkin_time as the reference, never the tour's own start_time — those are two
+  // different moments (checkin_time is typically ~15 min BEFORE the tour starts).
+  it('judges punctuality against the guide\'s own check-in time, not the tour start time: 08:34 arrival vs 08:30 check-in is +4 minutes late', () => {
+    expect(computeMinutesLate(at(2026, 9, 21, 8, 34), '2026-09-21', '08:30')).toBe(4);
+    // The bug this guards against: comparing the SAME arrival against the tour's own 08:45 start
+    // time instead would have wrongly read as 11 minutes EARLY.
+    expect(computeMinutesLate(at(2026, 9, 21, 8, 34), '2026-09-21', '08:45')).toBe(-11);
+  });
 });
 
 describe('formatArrivalStatus', () => {
