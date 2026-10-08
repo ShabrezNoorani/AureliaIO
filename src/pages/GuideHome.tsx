@@ -14,7 +14,10 @@ import GuideStatCards from '@/components/guide/GuideStatCards';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
 import GuideScoreCard from '@/components/guide/GuideScoreCard';
+import GuideOwnScoreCard from '@/components/guide/GuideOwnScoreCard';
+import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 import TransferTourModal from '@/components/guide/TransferTourModal';
+import { useGuideOwnScore } from '@/hooks/use-guide-own-score';
 
 // recharts (pulled in by GuideEarningsChart) is a large charting library shared with the owner's
 // GuideDashboard — lazy-loaded here so it never blocks this guide's first paint; the chart pops
@@ -58,6 +61,10 @@ const formatDate = (dateStr: string) =>
 
 export default function GuideHome() {
   const { guideId, guideName, guideUserId } = useAuth();
+
+  // Leads the dashboard — this guide's own review score, verdict and anonymized rank/top-score.
+  // Shared with GuideReviews.tsx via useGuideOwnScore, so the two can never disagree.
+  const ownScore = useGuideOwnScore(guideId, guideUserId);
 
   const [sessionGuides, setSessionGuides] = useState<SessionGuideRow[]>([]);
   const [sessions, setSessions] = useState<TourSession[]>([]);
@@ -103,7 +110,11 @@ export default function GuideHome() {
   // set instead of flashing the full-page spinner. The initial mount load and the manual "pull to
   // refresh" equivalent both want the spinner, so they call this with silent left false.
   const loadData = async (silent = false) => {
-    if (!guideId || !guideUserId) return;
+    // Defensive backstop: if role has resolved to 'guide' with no actual guideId (should only
+    // happen on the rare fail-closed-after-timeout path — see roleResolution.ts), never leave
+    // `loading` stuck true forever. The render below shows a gentle "couldn't confirm your
+    // account" state instead of an endless spinner in that case.
+    if (!guideId || !guideUserId) { if (!silent) setLoading(false); return; }
     if (!silent) setLoading(true);
 
     const { data: sgData } = await supabase
@@ -187,7 +198,7 @@ export default function GuideHome() {
 
   useEffect(() => {
     const loadPerformance = async () => {
-      if (!guideId || !guideUserId) return;
+      if (!guideId || !guideUserId) { setPerfLoading(false); return; }
       setPerfLoading(true);
       const [aRes, mRes, rRes, arrRes, sgRes] = await Promise.all([
         supabase.from('guide_assignments')
@@ -305,8 +316,35 @@ export default function GuideHome() {
     }
   };
 
+  // Defensive backstop — role resolved to 'guide' (ProtectedRoute already confirmed that), but
+  // guideId never came through. Should only happen on the rare fail-closed-after-timeout path
+  // (see roleResolution.ts) — show a gentle, actionable state instead of hanging on a spinner
+  // forever (loadData/loadPerformance above both now clear their own loading flags in this case
+  // too, so nothing else on this page is left spinning either).
+  if (!guideId || !guideUserId) {
+    return (
+      <div className="p-4 md:p-8 pb-32 max-w-3xl mx-auto flex flex-col items-center justify-center min-h-[60vh] text-center gap-3 animate-fade-in">
+        <div className="text-5xl">🔄</div>
+        <h2 className="text-xl font-bold">Couldn't confirm your account</h2>
+        <p className="text-muted-foreground text-sm max-w-sm">
+          Pull down to refresh, or tap the refresh button, to try again.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 md:p-8 pb-32 max-w-3xl mx-auto space-y-8 animate-fade-in">
+      {/* YOUR SCORE — leads the dashboard, above everything else (requirement: first thing a
+          guide sees). Same gated/encouraging card GuideReviews.tsx shows, just prominent here. */}
+      <section className="space-y-2">
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-xs font-bold text-gold uppercase tracking-widest">Your Score · Since Oct 1, 2026</h2>
+          <ScoreInfoTooltip />
+        </div>
+        <GuideOwnScoreCard data={ownScore} prominent />
+      </section>
+
       <div>
         <h1 className="text-3xl font-extrabold tracking-tight mb-2">Welcome back, {guideName || 'Guide'} 👋</h1>
         <div className="flex items-center gap-2 text-muted-foreground font-medium">

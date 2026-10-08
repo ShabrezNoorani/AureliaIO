@@ -16,6 +16,7 @@ import { computeBalance } from '@/lib/allocationBalance';
 import { matchBookingsToSessions, autoPopulateSessionBookings, pickBestSessionForBooking } from '@/lib/sessionAutoPopulate';
 import { enqueueRetry, useRetryQueueItems, type QueueItem } from '@/lib/retryQueue';
 import { writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
+import { filterPastUnresolvedBookings } from '@/lib/pastUnresolved';
 import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
 import {
   ARRIVAL_COLUMNS, ArrivalRow, arrivalRetryKey, buildArrivalPayload, formatArrivalStatus,
@@ -131,6 +132,14 @@ export default function GuideCheckin() {
   // owner has on TodayToursPage, for ANY guide on the session (not just themselves). RLS is what
   // actually enforces "session member" scope server-side; the writes below are unrestricted here.
   const [balancingSessionId, setBalancingSessionId] = useState<string | null>(null);
+
+  // PAST / UNRESOLVED — bookings on this guide's OWN past sessions whose tour date has already
+  // passed but were never checked in or marked no-show (this page only ever shows TODAY, so
+  // nothing else would resurface them). Loaded separately from the rest of this page's
+  // today-scoped state/realtime — an occasional backlog-clearing action, not a live board. Never
+  // auto-resolved — only a manual tap on Check-in/No-show below changes anything.
+  const [pastUnresolvedCandidates, setPastUnresolvedCandidates] = useState<Booking[]>([]);
+  const [pastCheckins, setPastCheckins] = useState<{ booking_ref: string; status: string | null }[]>([]);
 
   // "Transfer to another guide" — hands one of this guide's OWN sessions off to a teammate via
   // reassign_my_slot (see lib/guideTransfer.ts). Same flow GuideHome.tsx offers on every upcoming
@@ -512,15 +521,93 @@ export default function GuideCheckin() {
   const refreshBookingsAndUnsessionedRef = useRef(refreshBookingsAndUnsessioned);
   refreshBookingsAndUnsessionedRef.current = refreshBookingsAndUnsessioned;
 
+  // This guide's own past, accepted sessions (no date filter on session_guides itself — RLS scope
+  // there has never been date-limited, only the client-side queries built on top of it are) whose
+  // tour_date is before today, then whatever's linked to those. RLS (my_session_booking_refs())
+  // already restricts the bookings/checkins reads below to this guide's own sessions, same as
+  // every other query on this page.
+  const loadPastUnresolved = async () => {
+    if (!guideId || !guideUserId) return;
+    const { data: sgData } = await supabase.from('session_guides').select('session_id')
+      .eq('user_id', guideUserId).eq('guide_id', guideId).eq('status', 'accepted');
+    const allSessionIds = (sgData || []).map(sg => sg.session_id);
+    if (allSessionIds.length === 0) {
+      setPastUnresolvedCandidates([]);
+      setPastCheckins([]);
+      return;
+    }
+
+    const { data: pastSessions } = await supabase.from('tour_sessions').select('id')
+      .eq('user_id', guideUserId).in('id', allSessionIds).lt('tour_date', today);
+    const pastSessionIds = (pastSessions || []).map(s => s.id);
+    if (pastSessionIds.length === 0) {
+      setPastUnresolvedCandidates([]);
+      setPastCheckins([]);
+      return;
+    }
+
+    const { data: pastLinks } = await supabase.from('session_bookings').select('booking_ref')
+      .eq('user_id', guideUserId).in('session_id', pastSessionIds);
+    const refs = Array.from(new Set((pastLinks || []).map(l => l.booking_ref)));
+    if (refs.length === 0) {
+      setPastUnresolvedCandidates([]);
+      setPastCheckins([]);
+      return;
+    }
+
+    const [bRes, cRes] = await Promise.all([
+      supabase.from('bookings').select('*').eq('user_id', guideUserId).in('booking_ref', refs).not('status', 'eq', 'CANCELLED'),
+      supabase.from('checkins').select('booking_ref, status').eq('user_id', guideUserId).in('booking_ref', refs),
+    ]);
+    if (!mountedRef.current) return;
+    setPastUnresolvedCandidates(bRes.data || []);
+    setPastCheckins(cRes.data || []);
+  };
+
+  const pastUnresolvedBookings = useMemo(
+    () => filterPastUnresolvedBookings(pastUnresolvedCandidates, pastCheckins, today),
+    [pastUnresolvedCandidates, pastCheckins, today]
+  );
+
+  // Resolves one PAST/UNRESOLVED booking (see pastUnresolvedBookings above) — writes the guest's
+  // own actual travel_date, never today's, to checkins; that's what distinguishes this from
+  // recordCheckin above (always `today`). Deliberately simpler: no auto-allot-to-self (today's
+  // session context has nothing to say about a different day) — whatever allotment the booking
+  // already has, if any, is left exactly as it was. Never auto-fires; only a manual tap calls it.
+  const recordPastResolution = (b: Booking, status: 'checked_in' | 'no_show') => {
+    if (!guideUserId) return;
+    setPastCheckins(prev => [
+      ...prev.filter(c => c.booking_ref !== b.booking_ref),
+      { booking_ref: b.booking_ref, status },
+    ]);
+
+    enqueueRetry(b.booking_ref, status === 'checked_in' ? 'Check-in' : 'No-show', async () => {
+      await writeCheckin({
+        userId: guideUserId,
+        bookingRef: b.booking_ref,
+        travelDate: b.travel_date,
+        status,
+        checkedInBy: guideName || 'Guide',
+        pax: paxTotal(b),
+        ticketPhoto: null,
+      });
+      if (status === 'checked_in') {
+        const { error } = await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
+        if (error) throw error;
+      }
+    });
+  };
+
   const handleManualRefresh = async () => {
     setRefreshing(true);
-    await loadData();
+    await Promise.all([loadData(), loadPastUnresolved()]);
     if (mountedRef.current) setRefreshing(false);
   };
 
   useEffect(() => {
     mountedRef.current = true;
     loadData();
+    loadPastUnresolved();
     return () => {
       mountedRef.current = false;
     };
@@ -1036,6 +1123,37 @@ export default function GuideCheckin() {
             <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
         </div>
+
+        {/* PAST / UNRESOLVED: a booking on one of this guide's own past tours that was never
+            checked in or marked no-show — this page only ever shows TODAY, so without this it
+            stays UPCOMING forever. Resolvable with the exact same Check-in/No-show actions as any
+            other guest; nothing here is ever auto-changed. */}
+        {pastUnresolvedBookings.length > 0 && (
+          <div className="border border-red-600/20 bg-red-600/5 rounded-2xl overflow-hidden">
+            <div className="flex items-start gap-3 text-sm text-red-700 p-4 pb-2">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>
+                <strong>{pastUnresolvedBookings.length}</strong> past booking{pastUnresolvedBookings.length !== 1 ? 's' : ''} {pastUnresolvedBookings.length !== 1 ? "were never" : "was never"} checked in or marked no-show
+                — resolve {pastUnresolvedBookings.length !== 1 ? 'them' : 'it'} below.
+              </span>
+            </div>
+            <div className="px-4 pb-4 space-y-1.5">
+              {pastUnresolvedBookings.map(b => (
+                <GuestCard
+                  key={b.id}
+                  booking={b}
+                  displayName={b.customer_name}
+                  isCheckedIn={false}
+                  isNoShow={false}
+                  onCheckIn={() => recordPastResolution(b, 'checked_in')}
+                  onNoShow={() => recordPastResolution(b, 'no_show')}
+                  syncStuck={stuckBookingRefs.has(b.booking_ref)}
+                  isCancelled={isCancelled(b.status)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* UNASSIGNED — LAST-MINUTE: today's company bookings matching no session at all (see
             my_company_unsessioned_bookings() — the SQL handed over separately; empty until that's

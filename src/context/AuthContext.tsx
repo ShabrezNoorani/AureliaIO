@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
+import { resolveDirectRole, resolveRepairUpgrade } from '@/lib/roleResolution';
 
 export interface Profile {
   id: string;
@@ -131,91 +132,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // is only ever reached once the guide check has positively, successfully concluded "no match".
   //
   // ── FAIL-CLOSED POLICY ──────────────────────────────────────────────────────────────────────
-  // role becomes 'owner' ONLY on a successful, positive "no guide row" result. Anything short of
-  // that — a thrown error, an RPC failure, or simply not completing within the timeout — resolves
-  // to 'guide' with no guideId (a locked-down, minimal shell), never 'owner'. Every async step
-  // below is raced against a REJECTING timeout (not a resolving one) specifically so a timeout is
-  // indistinguishable from any other failure and always flows into the same catch block: there is
-  // exactly one way out to 'owner', and every other path — including ones that used to silently
-  // default to 'owner' — now fails closed instead. This is what fixes a brand-new guide's first,
-  // possibly slow/cold lookup from ever being misread as "no guide row found."
+  // role becomes 'owner' ONLY once the DIRECT guide-row lookup has completed successfully with no
+  // match. Anything short of THAT ONE STEP — a thrown error, or simply not completing within the
+  // timeout — resolves to 'guide' with no guideId (a locked-down, minimal shell), never 'owner'.
+  // See resolveDirectRole in lib/roleResolution.ts for the actual precedence logic (extracted so
+  // it's unit-testable without a live Supabase client) and its own doc comment for the exact bug
+  // this guards against: a PREVIOUS version of this function also awaited repair_guide_claim()
+  // (below) — a second, unrelated round-trip — before concluding 'owner', racing it against the
+  // SAME timeout; a slow repair step on a cold connection could fail the whole thing closed to
+  // 'guide', misclassifying a genuine owner. Now repair only ever runs AFTER 'owner' is already
+  // the resolved answer, as a non-blocking, best-effort UPGRADE that can never undo it.
   const fetchRole = useCallback(async (userId: string) => {
-    // Rejects (never resolves) after 3s. A rejecting timeout — instead of the previous pattern of
-    // resolving to {data: null, error: null} — is the key fix: that old sentinel was
-    // indistinguishable from a genuine "queried successfully, found nothing," so a slow-but-real
-    // guide lookup that merely hadn't finished yet was read as proof of "not a guide" and
-    // confidently (wrongly) concluded 'owner'.
-    const timeout = () => new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('role lookup timed out')), 3000)
-    );
+    const lookupGuideRow = () => supabase
+      .from('guides')
+      .select('id, name, user_id')
+      .eq('auth_user_id', userId)
+      .neq('user_id', userId)
+      .maybeSingle();
 
-    try {
-      const lookupGuideRow = () => supabase
-        .from('guides')
-        .select('id, name, user_id')
-        .eq('auth_user_id', userId)
-        .neq('user_id', userId)
-        .maybeSingle();
+    // A more generous budget than the old shared 3s — this is now the ONLY lookup gating
+    // hydrateUser/loading, so widening it directly reduces how often ordinary first-load latency
+    // (right after signInWithPassword's own round-trip, on connections with no warm keep-alive
+    // yet) trips the fail-closed default for a genuine owner.
+    const resolved = await resolveDirectRole(lookupGuideRow, 6000);
+    if (!mountedRef.current) return;
 
-      let { data, error } = await Promise.race([lookupGuideRow(), timeout()]);
+    setRole(resolved.role);
+    setGuideId(resolved.guideId);
+    setGuideName(resolved.guideName);
+    setGuideUserId(resolved.guideUserId);
 
-      if (error) throw error;
-      if (!mountedRef.current) return;
+    if (resolved.role !== 'owner') return;
 
-      // Safety net: a guide whose claim was interrupted (e.g. email confirmation was required,
-      // so no session existed yet when claim_guide_account() needed to run) can log in fine —
-      // their auth.users row exists — but their guides row is still unlinked. On first login
-      // with no direct match, try the email-based repair RPC once before concluding "owner".
-      // This call previously had NO timeout guard at all — on nearly every login (any account
-      // without an immediate guide-row match, i.e. every owner, every time) an unresponsive RPC
-      // here would hang this promise forever, which — since hydrateUser's `finally` can only run
-      // once this await settles — hung the app's loading spinner forever too.
-      if (!data) {
-        const { data: repaired, error: repairError } = await Promise.race([
-          supabase.rpc('repair_guide_claim'),
-          timeout(),
-        ]);
-        if (repairError) console.error('repair_guide_claim failed:', repairError);
-        if (repaired) {
-          const { data: retryData, error: retryError } = await Promise.race([lookupGuideRow(), timeout()]);
-          if (!mountedRef.current) return;
-          // Promise.race only rejects via the timeout branch — a query-level error from
-          // lookupGuideRow() itself (network hiccup, RLS hiccup) resolves normally with
-          // {data: null, error: {...}}. Silently taking retryData here previously read that
-          // failed lookup as a positively-confirmed "no guide row" and fell through to the
-          // 'owner' branch below. Throw instead so it lands in the same fail-closed catch
-          // block as every other error path in this function.
-          if (retryError) {
-            console.error('guide row retry lookup failed:', retryError);
-            throw retryError;
-          }
-          data = retryData;
-        }
-      }
-
-      if (!mountedRef.current) return;
-
-      if (data) {
-        setRole('guide');
-        setGuideId(data.id);
-        setGuideName(data.name);
-        setGuideUserId(data.user_id);
-      } else {
-        // Positively confirmed: no guide row links this account anywhere. See precedence-rule
-        // comment above — absence of that positive fact is what "owner" means here.
-        setRole('owner');
-        setGuideId(null);
-        setGuideName(null);
-        setGuideUserId(null);
-      }
-    } catch (e) {
-      console.error('Role lookup failed or timed out — failing closed to guide, never owner:', e);
-      if (!mountedRef.current) return;
-      setRole('guide');
-      setGuideId(null);
-      setGuideName(null);
-      setGuideUserId(null);
-    }
+    // Safety net for a guide whose claim was interrupted (e.g. email confirmation was required,
+    // so no session existed yet when claim_guide_account() needed to run) — their auth.users row
+    // exists, but their guides row is still unlinked. Deliberately NOT awaited by fetchRole
+    // itself: this only ever matters for that one rare case, so making every owner's login wait
+    // on it would reintroduce the exact slow-cold-login failure mode this fix removes. If it
+    // finds and links a row, it upgrades role to 'guide' a moment later; anything else (nothing
+    // to repair, an error, a timeout) leaves the 'owner' resolution above exactly as it is.
+    const userIdAtCallTime = userId;
+    resolveRepairUpgrade(() => supabase.rpc('repair_guide_claim'), lookupGuideRow, 3000).then((upgrade) => {
+      if (!upgrade) return;
+      // Guards against a slow repair result from a PREVIOUS user landing after a different user
+      // has since signed in — hydratedUserIdRef is bumped the instant a new hydrate starts (see
+      // signIn/bootstrapSession/onAuthStateChange below), so a mismatch here means this result is
+      // stale and must never be applied.
+      if (!mountedRef.current || hydratedUserIdRef.current !== userIdAtCallTime) return;
+      setRole(upgrade.role);
+      setGuideId(upgrade.guideId);
+      setGuideName(upgrade.guideName);
+      setGuideUserId(upgrade.guideUserId);
+    });
   }, []);
 
   // Resolves profile + role together so routing never has to guess (and flash the wrong shell)

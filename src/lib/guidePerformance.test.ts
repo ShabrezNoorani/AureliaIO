@@ -719,9 +719,23 @@ describe('computeDoneBookingRecords — the score\'s denominator, DONE tours onl
   ];
   const today = '2026-10-15';
 
-  it('a strictly past tour counts as done regardless of checkin status', () => {
+  it('a strictly past tour that was never checked in (an unresolved booking) is NOT a done tour', () => {
     const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' }];
     const records = computeDoneBookingRecords(sb, sessions, [], '2026-10-01', today);
+    expect(records).toEqual([]);
+  });
+
+  it('a strictly past tour marked NO-SHOW is NOT a done tour — only checked_in counts', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' }];
+    const checkins = [{ booking_ref: 'B1', status: 'no_show' }];
+    const records = computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today);
+    expect(records).toEqual([]);
+  });
+
+  it('a strictly past tour that WAS checked in counts as done', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' }];
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }];
+    const records = computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today);
     expect(records.map((r) => r.booking_ref)).toEqual(['B1']);
   });
 
@@ -739,32 +753,36 @@ describe('computeDoneBookingRecords — the score\'s denominator, DONE tours onl
     expect(computeDoneBookingRecords(sb, sessions, checkedIn, '2026-10-01', today)).toHaveLength(1);
   });
 
-  it('excludes tours dated before the since-date floor', () => {
+  it('excludes tours dated before the since-date floor, even if checked in', () => {
     const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' }];
-    expect(computeDoneBookingRecords(sb, sessions, [], '2026-10-06', today)).toEqual([]);
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }];
+    expect(computeDoneBookingRecords(sb, sessions, checkins, '2026-10-06', today)).toEqual([]);
   });
 
-  it('attributes a reassigned booking to whichever guide currently holds it, never both (no double-counting on transfer)', () => {
+  it('attributes a reassigned, checked-in booking to whichever guide currently holds it, never both (no double-counting on transfer)', () => {
     // Post-reassignment state: ONE session_bookings row, now allotted to guideB.
     const sb = [{ booking_ref: 'B1', allotted_guide_id: 'guideB', session_id: 's-past' }];
-    const records = computeDoneBookingRecords(sb, sessions, [], '2026-10-01', today);
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }];
+    const records = computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today);
     expect(records).toEqual([{ guide_id: 'guideB', booking_ref: 'B1', month: '2026-10' }]);
   });
 
-  it('counts bookings, not pax and not tours — a booking appearing twice counts once', () => {
+  it('counts bookings, not pax and not tours — a checked-in booking appearing twice counts once', () => {
     const sb = [
       { booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' },
       { booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' },
     ];
-    expect(computeDoneBookingRecords(sb, sessions, [], '2026-10-01', today)).toHaveLength(1);
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }];
+    expect(computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today)).toHaveLength(1);
   });
 
-  it('a booking with no allotted guide, or whose session is unknown, is skipped', () => {
+  it('a booking with no allotted guide, or whose session is unknown, is skipped even if checked in', () => {
     const sb = [
       { booking_ref: 'B1', allotted_guide_id: null, session_id: 's-past' },
       { booking_ref: 'B2', allotted_guide_id: 'g1', session_id: 'missing-session' },
     ];
-    expect(computeDoneBookingRecords(sb, sessions, [], '2026-10-01', today)).toEqual([]);
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }, { booking_ref: 'B2', status: 'checked_in' }];
+    expect(computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today)).toEqual([]);
   });
 });
 

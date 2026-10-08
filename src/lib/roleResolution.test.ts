@@ -1,0 +1,95 @@
+import { describe, it, expect } from 'vitest';
+import { resolveDirectRole, resolveRepairUpgrade } from './roleResolution';
+
+const never = () => new Promise<never>(() => {}); // simulates a hanging call, for timeout tests
+
+describe('resolveDirectRole', () => {
+  it('a guide row found resolves to guide, carrying its id/name/user_id', () => {
+    return resolveDirectRole(
+      async () => ({ data: { id: 'g1', name: 'Maria', user_id: 'owner1' }, error: null }),
+      50
+    ).then((r) => {
+      expect(r).toEqual({ role: 'guide', guideId: 'g1', guideName: 'Maria', guideUserId: 'owner1' });
+    });
+  });
+
+  it('a lookup that completes successfully with no row resolves to OWNER, unconditionally', async () => {
+    const r = await resolveDirectRole(async () => ({ data: null, error: null }), 50);
+    expect(r).toEqual({ role: 'owner', guideId: null, guideName: null, guideUserId: null });
+  });
+
+  it('a thrown query error fails closed to guide, never owner', async () => {
+    const r = await resolveDirectRole(async () => ({ data: null, error: new Error('network blip') }), 50);
+    expect(r.role).toBe('guide');
+    expect(r.guideId).toBeNull();
+  });
+
+  it('a lookup that never settles (hangs) times out and fails closed to guide', async () => {
+    const r = await resolveDirectRole(never, 20);
+    expect(r.role).toBe('guide');
+    expect(r.guideId).toBeNull();
+  });
+});
+
+describe('resolveRepairUpgrade', () => {
+  it('returns the upgraded guide resolution when repair finds and links a row, confirmed by the retry lookup', async () => {
+    const r = await resolveRepairUpgrade(
+      async () => ({ data: true, error: null }),
+      async () => ({ data: { id: 'g9', name: 'Late Claim', user_id: 'owner9' }, error: null }),
+      50
+    );
+    expect(r).toEqual({ role: 'guide', guideId: 'g9', guideName: 'Late Claim', guideUserId: 'owner9' });
+  });
+
+  it('returns null when repair finds nothing to link (the common case for a genuine owner)', async () => {
+    const r = await resolveRepairUpgrade(
+      async () => ({ data: false, error: null }),
+      async () => ({ data: null, error: null }),
+      50
+    );
+    expect(r).toBeNull();
+  });
+
+  it('returns null — never a fail-closed signal — when the repair RPC itself errors', async () => {
+    const r = await resolveRepairUpgrade(
+      async () => ({ data: null, error: new Error('rpc failed') }),
+      async () => ({ data: null, error: null }),
+      50
+    );
+    expect(r).toBeNull();
+  });
+
+  it('returns null when the repair step TIMES OUT — this must never override an already-resolved owner', async () => {
+    const r = await resolveRepairUpgrade(never, async () => ({ data: null, error: null }), 20);
+    expect(r).toBeNull();
+  });
+
+  it('returns null when repair succeeds but the retry lookup itself fails', async () => {
+    const r = await resolveRepairUpgrade(
+      async () => ({ data: true, error: null }),
+      async () => ({ data: null, error: new Error('retry lookup failed') }),
+      50
+    );
+    expect(r).toBeNull();
+  });
+});
+
+// THE exact regression scenario from the bug report: an owner's direct lookup positively returns
+// null (resolve owner), and the repair step — run independently afterward — times out. The
+// caller (AuthContext.fetchRole) only ever applies a repair result when resolveRepairUpgrade
+// returns non-null, so simulating that contract here proves the owner resolution survives
+// completely untouched by the repair step's own timeout.
+describe('integration: direct lookup null + repair timeout → stays owner', () => {
+  it('never flips away from owner when repair times out after a clean null', async () => {
+    const direct = await resolveDirectRole(async () => ({ data: null, error: null }), 50);
+    expect(direct.role).toBe('owner');
+
+    const upgrade = await resolveRepairUpgrade(never, async () => ({ data: null, error: null }), 20);
+    expect(upgrade).toBeNull();
+
+    // The wrapper only ever overwrites state when `upgrade` is non-null — direct's 'owner'
+    // result is what a real caller would still be left with here.
+    const finalRole = upgrade ?? direct;
+    expect(finalRole.role).toBe('owner');
+  });
+});

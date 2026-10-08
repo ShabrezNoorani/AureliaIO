@@ -404,16 +404,17 @@ export interface DoneBookingRecord {
   month: string;
 }
 
-/** The score's denominator, built from a single DONE/upcoming rule — mirrors isAssignmentDone's:
-    a tour dated strictly BEFORE today is always done; dated strictly AFTER today is NEVER counted,
-    full stop, regardless of any checkins row that might exist for it; dated exactly today is done
-    only once a guest has actually been checked in. This replaces an earlier version of this
-    function that counted a booking purely because a matching `checkins` row existed, with no
-    date guard at all — able to count a booking whose tour hadn't happened yet (the reported "26
-    guided" bug). Counts DISTINCT bookings, never pax or tours. A booking reassigned between
-    guides (allotted_guide_id updated in place, same session_bookings row — see
-    dedupeAssignmentsAcrossSources' doc comment for the same underlying guarantee elsewhere in this
-    file) is credited to whichever guide currently holds it, never both. */
+/** The score's denominator: a "done tour" is one that was actually GUIDED — i.e. the guest was
+    CHECKED IN (checkins.status === 'checked_in'). A past tour date alone is NOT enough: a no-show
+    (checkins.status === 'no_show') or a past booking nobody ever actioned (no checkins row at
+    all) is explicitly NOT a done tour, so a guide is never penalized — denominator inflated — by
+    tours that weren't actually guided. This also means a date guard against the future is
+    redundant in practice (a guest can't be checked in before their tour happens) but is kept
+    explicit anyway, so a bad/future-dated checkins row can never sneak a tour in early. Counts
+    DISTINCT bookings, never pax or tours. A booking reassigned between guides (allotted_guide_id
+    updated in place, same session_bookings row — see dedupeAssignmentsAcrossSources' doc comment
+    for the same underlying guarantee elsewhere in this file) is credited to whichever guide
+    currently holds it, never both. */
 export function computeDoneBookingRecords(
   sessionBookings: SessionBookingForGuiding[],
   sessions: SessionDateForGuiding[],
@@ -430,8 +431,7 @@ export function computeDoneBookingRecords(
     const tourDate = sessionDateById.get(sb.session_id);
     if (!tourDate || tourDate < sinceDate) continue;
     if (tourDate > todayStr) continue; // never count upcoming/future — no exceptions
-    const isDone = tourDate < todayStr || checkedInRefs.has(sb.booking_ref);
-    if (!isDone) continue;
+    if (!checkedInRefs.has(sb.booking_ref)) continue; // DONE = actually checked in — no-shows and unresolved past bookings never count
     const key = `${sb.allotted_guide_id}:${sb.booking_ref}`;
     if (seen.has(key)) continue;
     seen.add(key);

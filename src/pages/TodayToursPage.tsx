@@ -15,6 +15,7 @@ import AllocationBoard, { AllocationGuide, AllocationGuest } from '@/components/
 import SyncStatusIndicator from '@/components/checkin/SyncStatusIndicator';
 import { enqueueRetry, useRetryQueueItems } from '@/lib/retryQueue';
 import { findCheckinRow, writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
+import { filterPastUnresolvedBookings } from '@/lib/pastUnresolved';
 import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
 import { ARRIVAL_COLUMNS, ArrivalRow, formatArrivalStatus } from '@/lib/guideArrivals';
 import { buildGuideInviteLinks, buildSharedGuideInviteLink, forceBrowserUrl, type GuideInviteTarget } from '@/lib/tourInvites';
@@ -53,6 +54,18 @@ export default function TodayToursPage() {
   const [showConfirm, setShowConfirm] = useState<any | null>(null);
   const [balancingSessionId, setBalancingSessionId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  // PAST / UNRESOLVED — bookings whose tour date has already passed but were never checked in or
+  // marked no-show (Today's Tours only ever shows TODAY, so nothing else would ever resurface
+  // them). Loaded separately from the rest of this page's today-scoped state/realtime, since this
+  // is an occasional backlog-clearing action, not a live board. Never auto-resolved — only a tap
+  // on Check-in/No-show below (the same actions used everywhere else) changes anything.
+  const [pastUnresolvedCandidates, setPastUnresolvedCandidates] = useState<any[]>([]);
+  const [pastCheckins, setPastCheckins] = useState<any[]>([]);
+  const pastUnresolvedBookings = useMemo(
+    () => filterPastUnresolvedBookings(pastUnresolvedCandidates, pastCheckins, todayStrDate),
+    [pastUnresolvedCandidates, pastCheckins, todayStrDate]
+  );
 
   // Guards every setState below against firing after this page has unmounted (relevant now that
   // several async refreshes can be in flight at once: initial load, realtime-triggered refreshes,
@@ -195,15 +208,30 @@ export default function TodayToursPage() {
   const refreshBookingsRef = useRef(refreshBookings);
   refreshBookingsRef.current = refreshBookings;
 
+  // Candidates are every non-cancelled booking dated before today, company-wide — filtered down to
+  // the actually-unresolved ones by filterPastUnresolvedBookings (above) once pastCheckins lands
+  // too. No lower date bound: this is the backlog, however far back it goes.
+  const loadPastUnresolved = async () => {
+    if (!user) return;
+    const [bRes, cRes] = await Promise.all([
+      supabase.from('bookings').select('*').eq('user_id', user.id).lt('travel_date', todayStrDate).not('status', 'eq', 'CANCELLED'),
+      supabase.from('checkins').select('booking_ref, status').eq('user_id', user.id).lt('travel_date', todayStrDate),
+    ]);
+    if (!mountedRef.current) return;
+    setPastUnresolvedCandidates(bRes.data || []);
+    setPastCheckins(cRes.data || []);
+  };
+
   const handleManualRefresh = async () => {
     setRefreshing(true);
-    await loadData();
+    await Promise.all([loadData(), loadPastUnresolved()]);
     if (mountedRef.current) setRefreshing(false);
   };
 
   useEffect(() => {
     mountedRef.current = true;
     loadData();
+    loadPastUnresolved();
     return () => {
       mountedRef.current = false;
     };
@@ -478,6 +506,55 @@ export default function TodayToursPage() {
         await refreshCheckinsRef.current();
       });
     }
+  };
+
+  // Resolves one PAST/UNRESOLVED booking (see pastUnresolvedBookings above) — the guest's own
+  // actual travel_date, never today's, is what gets written to checkins, which is what keeps this
+  // distinct from recordCheckin above (that one always writes todayStrDate). Deliberately simpler
+  // than recordCheckin: no auto-allot-to-least-loaded-guide (today's sessionIdToTeam/
+  // sessionIdToAllocationGuests have nothing to say about a different day) — if the booking is
+  // already linked to a session with an allotment from whenever it actually happened, that's left
+  // exactly as it was; this only ever records the DONE/NO_SHOW decision itself. Never auto-fires —
+  // only a manual tap on this booking's own Check-in/No-show button calls it.
+  const recordPastResolution = (b: any, status: 'checked_in' | 'no_show') => {
+    if (!user) return;
+    const nowIso = new Date().toISOString();
+    setPastCheckins(prev => [
+      ...prev.filter(c => c.booking_ref !== b.booking_ref),
+      { booking_ref: b.booking_ref, status, checked_in_at: nowIso },
+    ]);
+
+    enqueueRetry(b.booking_ref, status === 'checked_in' ? 'Check-in' : 'No-show', async () => {
+      await writeCheckin({
+        userId: user.id,
+        bookingRef: b.booking_ref,
+        travelDate: b.travel_date,
+        status,
+        checkedInBy: 'Coordinator',
+        pax: paxTotal(b),
+        ticketPhoto: null,
+      });
+
+      if (status === 'checked_in') {
+        const { error } = await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
+        if (error) throw error;
+
+        await logChange(supabase, user.id, {
+          tableName: 'bookings',
+          recordId: b.booking_ref,
+          fieldName: 'status',
+          oldValue: b.status || 'UPCOMING',
+          newValue: 'DONE',
+          description: `${b.booking_ref} resolved from Past/Unresolved: DONE (checked in)`
+        });
+      } else {
+        await logChange(supabase, user.id, {
+          tableName: 'checkins',
+          recordId: b.booking_ref,
+          description: `${b.booking_ref} resolved from Past/Unresolved: NO_SHOW`
+        });
+      }
+    });
   };
 
   // Last-minute check-in: this booking matched no built session (see unsessionedBookings below),
@@ -789,6 +866,37 @@ export default function TodayToursPage() {
             <p className="text-2xl font-extrabold text-purple-700">{totalGuidesAssigned}</p>
           </div>
         </div>
+
+        {/* PAST / UNRESOLVED: a booking whose tour date has already passed but was never checked
+            in or marked no-show — Today's Tours only ever shows TODAY, so without this it stays
+            UPCOMING forever. Resolvable with the exact same Check-in/No-show actions as any other
+            guest; nothing here is ever auto-changed. */}
+        {pastUnresolvedBookings.length > 0 && (
+          <div className="border border-red-600/20 bg-red-600/5 rounded-2xl overflow-hidden">
+            <div className="flex items-start gap-3 text-sm text-red-700 p-4 pb-2">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>
+                <strong>{pastUnresolvedBookings.length}</strong> booking{pastUnresolvedBookings.length !== 1 ? 's' : ''} from past dates {pastUnresolvedBookings.length !== 1 ? "were never" : "was never"} checked in or marked no-show
+                — resolve {pastUnresolvedBookings.length !== 1 ? 'them' : 'it'} below.
+              </span>
+            </div>
+            <div className="px-4 pb-4 space-y-1.5">
+              {pastUnresolvedBookings.map(b => (
+                <GuestCard
+                  key={b.id}
+                  booking={b}
+                  displayName={b.customer_name}
+                  isCheckedIn={false}
+                  isNoShow={false}
+                  onCheckIn={() => recordPastResolution(b, 'checked_in')}
+                  onNoShow={() => recordPastResolution(b, 'no_show')}
+                  isOwner
+                  syncStuck={stuckBookingRefs.has(b.booking_ref)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* UNASSIGNED — LAST-MINUTE: today's bookings matching no built session (e.g. a genuinely
             different product Dispatch never got a session for, or one auto-population hasn't
