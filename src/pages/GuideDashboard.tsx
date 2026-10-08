@@ -11,7 +11,9 @@ import {
   getAdminDateFilterBounds, computeGuidePaymentSummary, ADMIN_DATE_FILTER_PRESETS, ADMIN_DEFAULT_FILTER_START,
   filterMonthlyRowsByDateRange, matchesAdminStatusFilter, ADMIN_STATUS_FILTER_OPTIONS,
   filterAssignmentsByStatus, filterMonthlyRowsByStatus, dedupeAssignmentsAcrossSources,
-  computeGuideReviewScore, computeGuidedBookingCounts, REVIEW_PLATFORMS,
+  computeGuideReviewScore, REVIEW_PLATFORMS,
+  computeDoneBookingRecords, countDoneBookingsByGuide, getScoreBand,
+  ADMIN_SCORE_BAND_LABELS,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type GuideReviewRow,
   type AdminDateFilter, type GuidePaymentSummary, type AdminStatusFilter, type GuideReviewScore,
   type ArrivalPunctualityRow, type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
@@ -27,6 +29,7 @@ import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
 import GuideRatingsPanel from '@/components/guide/GuideRatingsPanel';
 import GuideScoreCard from '@/components/guide/GuideScoreCard';
+import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 
 // recharts (pulled in by GuideEarningsChart) is a large charting library — lazy-loaded here too
 // (same as GuideHome, the guide's own equivalent view) so it never blocks this page's first paint.
@@ -256,9 +259,11 @@ export default function GuideDashboard() {
       supabase.from('guide_reviews').select('*').eq('user_id', user.id),
       // Only ever need checked-in bookings from Oct 1 2026 onward — the score's floor is fixed,
       // never reactive to adminFilter (see ADMIN_DEFAULT_FILTER_START's own usage elsewhere).
-      supabase.from('checkins').select('booking_ref, status, travel_date').eq('user_id', user.id)
+      // travel_date is used only to narrow this fetch — the actual done/upcoming decision is made
+      // against the session's own tour_date (via sessionsForPay/sessRes above), not this column.
+      supabase.from('checkins').select('booking_ref, status').eq('user_id', user.id)
         .eq('status', 'checked_in').gte('travel_date', ADMIN_DEFAULT_FILTER_START),
-      supabase.from('session_bookings').select('booking_ref, allotted_guide_id').eq('user_id', user.id),
+      supabase.from('session_bookings').select('booking_ref, allotted_guide_id, session_id').eq('user_id', user.id),
     ]);
 
     if (gRes.data) setGuides(gRes.data);
@@ -337,13 +342,16 @@ export default function GuideDashboard() {
     return filterMonthlyRowsByStatus(dateScoped, statusFilter);
   }, [monthlyRows, adminFilter, statusFilter]);
 
-  // Review score denominator — fixed from Oct 1 2026 onward, by design, regardless of whatever
-  // adminFilter/statusFilter the rest of the page is currently showing (see
-  // computeGuidedBookingCounts's own doc comment).
-  const guidedBookingCounts = useMemo(
-    () => computeGuidedBookingCounts(checkinsForGuiding, sessionBookingsForGuiding, ADMIN_DEFAULT_FILTER_START),
-    [checkinsForGuiding, sessionBookingsForGuiding]
+  // The score's denominator — DONE tours only, since Oct 1 2026, fixed regardless of whatever
+  // adminFilter/statusFilter the rest of the page is currently showing. Built from ONE done/
+  // upcoming rule (computeDoneBookingRecords) that can never count a future/upcoming tour — see
+  // its own doc comment for exactly what replaced the earlier, buggier version of this.
+  const doneBookingRecords = useMemo(
+    () => computeDoneBookingRecords(sessionBookingsForGuiding, sessionsForPay, checkinsForGuiding, ADMIN_DEFAULT_FILTER_START, todayStr),
+    [sessionBookingsForGuiding, sessionsForPay, checkinsForGuiding, todayStr]
   );
+  const overallDoneCounts = useMemo(() => countDoneBookingsByGuide(doneBookingRecords), [doneBookingRecords]);
+
   // Reviews feeding the score are likewise always scoped to Oct 1 2026 onward, never to
   // adminFilter — the review LIST further down the page (filterable by guide/platform) uses the
   // full `reviews` array instead, since browsing/avoiding duplicates benefits from seeing
@@ -352,14 +360,18 @@ export default function GuideDashboard() {
     () => reviews.filter(r => r.review_date >= ADMIN_DEFAULT_FILTER_START),
     [reviews]
   );
+
+  // Headline per-guide score — overall/Oct-1-onward, shown on every card/row/detail panel here.
+  // The ranked, period-filterable Leaderboard now lives on its own page (LeaderboardPage.tsx) —
+  // see that file for the monthly view.
   const reviewScoreByGuide = useMemo(() => {
     const out = new Map<string, GuideReviewScore>();
     guides.forEach(g => {
       const guideReviews = reviewsSinceOct1.filter(r => r.guide_id === g.id);
-      out.set(g.id, computeGuideReviewScore(guideReviews, guidedBookingCounts.get(g.id) || 0));
+      out.set(g.id, computeGuideReviewScore(guideReviews, overallDoneCounts.get(g.id) || 0));
     });
     return out;
-  }, [guides, reviewsSinceOct1, guidedBookingCounts]);
+  }, [guides, reviewsSinceOct1, overallDoneCounts]);
 
   // "All Guides" overview now respects both the selected period AND status (per-guide
   // cards/totals strip/table all agree, all built from the same narrowed arrays) — pass
@@ -367,8 +379,8 @@ export default function GuideDashboard() {
   // including every "Unlinked" row regardless of date. The review score columns are the one
   // exception — always Oct-1-onward, per computeGuideOverviewRows' own inputs here.
   const overviewRows = useMemo(
-    () => computeGuideOverviewRows(guides, statusFilteredAssignments, reviewsSinceOct1, guidedBookingCounts, filteredMonthlyRowsForOverview, todayStr),
-    [guides, statusFilteredAssignments, reviewsSinceOct1, guidedBookingCounts, filteredMonthlyRowsForOverview, todayStr]
+    () => computeGuideOverviewRows(guides, statusFilteredAssignments, reviewsSinceOct1, overallDoneCounts, filteredMonthlyRowsForOverview, todayStr),
+    [guides, statusFilteredAssignments, reviewsSinceOct1, overallDoneCounts, filteredMonthlyRowsForOverview, todayStr]
   );
   // Drops a guide with literally nothing left after the status narrowing above, instead of
   // rendering an empty €0 row — see matchesAdminStatusFilter's own doc comment.
@@ -609,13 +621,21 @@ export default function GuideDashboard() {
           <div>
             <h1 className="text-[28px] font-bold tracking-tight text-foreground">Guide Dashboard</h1>
             <p className="text-muted-foreground text-sm mt-1.5">Performance tracking and earnings overview</p>
-            <button
-              onClick={() => openReviewsModal()}
-              className="mt-3 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gold text-black text-xs font-bold uppercase tracking-wide shadow-sm hover:scale-[1.02] active:scale-[0.98] transition-all"
-            >
-              <Plus size={14} />
-              Add Review
-            </button>
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={() => openReviewsModal()}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gold text-black text-xs font-bold uppercase tracking-wide shadow-sm hover:scale-[1.02] active:scale-[0.98] transition-all"
+              >
+                <Plus size={14} />
+                Add Review
+              </button>
+              <button
+                onClick={() => navigate('/app/leaderboard')}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-muted border border-border text-xs font-bold uppercase tracking-wide hover:border-gold/30 transition-all"
+              >
+                View Leaderboard
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-col gap-2.5 md:items-end">
@@ -797,16 +817,19 @@ export default function GuideDashboard() {
 
                   {(() => {
                     const rs = reviewScoreByGuide.get(g.id);
+                    const band = getScoreBand(rs?.score ?? null);
                     return (
-                      <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-muted-foreground" title="Score = sum of review points ÷ bookings guided, since Oct 1 2026">
+                      <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-muted-foreground">
                         <Star size={12} className="shrink-0 text-gold" />
                         <span>
                           Score{' '}
                           <span className={`font-semibold ${rs?.score != null ? (rs.score >= 0 ? 'text-green-700' : 'text-red-600') : 'text-foreground'}`}>
                             {rs?.score != null ? `${rs.score >= 0 ? '+' : ''}${rs.score.toFixed(2)}` : '—'}
                           </span>
-                          {' · '}{rs?.reviewCount ?? 0} review{(rs?.reviewCount ?? 0) !== 1 ? 's' : ''} / {rs?.bookingsGuided ?? 0} guided
+                          {' · '}{rs?.reviewCount ?? 0} review{(rs?.reviewCount ?? 0) !== 1 ? 's' : ''} / {rs?.bookingsGuided ?? 0} done
+                          {band && <span className="text-muted-foreground"> · {ADMIN_SCORE_BAND_LABELS[band]}</span>}
                         </span>
+                        <ScoreInfoTooltip />
                       </div>
                     );
                   })()}
@@ -844,7 +867,7 @@ export default function GuideDashboard() {
                 <h2 className="text-xl font-bold tracking-tight">All Guides — {adminFilterLabel}</h2>
               </div>
               <p className="text-xs text-muted-foreground mb-4">
-                Totals for the selected period{statusFilter !== 'all' ? ` · ${statusFilterLabel} only` : ''}. "Unlinked" imported history only appears when its month falls inside the selected window — switch to "All Time" above to see every tour on record, including older unlinked rows.
+                Totals for the selected period{statusFilter !== 'all' ? ` · ${statusFilterLabel} only` : ''}. "Unlinked" imported history only appears when its month falls inside the selected window — switch to "All Time" above to see every tour on record, including older unlinked rows. Score/Reviews are always since Oct 1, 2026 — see the Leaderboard page for a monthly breakdown.
               </p>
               {visibleOverviewRows.length === 0 ? (
                 <div className="aurelia-card border border-dashed border-border p-10 text-center">
@@ -861,12 +884,18 @@ export default function GuideDashboard() {
                       <th className="px-5 py-3 text-right">Earned</th>
                       <th className="px-5 py-3 text-right">Paid</th>
                       <th className="px-5 py-3 text-right">Pending</th>
-                      <th className="px-5 py-3 text-right" title="sum of review points ÷ bookings guided, since Oct 1 2026">Score</th>
+                      <th className="px-5 py-3 text-right">
+                        <span className="inline-flex items-center gap-1">
+                          Score <ScoreInfoTooltip />
+                        </span>
+                      </th>
                       <th className="px-5 py-3 text-right">Reviews</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {visibleOverviewRows.map(row => (
+                    {visibleOverviewRows.map(row => {
+                      const band = getScoreBand(row.reviewScore);
+                      return (
                       <tr
                         key={row.id}
                         onClick={() => row.kind === 'real' ? setDetailGuideId(row.id) : setDetailVirtualName(row.name)}
@@ -890,16 +919,20 @@ export default function GuideDashboard() {
                         <td className="px-5 py-3 text-right tabular-nums text-amber-700">€{row.pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                         <td className="px-5 py-3 text-right tabular-nums">
                           {row.reviewScore != null ? (
-                            <span className={`font-bold ${row.reviewScore >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                              {row.reviewScore >= 0 ? '+' : ''}{row.reviewScore.toFixed(2)}
-                            </span>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className={`font-bold ${row.reviewScore >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                                {row.reviewScore >= 0 ? '+' : ''}{row.reviewScore.toFixed(2)}
+                              </span>
+                              {band && <span className="text-[9px] text-muted-foreground">{ADMIN_SCORE_BAND_LABELS[band]}</span>}
+                            </div>
                           ) : '—'}
                         </td>
                         <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
                           {row.reviewCount} / {row.bookingsGuided}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1268,7 +1301,10 @@ export default function GuideDashboard() {
 
                 <section className="space-y-4 pt-6 border-t border-border">
                   <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Reviews · Since Oct 1, 2026</h3>
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Reviews · Since Oct 1, 2026</h3>
+                      <ScoreInfoTooltip />
+                    </div>
                     <button
                       onClick={() => openReviewsModal(detailGuide.id)}
                       className="px-3 py-1.5 rounded-lg bg-muted border border-border text-[10px] font-bold uppercase tracking-widest hover:border-gold/30 transition-all"
@@ -1278,22 +1314,30 @@ export default function GuideDashboard() {
                   </div>
                   {(() => {
                     const rs = reviewScoreByGuide.get(detailGuide.id);
+                    const band = getScoreBand(rs?.score ?? null);
                     return (
-                      <div className="aurelia-card p-5 border-l-[3px] border-l-gold flex flex-wrap items-center gap-6">
-                        <div>
-                          <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Score</div>
-                          <div className={`text-2xl font-bold ${rs?.score != null ? (rs.score >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
-                            {rs?.score != null ? `${rs.score >= 0 ? '+' : ''}${rs.score.toFixed(2)}` : '—'}
+                      <div className="aurelia-card p-5 border-l-[3px] border-l-gold space-y-3">
+                        <div className="flex flex-wrap items-center gap-6">
+                          <div>
+                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Score</div>
+                            <div className={`text-2xl font-bold ${rs?.score != null ? (rs.score >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
+                              {rs?.score != null ? `${rs.score >= 0 ? '+' : ''}${rs.score.toFixed(2)}` : '—'}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Reviews</div>
+                            <div className="text-2xl font-bold">{rs?.reviewCount ?? 0}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Done Tours</div>
+                            <div className="text-2xl font-bold">{rs?.bookingsGuided ?? 0}</div>
                           </div>
                         </div>
-                        <div>
-                          <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Reviews</div>
-                          <div className="text-2xl font-bold">{rs?.reviewCount ?? 0}</div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Bookings Guided</div>
-                          <div className="text-2xl font-bold">{rs?.bookingsGuided ?? 0}</div>
-                        </div>
+                        {band && (
+                          <p className={`text-sm font-bold ${band === 'falling' ? 'text-red-600' : band === 'excellent' ? 'text-green-700' : 'text-foreground'}`}>
+                            {ADMIN_SCORE_BAND_LABELS[band]}
+                          </p>
+                        )}
                       </div>
                     );
                   })()}

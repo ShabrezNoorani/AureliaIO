@@ -360,17 +360,20 @@ export function reviewPoints(stars: number): number {
 }
 
 export interface GuideReviewScore {
-  /** null renders as "—" — no guided bookings to divide by, never a divide-by-zero NaN/Infinity. */
+  /** null renders as "—" — no DONE tours to divide by, never a divide-by-zero NaN/Infinity. */
   score: number | null;
   reviewCount: number;
+  /** DONE tours only (date passed, or checked in) — see computeDoneBookingRecords. Named
+      bookingsGuided for historical reasons; never includes an upcoming/future tour. */
   bookingsGuided: number;
 }
 
-/** sum(reviewPoints) ÷ bookings actually guided — a guided booking with no review simply dilutes
-    the denominator without adding a point, exactly as the spec requires ("contributes 0, handled
-    by the denominator"). Callers are expected to have already scoped BOTH `reviews` and
-    `bookingsGuided` to "since Oct 1, 2026" (see ADMIN_DEFAULT_FILTER_START) before calling this —
-    this function itself is date-agnostic, just the arithmetic. */
+/** sum(reviewPoints) ÷ DONE tours (never upcoming/future — see computeDoneBookingRecords) — a done
+    tour with no review simply dilutes the denominator without adding a point, exactly as the spec
+    requires ("contributes 0, handled by the denominator"). Callers are expected to have already
+    scoped BOTH `reviews` and `bookingsGuided` to "since Oct 1, 2026" (see
+    ADMIN_DEFAULT_FILTER_START) before calling this — this function itself is date-agnostic, just
+    the arithmetic. */
 export function computeGuideReviewScore(reviews: GuideReviewRow[], bookingsGuided: number): GuideReviewScore {
   const reviewCount = reviews.length;
   if (bookingsGuided <= 0) return { score: null, reviewCount, bookingsGuided };
@@ -381,42 +384,177 @@ export function computeGuideReviewScore(reviews: GuideReviewRow[], bookingsGuide
 export interface CheckinForGuiding {
   booking_ref: string;
   status: string | null;
-  travel_date: string | null;
 }
 
 export interface SessionBookingForGuiding {
   booking_ref: string;
   allotted_guide_id: string | null;
+  session_id: string;
 }
 
-/** The score's denominator: how many DISTINCT bookings a guide actually guided — a booking counts
-    once it has a `checkins` row with status 'checked_in' AND a `session_bookings` row allotting it
-    to that guide; counts bookings, never pax or tours, per the spec. A booking reassigned between
+export interface SessionDateForGuiding {
+  id: string;
+  tour_date: string;
+}
+
+export interface DoneBookingRecord {
+  guide_id: string;
+  booking_ref: string;
+  /** YYYY-MM, from the session's own tour_date — what "monthly" scoring groups by. */
+  month: string;
+}
+
+/** The score's denominator, built from a single DONE/upcoming rule — mirrors isAssignmentDone's:
+    a tour dated strictly BEFORE today is always done; dated strictly AFTER today is NEVER counted,
+    full stop, regardless of any checkins row that might exist for it; dated exactly today is done
+    only once a guest has actually been checked in. This replaces an earlier version of this
+    function that counted a booking purely because a matching `checkins` row existed, with no
+    date guard at all — able to count a booking whose tour hadn't happened yet (the reported "26
+    guided" bug). Counts DISTINCT bookings, never pax or tours. A booking reassigned between
     guides (allotted_guide_id updated in place, same session_bookings row — see
     dedupeAssignmentsAcrossSources' doc comment for the same underlying guarantee elsewhere in this
     file) is credited to whichever guide currently holds it, never both. */
-export function computeGuidedBookingCounts(
-  checkins: CheckinForGuiding[],
+export function computeDoneBookingRecords(
   sessionBookings: SessionBookingForGuiding[],
-  sinceDate: string
-): Map<string, number> {
-  const checkedInRefs = new Set(
-    checkins
-      .filter((c) => c.status === 'checked_in' && !!c.travel_date && c.travel_date >= sinceDate)
-      .map((c) => c.booking_ref)
-  );
-  const byGuide = new Map<string, Set<string>>();
+  sessions: SessionDateForGuiding[],
+  checkins: CheckinForGuiding[],
+  sinceDate: string,
+  todayStr: string
+): DoneBookingRecord[] {
+  const sessionDateById = new Map(sessions.map((s) => [s.id, s.tour_date]));
+  const checkedInRefs = new Set(checkins.filter((c) => c.status === 'checked_in').map((c) => c.booking_ref));
+  const seen = new Set<string>();
+  const records: DoneBookingRecord[] = [];
   for (const sb of sessionBookings) {
     if (!sb.allotted_guide_id) continue;
-    if (!checkedInRefs.has(sb.booking_ref)) continue;
-    const set = byGuide.get(sb.allotted_guide_id) || new Set<string>();
-    set.add(sb.booking_ref);
-    byGuide.set(sb.allotted_guide_id, set);
+    const tourDate = sessionDateById.get(sb.session_id);
+    if (!tourDate || tourDate < sinceDate) continue;
+    if (tourDate > todayStr) continue; // never count upcoming/future — no exceptions
+    const isDone = tourDate < todayStr || checkedInRefs.has(sb.booking_ref);
+    if (!isDone) continue;
+    const key = `${sb.allotted_guide_id}:${sb.booking_ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    records.push({ guide_id: sb.allotted_guide_id, booking_ref: sb.booking_ref, month: tourDate.slice(0, 7) });
   }
+  return records;
+}
+
+export function countDoneBookingsByGuide(records: DoneBookingRecord[]): Map<string, number> {
   const counts = new Map<string, number>();
-  byGuide.forEach((set, guideId) => counts.set(guideId, set.size));
+  for (const r of records) counts.set(r.guide_id, (counts.get(r.guide_id) || 0) + 1);
   return counts;
 }
+
+/** Per-guide, per-month done-tour counts — feeds the admin dashboard's MONTHLY score view
+    (requirement 2: overall + monthly, filterable). */
+export function countDoneBookingsByGuideAndMonth(records: DoneBookingRecord[]): Map<string, Map<string, number>> {
+  const out = new Map<string, Map<string, number>>();
+  for (const r of records) {
+    const byMonth = out.get(r.guide_id) || new Map<string, number>();
+    byMonth.set(r.month, (byMonth.get(r.month) || 0) + 1);
+    out.set(r.guide_id, byMonth);
+  }
+  return out;
+}
+
+/** Groups reviews by the month of review_date (YYYY-MM) — the other half of the monthly score
+    view. A row with no review_date is excluded — there's no month to place it under. */
+export function groupReviewsByMonth(reviews: GuideReviewRow[]): Map<string, GuideReviewRow[]> {
+  const out = new Map<string, GuideReviewRow[]>();
+  for (const r of reviews) {
+    const month = (r.review_date || '').slice(0, 7);
+    if (!month) continue;
+    const arr = out.get(month) || [];
+    arr.push(r);
+    out.set(month, arr);
+  }
+  return out;
+}
+
+/** A guide needs at least this many DONE tours IN THE PERIOD BEING RANKED before their score
+    counts toward the leaderboard, or is shown on their own dashboard at all — too few tours makes
+    a single bad (or good) review swing the score wildly, which isn't a fair signal yet. Applies
+    within whichever period is selected (Overall, or one specific month) — a guide who's
+    overall-eligible but had a quiet month doesn't automatically rank in that month's board. */
+export const GUIDE_SCORE_MIN_TOURS = 3;
+
+export interface GuideLeaderboardEntry {
+  guide_id: string;
+  score: number;
+  reviewCount: number;
+  doneTours: number;
+  rank: number;
+}
+
+/**
+ * Ranks guides by score, highest first, for ONE period at a time — pass since-Oct-1 reviews/done
+ * counts for the "Overall" view, or one month's slice (groupReviewsByMonth +
+ * countDoneBookingsByGuideAndMonth, keyed by that month) for the "Monthly" view. The
+ * GUIDE_SCORE_MIN_TOURS threshold is evaluated against `periodDoneCounts` — THE SAME period being
+ * ranked — so selecting a specific month recomputes eligibility, doneTours, reviewCount and score
+ * entirely for that month; a guide with 26 done tours overall but only 2 in October is excluded
+ * from October's board, and one with 26 overall but 6 in October shows exactly 6 there, never 26.
+ * Deliberately takes only guide IDs, never names — callers that need names (the admin UI) look
+ * them up themselves; a caller that only has IDs (a guide's own privacy-safe view) structurally
+ * cannot leak another guide's name through this function.
+ */
+export function computeGuideLeaderboard(
+  guideIds: string[],
+  periodReviewsByGuide: Map<string, GuideReviewRow[]>,
+  periodDoneCounts: Map<string, number>
+): GuideLeaderboardEntry[] {
+  const unranked: Omit<GuideLeaderboardEntry, 'rank'>[] = [];
+  for (const guideId of guideIds) {
+    const doneTours = periodDoneCounts.get(guideId) || 0;
+    if (doneTours < GUIDE_SCORE_MIN_TOURS) continue;
+    const result = computeGuideReviewScore(periodReviewsByGuide.get(guideId) || [], doneTours);
+    if (result.score == null) continue;
+    unranked.push({ guide_id: guideId, score: result.score, reviewCount: result.reviewCount, doneTours });
+  }
+  unranked.sort((a, b) => b.score - a.score);
+  return unranked.map((e, i) => ({ ...e, rank: i + 1 }));
+}
+
+export type ScoreBand = 'excellent' | 'good' | 'needs_improvement' | 'falling';
+
+/** The one set of band thresholds used everywhere a score is shown. */
+export function getScoreBand(score: number | null): ScoreBand | null {
+  if (score == null) return null;
+  if (score >= 0.5) return 'excellent';
+  if (score >= 0.2) return 'good';
+  if (score >= 0) return 'needs_improvement';
+  return 'falling';
+}
+
+/** Actionable, for the owner — the negative band is explicitly flagged as worth a conversation. */
+export const ADMIN_SCORE_BAND_LABELS: Record<ScoreBand, string> = {
+  excellent: 'Excellent',
+  good: 'Good',
+  needs_improvement: 'Needs improvement',
+  falling: 'Falling — worth a conversation',
+};
+
+/** Encouraging, for the guide themselves. */
+export const GUIDE_SCORE_BAND_LABELS: Record<ScoreBand, string> = {
+  excellent: 'Excellent!',
+  good: 'Good — keep it up',
+  needs_improvement: 'Room to improve — ask more guests to review',
+  falling: "Let's work on this",
+};
+
+/** The info-tooltip's band breakdown — one structured list rendered on both the guide and admin
+    dashboards, so the two "i" buttons can never drift out of sync with each other or with
+    getScoreBand's actual thresholds. */
+export const SCORE_BAND_TOOLTIP_ROWS: { range: string; note: string }[] = [
+  { range: '+0.5 and above', note: 'Excellent (lots of 5-star reviews)' },
+  { range: '+0.2 to +0.5', note: 'Good' },
+  { range: '0 to +0.2', note: 'Needs improvement' },
+  { range: 'Below 0', note: 'Falling — needs attention' },
+];
+
+export const SCORE_FORMULA_TOOLTIP_TEXT =
+  'Score = review points ÷ completed tours since Oct 1; getting more guests to leave 5-star reviews raises it.';
 
 export interface GuideOverviewRow {
   kind: 'real' | 'virtual';

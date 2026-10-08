@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart, Send, LineChart, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart, Send, LineChart, PanelLeftClose, PanelLeftOpen, Trophy } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, Profile } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'live' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'live' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'leaderboard' | 'marketplace' | 'changelog';
 
 interface AureliaSidebarProps {
   activeView: View;
@@ -221,6 +221,7 @@ export default function AureliaSidebar({
             <SidebarItem icon={Send} label="Dispatch" active={activeView === 'dispatch'} onClick={() => handleNavigate('dispatch', '/app/dispatch')} collapsed />
             <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => handleNavigate('guides', '/app/guides')} collapsed />
             <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => handleNavigate('guide-dashboard', '/app/guide-dashboard')} collapsed />
+            <SidebarItem icon={Trophy} label="Leaderboard" active={activeView === 'leaderboard'} onClick={() => handleNavigate('leaderboard', '/app/leaderboard')} collapsed />
             <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => handleNavigate('marketplace', '/app/marketplace')} collapsed />
             <SidebarItem icon={List} label="Change Log" active={activeView === 'changelog'} onClick={() => handleNavigate('changelog', '/app/changelog')} collapsed />
             <SidebarItem icon={Plus} label="New Product" active={false} onClick={() => { onNewProduct(); onCloseMobile(); }} collapsed />
@@ -286,6 +287,7 @@ export default function AureliaSidebar({
               <SidebarItem icon={Send} label="Dispatch" active={activeView === 'dispatch'} onClick={() => handleNavigate('dispatch', '/app/dispatch')} indent />
               <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => handleNavigate('guides', '/app/guides')} indent />
                <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => handleNavigate('guide-dashboard', '/app/guide-dashboard')} indent />
+              <SidebarItem icon={Trophy} label="Leaderboard" active={activeView === 'leaderboard'} onClick={() => handleNavigate('leaderboard', '/app/leaderboard')} indent />
               <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => handleNavigate('marketplace', '/app/marketplace')} indent />
               <SidebarItem icon={List} label="Change Log" active={activeView === 'changelog'} onClick={() => handleNavigate('changelog', '/app/changelog')} indent />
             </div>

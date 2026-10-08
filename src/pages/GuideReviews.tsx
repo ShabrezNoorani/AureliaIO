@@ -2,10 +2,14 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { Star } from 'lucide-react';
+import { localDateStr } from '@/lib/utils';
 import {
-  computeGuideReviewScore, computeGuidedBookingCounts, ADMIN_DEFAULT_FILTER_START,
-  type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding,
+  computeGuideReviewScore, computeDoneBookingRecords, countDoneBookingsByGuide,
+  computeGuideLeaderboard, getScoreBand, GUIDE_SCORE_BAND_LABELS, GUIDE_SCORE_MIN_TOURS,
+  ADMIN_DEFAULT_FILTER_START,
+  type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding, type SessionDateForGuiding,
 } from '@/lib/guidePerformance';
+import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 
 interface RatingRow {
   id: string;
@@ -59,33 +63,77 @@ export default function GuideReviews() {
     setLoading(false);
   };
 
-  // Own score = sum(review points since Oct 1 2026) ÷ own bookings guided since Oct 1 2026 — same
-  // computeGuideReviewScore/computeGuidedBookingCounts the admin dashboard uses, just scoped to
-  // this one guide (session_bookings queried pre-filtered to allotted_guide_id = this guide, so
-  // no other guide's booking_refs are ever fetched here).
-  const [myGuidedBookingCount, setMyGuidedBookingCount] = useState(0);
+  // Own score, the leaderboard's top score (number only), and own rank — all computed from the
+  // SAME done/upcoming rule and the SAME leaderboard function the admin dashboard uses
+  // (computeDoneBookingRecords/computeGuideLeaderboard), so a guide's own numbers and the admin's
+  // can never disagree. Privacy: the `guides` query below selects ONLY `id`, never `name` — no
+  // other guide's name is ever fetched into this page, let alone rendered. `myReviews` (the list
+  // rendered further down) is a SEPARATE, narrowly-scoped fetch (`.eq('guide_id', guideId)`) from
+  // the broader company-wide data used only for the anonymous leaderboard arithmetic below; the
+  // broader fetch's individual review rows (other guides' comments/reviewer names) are never
+  // rendered anywhere on this page.
+  const [allGuideIds, setAllGuideIds] = useState<string[]>([]);
+  const [allReviewsSinceOct1, setAllReviewsSinceOct1] = useState<GuideReviewRow[]>([]);
+  const [overallDoneCounts, setOverallDoneCounts] = useState<Map<string, number>>(new Map());
+
   const loadMyReviewsAndScore = async () => {
     if (!guideId || !guideUserId) return;
     setMyReviewsLoading(true);
-    const [reviewsRes, sbRes, checkinsRes] = await Promise.all([
+    const todayStr = localDateStr();
+    const [myReviewsRes, allReviewsRes, guidesRes, sbRes, sessRes, checkinsRes] = await Promise.all([
       supabase.from('guide_reviews').select('*').eq('guide_id', guideId),
-      supabase.from('session_bookings').select('booking_ref, allotted_guide_id')
-        .eq('user_id', guideUserId).eq('allotted_guide_id', guideId),
-      supabase.from('checkins').select('booking_ref, status, travel_date')
+      // Anonymous leaderboard arithmetic only needs the STAR VALUE tied to a guide_id — never
+      // reviewer_name/comment/platform (someone else's actual review text) for any OTHER guide,
+      // so this query never selects those columns at all; they simply never leave the server for
+      // this fetch, rather than being fetched and merely not rendered.
+      supabase.from('guide_reviews').select('id, guide_id, stars, review_date').gte('review_date', ADMIN_DEFAULT_FILTER_START),
+      supabase.from('guides').select('id').eq('user_id', guideUserId), // id ONLY — never name
+      supabase.from('session_bookings').select('booking_ref, allotted_guide_id, session_id').eq('user_id', guideUserId),
+      supabase.from('tour_sessions').select('id, tour_date').eq('user_id', guideUserId),
+      supabase.from('checkins').select('booking_ref, status')
         .eq('user_id', guideUserId).eq('status', 'checked_in').gte('travel_date', ADMIN_DEFAULT_FILTER_START),
     ]);
     const sessionBookings: SessionBookingForGuiding[] = sbRes.data || [];
+    const sessions: SessionDateForGuiding[] = sessRes.data || [];
     const checkins: CheckinForGuiding[] = checkinsRes.data || [];
-    const counts = computeGuidedBookingCounts(checkins, sessionBookings, ADMIN_DEFAULT_FILTER_START);
-    setMyGuidedBookingCount(counts.get(guideId) || 0);
-    setMyReviews(reviewsRes.data || []);
+    const records = computeDoneBookingRecords(sessionBookings, sessions, checkins, ADMIN_DEFAULT_FILTER_START, todayStr);
+    setOverallDoneCounts(countDoneBookingsByGuide(records));
+    setAllGuideIds((guidesRes.data || []).map((g: { id: string }) => g.id));
+    // Pads the never-fetched text fields back in (always null) purely to satisfy GuideReviewRow's
+    // shape — computeGuideReviewScore only ever reads `.stars`, so this is inert, not a leak.
+    setAllReviewsSinceOct1((allReviewsRes.data || []).map((r: { id: string; guide_id: string; stars: number; review_date: string }) => ({
+      ...r, reviewer_name: null, comment: null, platform: null,
+    })));
+    setMyReviews(myReviewsRes.data || []);
     setMyReviewsLoading(false);
   };
 
-  const myReviewScore = useMemo(() => {
-    const sinceOct1 = myReviews.filter(r => r.review_date >= ADMIN_DEFAULT_FILTER_START);
-    return computeGuideReviewScore(sinceOct1, myGuidedBookingCount);
-  }, [myReviews, myGuidedBookingCount]);
+  const myDoneTours = overallDoneCounts.get(guideId || '') || 0;
+  const myReviewsSinceOct1 = useMemo(
+    () => myReviews.filter(r => r.review_date >= ADMIN_DEFAULT_FILTER_START),
+    [myReviews]
+  );
+  const myReviewScore = useMemo(
+    () => computeGuideReviewScore(myReviewsSinceOct1, myDoneTours),
+    [myReviewsSinceOct1, myDoneTours]
+  );
+  const myScoreUnlocked = myDoneTours >= GUIDE_SCORE_MIN_TOURS;
+
+  // The anonymized leaderboard — built with guide IDs only (computeGuideLeaderboard never takes
+  // names), so "top score" and "my rank" are derivable without ever knowing who anyone else is.
+  const leaderboard = useMemo(() => {
+    if (!myScoreUnlocked) return [];
+    const reviewsByGuide = new Map<string, GuideReviewRow[]>();
+    allReviewsSinceOct1.forEach(r => {
+      const arr = reviewsByGuide.get(r.guide_id) || [];
+      arr.push(r);
+      reviewsByGuide.set(r.guide_id, arr);
+    });
+    return computeGuideLeaderboard(allGuideIds, reviewsByGuide, overallDoneCounts);
+  }, [myScoreUnlocked, allGuideIds, allReviewsSinceOct1, overallDoneCounts]);
+  const topScore = leaderboard[0]?.score ?? null;
+  const myRankEntry = guideId ? leaderboard.find(e => e.guide_id === guideId) : undefined;
+  const myScoreBand = getScoreBand(myReviewScore.score);
 
   useEffect(() => {
     loadRatings();
@@ -137,26 +185,47 @@ export default function GuideReviews() {
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-xs font-bold text-gold uppercase tracking-widest">My Score · Since Oct 1, 2026</h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-xs font-bold text-gold uppercase tracking-widest">My Score · Since Oct 1, 2026</h2>
+          <ScoreInfoTooltip />
+        </div>
         {myReviewsLoading ? (
           <div className="flex justify-center p-8"><div className="w-6 h-6 rounded-full border-2 border-gold border-t-transparent animate-spin" /></div>
+        ) : !myScoreUnlocked ? (
+          <div className="aurelia-card p-6 text-center">
+            <p className="text-sm font-semibold text-foreground">Your score appears after 3 completed tours.</p>
+            <p className="text-xs text-muted-foreground mt-1">You're at {myDoneTours} of {GUIDE_SCORE_MIN_TOURS} since Oct 1, 2026.</p>
+          </div>
         ) : (
           <>
-            <div className="aurelia-card p-5 border-l-[3px] border-l-gold flex flex-wrap items-center gap-6">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Score</p>
-                <span className={`text-3xl font-extrabold ${myReviewScore.score != null ? (myReviewScore.score >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
-                  {myReviewScore.score != null ? `${myReviewScore.score >= 0 ? '+' : ''}${myReviewScore.score.toFixed(2)}` : '—'}
-                </span>
+            <div className="aurelia-card p-5 border-l-[3px] border-l-gold space-y-4">
+              <div className="flex flex-wrap items-center gap-6">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Score</p>
+                  <span className={`text-3xl font-extrabold ${myReviewScore.score != null ? (myReviewScore.score >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
+                    {myReviewScore.score != null ? `${myReviewScore.score >= 0 ? '+' : ''}${myReviewScore.score.toFixed(2)}` : '—'}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Reviews</p>
+                  <span className="text-3xl font-extrabold">{myReviewScore.reviewCount}</span>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Done Tours</p>
+                  <span className="text-3xl font-extrabold">{myReviewScore.bookingsGuided}</span>
+                </div>
               </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Reviews</p>
-                <span className="text-3xl font-extrabold">{myReviewScore.reviewCount}</span>
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Bookings Guided</p>
-                <span className="text-3xl font-extrabold">{myReviewScore.bookingsGuided}</span>
-              </div>
+              {myScoreBand && (
+                <p className={`text-sm font-bold ${myScoreBand === 'falling' ? 'text-red-600' : myScoreBand === 'excellent' ? 'text-green-700' : 'text-foreground'}`}>
+                  {GUIDE_SCORE_BAND_LABELS[myScoreBand]}
+                </p>
+              )}
+              {myRankEntry && (
+                <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-border text-xs text-muted-foreground">
+                  <span>Top score: <span className="font-bold text-foreground">{topScore != null ? `${topScore >= 0 ? '+' : ''}${topScore.toFixed(2)}` : '—'}</span></span>
+                  <span>Your rank: <span className="font-bold text-foreground">#{myRankEntry.rank} of {leaderboard.length}</span></span>
+                </div>
+              )}
             </div>
             {myReviews.length > 0 && (
               <div className="space-y-2">

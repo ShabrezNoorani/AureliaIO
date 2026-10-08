@@ -16,6 +16,7 @@ import AnalyticsPage from '@/pages/AnalyticsPage';
 import BreakdownPnlPage from '@/pages/BreakdownPnlPage';
 import GuidesPage from '@/pages/GuidesPage';
 import GuideDashboard from '@/pages/GuideDashboard';
+import LeaderboardPage from '@/pages/LeaderboardPage';
 import MarketplacePage from '@/pages/MarketplacePage';
 import ChangeLogPage from '@/pages/ChangeLogPage';
 import { useAppData } from '@/lib/useAppData';
@@ -25,7 +26,7 @@ import { syncMasterData } from '@/lib/gsheetSync';
 import { syncFromBokun } from '@/lib/bokunSync';
 import { localDateStr } from '@/lib/utils';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'live' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'live' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'leaderboard' | 'marketplace' | 'changelog';
 
 const AppLayout = () => {
   const { user, profile } = useAuth();
@@ -74,6 +75,7 @@ const AppLayout = () => {
     const path = window.location.pathname;
     if (path.includes('/guides')) setView('guides');
     else if (path.includes('/guide-dashboard')) setView('guide-dashboard');
+    else if (path.includes('/leaderboard')) setView('leaderboard');
     else if (path.includes('/marketplace')) setView('marketplace');
     else if (path.includes('/today')) setView('today');
     else if (path.includes('/live')) setView('live');
@@ -332,6 +334,7 @@ const AppLayout = () => {
         {view === 'settings' && <SettingsPage />}
         {view === 'guides' && <GuidesPage />}
         {view === 'guide-dashboard' && <GuideDashboard />}
+        {view === 'leaderboard' && <LeaderboardPage />}
         {view === 'marketplace' && <MarketplacePage />}
         {view === 'changelog' && <ChangeLogPage />}
       </main>
