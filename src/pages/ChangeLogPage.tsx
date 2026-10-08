@@ -141,6 +141,7 @@ export default function ChangeLogPage() {
                 <option value="guides">Guides</option>
                 <option value="guide_option_rates">Rates</option>
                 <option value="guide_assignments">Assignments</option>
+                <option value="guide_reviews">Reviews</option>
               </select>
             </div>
             

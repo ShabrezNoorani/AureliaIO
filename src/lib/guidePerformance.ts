@@ -77,6 +77,13 @@ export interface GuideAssignmentRow {
   clients: string | null;
   notes: string | null;
   pax_count: number | null;
+  /** Optional, additive — ONLY ever populated for session-based rows whose caller selected
+      session_guides.checkin_time (currently just the admin dashboard; see isAssignmentDone's own
+      doc comment). `undefined` means "no checkin signal available for this row" (every imported
+      guide_assignments row, and every row from any caller that doesn't select it — including the
+      guide's own GuideHome.tsx) — never confused with `null`, which means "signal available, this
+      guide hasn't checked in yet". */
+  guideCheckinTime?: string | null;
 }
 
 export interface GuideRatingRow {
@@ -127,17 +134,37 @@ export interface AssignmentStats {
   pendingAmount: number;
 }
 
-/** `todayStr` must be a YYYY-MM-DD local date string (see localDateStr in lib/utils). A tour dated
-    today counts as DONE (owed), matching the session-based pay rule ("tour_date <= today, or the
-    guest was checked in, counts as happened") — a tour dated after today is the only thing that
-    counts as upcoming/not-yet-owed. */
+/** `todayStr` must be a YYYY-MM-DD local date string (see localDateStr in lib/utils). ONE
+    definition of DONE vs UPCOMING, used everywhere this distinction is made (computeAssignmentStats
+    below, and the admin dashboard's status filter) so every date-filter preset — "This Month",
+    "From Oct 1", "All Time", a custom range — classifies the exact same tour the exact same way:
+    - A tour dated strictly BEFORE today is always DONE — the day has fully passed; nothing
+      (checked in or not) can make a past tour "upcoming" again.
+    - A tour dated strictly AFTER today is always UPCOMING — check-in isn't physically possible
+      yet, so there's nothing to re-evaluate.
+    - A tour dated TODAY is the only case the check-in signal actually resolves: DONE once this
+      guide has checked in (`guideCheckinTime` set), still UPCOMING while they haven't.
+    `guideCheckinTime === undefined` means no checkin signal is available for this row at all
+    (every imported guide_assignments row, and every caller — GuideHome.tsx included — that never
+    selects session_guides.checkin_time): falls back to the plain `travel_date <= todayStr` rule,
+    so this is a strictly backward-compatible, additive refinement that only takes effect for rows
+    that opt into it. */
+export function isAssignmentDone(a: GuideAssignmentRow, todayStr: string): boolean {
+  if (!a.travel_date) return false;
+  if (a.travel_date < todayStr) return true;
+  if (a.travel_date > todayStr) return false;
+  // Dated today — resolve via check-in when that signal is available, else fall back to the old
+  // date-only rule (today counts as done).
+  return a.guideCheckinTime !== undefined ? a.guideCheckinTime != null : true;
+}
+
 export function computeAssignmentStats(assignments: GuideAssignmentRow[], todayStr: string): AssignmentStats {
   let toursDone = 0, toursUpcoming = 0, totalEarned = 0, paidAmount = 0, pendingAmount = 0;
   for (const a of assignments) {
     const earned = assignmentEarned(a);
     totalEarned += earned;
     if (a.is_paid) paidAmount += earned; else pendingAmount += earned;
-    if (a.travel_date && a.travel_date <= todayStr) toursDone++;
+    if (isAssignmentDone(a, todayStr)) toursDone++;
     else toursUpcoming++;
   }
   return { toursDone, toursUpcoming, totalEarned, paidAmount, pendingAmount };
@@ -296,6 +323,101 @@ export function groupOrphanedMonthlyByName(rows: GuideMonthlyRow[]): Map<string,
   return m;
 }
 
+// ── INDIVIDUAL GUIDE REVIEWS (guide_reviews) — admin-entered, score-driving ─────────────────────
+// A completely separate table/concept from guide_ratings above (which is the guide's own
+// self-reported "I heard I got N stars" log, pending the owner's verification). guide_reviews is
+// individually entered BY THE OWNER — one row per real review, with who wrote it, where, and
+// when — and is what the admin dashboard's per-guide "score" is computed from.
+
+export const REVIEW_PLATFORMS = [
+  'Website', 'TripAdvisor', 'Viator', 'GetYourGuide', 'Airbnb', 'Klook', 'KKday', 'Google',
+] as const;
+export type ReviewPlatform = typeof REVIEW_PLATFORMS[number];
+
+export interface GuideReviewRow {
+  id: string;
+  guide_id: string;
+  stars: number;
+  reviewer_name: string | null;
+  comment: string | null;
+  platform: string | null;
+  review_date: string;
+}
+
+/** The fixed points-per-star scale the score is built from: 5★ rewards, 4★ mildly rewards, 3★
+    mildly penalizes, 1★/2★ penalizes equally hard — a genuinely bad review costs the same whether
+    it's 1 or 2 stars. Any other value (shouldn't occur — the entry form only offers 1-5) scores 0
+    rather than throwing, so one bad row can't crash the whole dashboard. */
+export function reviewPoints(stars: number): number {
+  switch (stars) {
+    case 5: return 1.0;
+    case 4: return 0.5;
+    case 3: return -0.5;
+    case 2: return -1.0;
+    case 1: return -1.0;
+    default: return 0;
+  }
+}
+
+export interface GuideReviewScore {
+  /** null renders as "—" — no guided bookings to divide by, never a divide-by-zero NaN/Infinity. */
+  score: number | null;
+  reviewCount: number;
+  bookingsGuided: number;
+}
+
+/** sum(reviewPoints) ÷ bookings actually guided — a guided booking with no review simply dilutes
+    the denominator without adding a point, exactly as the spec requires ("contributes 0, handled
+    by the denominator"). Callers are expected to have already scoped BOTH `reviews` and
+    `bookingsGuided` to "since Oct 1, 2026" (see ADMIN_DEFAULT_FILTER_START) before calling this —
+    this function itself is date-agnostic, just the arithmetic. */
+export function computeGuideReviewScore(reviews: GuideReviewRow[], bookingsGuided: number): GuideReviewScore {
+  const reviewCount = reviews.length;
+  if (bookingsGuided <= 0) return { score: null, reviewCount, bookingsGuided };
+  const totalPoints = reviews.reduce((sum, r) => sum + reviewPoints(r.stars), 0);
+  return { score: totalPoints / bookingsGuided, reviewCount, bookingsGuided };
+}
+
+export interface CheckinForGuiding {
+  booking_ref: string;
+  status: string | null;
+  travel_date: string | null;
+}
+
+export interface SessionBookingForGuiding {
+  booking_ref: string;
+  allotted_guide_id: string | null;
+}
+
+/** The score's denominator: how many DISTINCT bookings a guide actually guided — a booking counts
+    once it has a `checkins` row with status 'checked_in' AND a `session_bookings` row allotting it
+    to that guide; counts bookings, never pax or tours, per the spec. A booking reassigned between
+    guides (allotted_guide_id updated in place, same session_bookings row — see
+    dedupeAssignmentsAcrossSources' doc comment for the same underlying guarantee elsewhere in this
+    file) is credited to whichever guide currently holds it, never both. */
+export function computeGuidedBookingCounts(
+  checkins: CheckinForGuiding[],
+  sessionBookings: SessionBookingForGuiding[],
+  sinceDate: string
+): Map<string, number> {
+  const checkedInRefs = new Set(
+    checkins
+      .filter((c) => c.status === 'checked_in' && !!c.travel_date && c.travel_date >= sinceDate)
+      .map((c) => c.booking_ref)
+  );
+  const byGuide = new Map<string, Set<string>>();
+  for (const sb of sessionBookings) {
+    if (!sb.allotted_guide_id) continue;
+    if (!checkedInRefs.has(sb.booking_ref)) continue;
+    const set = byGuide.get(sb.allotted_guide_id) || new Set<string>();
+    set.add(sb.booking_ref);
+    byGuide.set(sb.allotted_guide_id, set);
+  }
+  const counts = new Map<string, number>();
+  byGuide.forEach((set, guideId) => counts.set(guideId, set.size));
+  return counts;
+}
+
 export interface GuideOverviewRow {
   kind: 'real' | 'virtual';
   /** guides.id for a real guide; a synthetic `virtual:<name>` key otherwise — never a real UUID,
@@ -308,8 +430,12 @@ export interface GuideOverviewRow {
   totalEarned: number;
   paidAmount: number;
   pendingAmount: number;
-  avgRating: number | null;
-  reviewRatePct: number | null;
+  /** From guide_reviews, since Oct 1 2026 — see computeGuideReviewScore. Always null/0/0 for a
+      virtual (unlinked) row: reviews require a real guide_id, so a name-only imported row can
+      never have any. */
+  reviewScore: number | null;
+  reviewCount: number;
+  bookingsGuided: number;
 }
 
 interface MinimalGuide {
@@ -319,25 +445,26 @@ interface MinimalGuide {
 }
 
 /**
- * One row per real guide (stats from their own guide_assignments/guide_ratings), PLUS one row per
- * distinct guide_name found only in guide_monthly (imported invoice history that was never linked
- * to a guides row) — so those "name-only" guides are never silently hidden from the overview.
- * Virtual rows can only ever report tours/earnings sourced from guide_monthly (tours_completed,
- * amount_owed) since there's no guide_id to attribute any guide_assignments/guide_ratings rows to
- * them — their avgRating/reviewRatePct are always null ("—") rather than a fabricated number.
+ * One row per real guide (stats from their own guide_assignments, score from their own
+ * guide_reviews), PLUS one row per distinct guide_name found only in guide_monthly (imported
+ * invoice history that was never linked to a guides row) — so those "name-only" guides are never
+ * silently hidden from the overview. Virtual rows can only ever report tours/earnings sourced from
+ * guide_monthly (tours_completed, amount_owed) since there's no guide_id to attribute any
+ * guide_assignments/guide_reviews rows to them — their reviewScore is always null ("—").
  */
 export function computeGuideOverviewRows(
   guides: MinimalGuide[],
   assignments: GuideAssignmentRow[],
-  ratings: GuideRatingRow[],
+  reviews: GuideReviewRow[],
+  guidedBookingCounts: Map<string, number>,
   monthlyRows: GuideMonthlyRow[],
   todayStr: string
 ): GuideOverviewRow[] {
   const realRows: GuideOverviewRow[] = guides.map((g) => {
     const guideAssignments = assignments.filter((a) => a.guide_id === g.id);
     const stats = computeAssignmentStats(guideAssignments, todayStr);
-    const guideRatings = ratings.filter((r) => r.guide_id === g.id);
-    const ratingStats = computeRatingStats(guideRatings, stats.toursDone);
+    const guideReviews = reviews.filter((r) => r.guide_id === g.id);
+    const reviewScore = computeGuideReviewScore(guideReviews, guidedBookingCounts.get(g.id) || 0);
     return {
       kind: 'real',
       id: g.id,
@@ -348,8 +475,9 @@ export function computeGuideOverviewRows(
       totalEarned: stats.totalEarned,
       paidAmount: stats.paidAmount,
       pendingAmount: stats.pendingAmount,
-      avgRating: ratingStats.avgRating,
-      reviewRatePct: ratingStats.reviewRatePct,
+      reviewScore: reviewScore.score,
+      reviewCount: reviewScore.reviewCount,
+      bookingsGuided: reviewScore.bookingsGuided,
     };
   });
 
@@ -368,8 +496,9 @@ export function computeGuideOverviewRows(
       totalEarned: paidAmount + pendingAmount,
       paidAmount,
       pendingAmount,
-      avgRating: null,
-      reviewRatePct: null,
+      reviewScore: null,
+      reviewCount: 0,
+      bookingsGuided: 0,
     };
   });
 
@@ -392,6 +521,10 @@ export interface SessionGuideForEarnings {
   status: string;
   base_pay: number | null;
   bonus: number | null;
+  /** Optional — only the admin dashboard currently selects this column. See
+      GuideAssignmentRow.guideCheckinTime and isAssignmentDone's doc comment for why leaving it
+      unselected (undefined) is always safe for any other caller. */
+  checkin_time?: string | null;
 }
 
 export interface SessionForEarnings {
@@ -415,10 +548,10 @@ export interface SessionForEarnings {
  * (`payment_sent === true`) — this is what lets computeAssignmentStats' existing paid/pending
  * split work correctly for session-derived rows with zero changes to that function.
  *
- * "Happened" (owed, not upcoming) is intentionally just `tour_date <= todayStr`, delegated to
- * computeAssignmentStats' own comparison — the task's fuller rule ("tour_date <= today, OR the
- * guest was checked in") adds no additional cases in practice, since this app's check-in flow only
- * ever operates on TODAY-dated sessions, which `<=` already covers.
+ * "Happened" (owed, not upcoming) is delegated entirely to isAssignmentDone/computeAssignmentStats
+ * via the `guideCheckinTime` field below, carried over 1:1 from `checkin_time` when the caller
+ * selected it (undefined otherwise, which isAssignmentDone treats as "no signal — use the plain
+ * date rule").
  */
 export function sessionGuidesToAssignmentRows(
   sessionGuides: SessionGuideForEarnings[],
@@ -453,9 +586,38 @@ export function sessionGuidesToAssignmentRows(
       clients: null,
       notes: null,
       pax_count: null,
+      guideCheckinTime: sg.checkin_time,
     });
   }
   return rows;
+}
+
+/** When the SAME physical tour is represented in both the legacy per-booking `guide_assignments`
+    import/manual-assignment flow (e.g. the standalone check-in app's booking-level
+    "assign a guide" action) AND the newer per-session `session_guides` pay system, naively
+    concatenating both sources double-counts that one tour's cost. Matched on
+    (guide_id, travel_date, travel_time) — the same guide can only physically be on one tour at a
+    given date+time, so a collision on all three is the same tour, never a coincidence. The
+    session-based row wins (it's the actively-maintained pay source for anything using the newer
+    tour_session model; a matching imported row is typically a stale or zero-pay placeholder) and
+    is kept; the matching imported row is dropped so the tour's pay is counted exactly once. A row
+    transferred between guides (guideTransfer.ts's reassign_my_slot moves the SAME session_guides
+    row to the new guide_id, never duplicating it) is unaffected by this — it was already only
+    ever present once. */
+export function dedupeAssignmentsAcrossSources(
+  imported: GuideAssignmentRow[],
+  sessionBased: GuideAssignmentRow[]
+): GuideAssignmentRow[] {
+  const sessionKeys = new Set(
+    sessionBased
+      .filter((a) => a.guide_id && a.travel_date)
+      .map((a) => `${a.guide_id}:${a.travel_date}:${a.travel_time || ''}`)
+  );
+  const dedupedImported = imported.filter((a) => {
+    if (!a.guide_id || !a.travel_date) return true;
+    return !sessionKeys.has(`${a.guide_id}:${a.travel_date}:${a.travel_time || ''}`);
+  });
+  return [...dedupedImported, ...sessionBased];
 }
 
 export interface UnifiedMonthlyRow extends GuideMonthlyRow {
@@ -526,6 +688,189 @@ export function buildUnifiedMonthlyRows(
     }
   }
   return result.sort((a, b) => (b.month || '').localeCompare(a.month || ''));
+}
+
+// ── ADMIN GUIDE DASHBOARD DATE FILTER ────────────────────────────────────────────────────────
+// A separate, richer filter from DateRangePreset/getDateRangeBounds above (which only the admin
+// Guide Dashboard itself uses — nothing guide-facing touches either of these two systems, so this
+// one is additive, not a replacement). Supports the four presets plus an arbitrary single month
+// or custom range, so every period the admin dashboard needs — including "all older data, reached
+// by changing the filter" — funnels through the one function below, matching the SAME
+// filterAssignmentsByDateRange() every other bound here already goes through.
+
+/** The admin dashboard's default filter floor — tours/earnings before this date are never hidden
+    permanently, just not shown by DEFAULT until the admin picks an earlier period. */
+export const ADMIN_DEFAULT_FILTER_START = '2026-10-01';
+
+export type AdminDateFilterMode = 'thisMonth' | 'lastMonth' | 'fromDefaultStart' | 'allTime' | 'month' | 'range';
+
+export interface AdminDateFilter {
+  mode: AdminDateFilterMode;
+  /** YYYY-MM — only read when mode === 'month'. */
+  month?: string;
+  /** YYYY-MM-DD — only read when mode === 'range'. Either side left blank is treated as
+      unbounded in that direction. */
+  rangeFrom?: string;
+  rangeTo?: string;
+}
+
+export const ADMIN_DATE_FILTER_PRESETS: { mode: AdminDateFilterMode; label: string }[] = [
+  { mode: 'thisMonth', label: 'This Month' },
+  { mode: 'lastMonth', label: 'Last Month' },
+  { mode: 'fromDefaultStart', label: 'From Oct 1, 2026' },
+  { mode: 'allTime', label: 'All Time' },
+];
+
+/** Mirrors getDateRangeBounds's own local-time-only arithmetic (Date's own getFullYear/getMonth/
+    getDate + localDateStr — never toISOString) so a boundary date can never shift by the
+    browser's UTC offset. */
+export function getAdminDateFilterBounds(filter: AdminDateFilter, today: Date = new Date()): DateRangeBounds {
+  const todayStr = localDateStr(today);
+  switch (filter.mode) {
+    case 'thisMonth': {
+      const first = new Date(today.getFullYear(), today.getMonth(), 1);
+      const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return { start: localDateStr(first), end: localDateStr(last) };
+    }
+    case 'lastMonth': {
+      const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const last = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { start: localDateStr(first), end: localDateStr(last) };
+    }
+    case 'fromDefaultStart':
+      // "From Oct 1, 2026" means Oct-1-ONWARD — open-ended going forward, same as a 'range' with
+      // no rangeTo. Clamping `end` to todayStr (an earlier version of this function did) silently
+      // excluded every upcoming tour from the whole dashboard under this preset — the exact bug
+      // behind "Upcoming shows 0 under From Oct 1 but works under This Month": 'thisMonth' already
+      // extends `end` to the end of the calendar month (today-or-later), so upcoming tours later
+      // in the month survived, while this preset's today-capped `end` cut them off entirely.
+      return { start: ADMIN_DEFAULT_FILTER_START, end: '9999-12-31' };
+    case 'allTime':
+      // Wide enough to include literally any real travel_date ever stored, without needing a
+      // separate "unbounded" code path through filterAssignmentsByDateRange.
+      return { start: '0000-01-01', end: '9999-12-31' };
+    case 'month': {
+      const ym = filter.month && /^\d{4}-\d{2}$/.test(filter.month) ? filter.month : todayStr.slice(0, 7);
+      const [y, m] = ym.split('-').map(Number);
+      const first = new Date(y, m - 1, 1);
+      const last = new Date(y, m, 0);
+      return { start: localDateStr(first), end: localDateStr(last) };
+    }
+    case 'range':
+      return { start: filter.rangeFrom || '0000-01-01', end: filter.rangeTo || '9999-12-31' };
+  }
+}
+
+export interface GuidePaymentSummary {
+  /** YYYY-MM — the most recent month marked paid (guide_monthly.payment_sent), or null if none
+      has ever been marked paid. "Paid through" is reported as this latest paid month; it does not
+      verify there's no earlier unpaid gap, matching how payments are actually made in practice
+      (sequentially, month by month). */
+  paidThroughMonth: string | null;
+  /** The latest guide_monthly.payment_date recorded across every paid month, or null if none. */
+  lastPaymentDate: string | null;
+}
+
+/** Pure, additive — reads the SAME guide_monthly rows the existing "Mark Paid" mechanism already
+    writes (payment_sent/payment_date), never a new store. Always computed from the guide's FULL
+    monthly history regardless of whatever period the admin dashboard's own filter is currently
+    showing — "paid through" is inherently an all-time, "how caught up is this guide overall"
+    question, not something that should disappear just because the admin is looking at a single
+    month. */
+export function computeGuidePaymentSummary(
+  monthlyRows: { month: string | null; payment_sent: boolean | null; payment_date: string | null }[]
+): GuidePaymentSummary {
+  let paidThroughMonth: string | null = null;
+  let lastPaymentDate: string | null = null;
+  for (const r of monthlyRows) {
+    if (!r.payment_sent) continue;
+    if (r.month && (!paidThroughMonth || r.month > paidThroughMonth)) paidThroughMonth = r.month;
+    if (r.payment_date && (!lastPaymentDate || r.payment_date > lastPaymentDate)) lastPaymentDate = r.payment_date;
+  }
+  return { paidThroughMonth, lastPaymentDate };
+}
+
+/** Scopes guide_monthly rows (used to build the "Unlinked" virtual overview rows — orphaned
+    imported history with no guide_id) to the admin date filter's window, by comparing each row's
+    `month` (YYYY-MM, e.g. "2026-03") against the bounds' own YYYY-MM prefix. Without this, a
+    virtual row's tours/earnings would always be its full all-time total regardless of which
+    period the rest of the dashboard (real guides' filteredAssignments) is scoped to — exactly the
+    "Unlinked rows still show under From-Oct-1" bug this exists to fix. A row with no `month` can't
+    be placed in any window, so it's excluded rather than assumed to be in-range. */
+export function filterMonthlyRowsByDateRange<T extends { month: string | null }>(
+  rows: T[],
+  bounds: DateRangeBounds
+): T[] {
+  const startMonth = bounds.start.slice(0, 7);
+  const endMonth = bounds.end.slice(0, 7);
+  return rows.filter((r) => !!r.month && r.month >= startMonth && r.month <= endMonth);
+}
+
+export type AdminStatusFilter = 'all' | 'upcoming' | 'done' | 'paid' | 'pending';
+
+export const ADMIN_STATUS_FILTER_OPTIONS: { value: AdminStatusFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'upcoming', label: 'Upcoming' },
+  { value: 'done', label: 'Done' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'pending', label: 'Unpaid / Pending' },
+];
+
+/** Per-TOUR status filter — narrows the assignment list itself (not just which guides end up
+    showing) so the top totals strip, the per-guide cards, and the "All Guides" table all sum from
+    the exact same already-narrowed array. Selecting "Paid" means Total Earnings becomes the sum
+    of PAID tours only, a guide's card shows only their paid tours/earnings, etc. — "all three use
+    the SAME filtered dataset" by construction, not by coincidence. */
+export function filterAssignmentsByStatus(
+  assignments: GuideAssignmentRow[],
+  status: AdminStatusFilter,
+  todayStr: string
+): GuideAssignmentRow[] {
+  if (status === 'all') return assignments;
+  return assignments.filter((a) => {
+    switch (status) {
+      case 'upcoming': return !isAssignmentDone(a, todayStr);
+      case 'done': return isAssignmentDone(a, todayStr);
+      case 'paid': return !!a.is_paid;
+      case 'pending': return !a.is_paid;
+    }
+  });
+}
+
+/** The "Unlinked" virtual-row equivalent of filterAssignmentsByStatus above, for the orphaned
+    guide_monthly rows computeGuideOverviewRows turns into virtual rows. Imported monthly invoice
+    history has no "upcoming" concept (it's always already-invoiced, completed work) — so
+    'upcoming' correctly yields nothing, matching toursUpcoming always being 0 for a virtual row.
+    'paid'/'pending' narrow by the row's own payment_sent flag, exactly like the real-guide case. */
+export function filterMonthlyRowsByStatus<T extends { payment_sent: boolean | null }>(
+  rows: T[],
+  status: AdminStatusFilter
+): T[] {
+  switch (status) {
+    case 'all': return rows;
+    case 'upcoming': return [];
+    case 'done': return rows;
+    case 'paid': return rows.filter((r) => !!r.payment_sent);
+    case 'pending': return rows.filter((r) => !r.payment_sent);
+  }
+}
+
+/** Whole-guide-row inclusion test. Applied AFTER filterAssignmentsByStatus/filterMonthlyRowsByStatus
+    have already narrowed the underlying data to the selected status, so by that point any row
+    with nothing left (every stat zero) genuinely has no matching tours in range — this just drops
+    it from the view instead of rendering as an empty €0 card. 'all' always matches, including a
+    guide with zero tours in range, preserving the default "every guide always shown" behavior. */
+export function matchesAdminStatusFilter(
+  row: { toursDone: number; toursUpcoming: number; paidAmount: number; pendingAmount: number },
+  status: AdminStatusFilter
+): boolean {
+  switch (status) {
+    case 'all': return true;
+    case 'upcoming': return row.toursUpcoming > 0;
+    case 'done': return row.toursDone > 0;
+    case 'paid': return row.paidAmount > 0;
+    case 'pending': return row.pendingAmount > 0;
+  }
 }
 
 // ── SESSION-GUIDE-COST ATTRIBUTION FOR BOOKING-LEVEL AGGREGATIONS (Analytics, etc.) ──────────

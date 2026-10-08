@@ -2,9 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   computeRatingStats, computePunctualityStats, computeGuideScore, computeAssignmentStats,
   assignmentEarned, sessionGuidesToAssignmentRows, buildUnifiedMonthlyRows,
-  attributeSessionGuideCostByBooking,
+  attributeSessionGuideCostByBooking, getAdminDateFilterBounds, computeGuidePaymentSummary,
+  filterMonthlyRowsByDateRange, matchesAdminStatusFilter,
+  isAssignmentDone, filterAssignmentsByStatus, filterMonthlyRowsByStatus, dedupeAssignmentsAcrossSources,
+  reviewPoints, computeGuideReviewScore, computeGuidedBookingCounts, computeGuideOverviewRows,
+  ADMIN_DEFAULT_FILTER_START,
   PUNCTUALITY_GRACE_MINUTES,
-  type GuideRatingRow, type GuideAssignmentRow, type GuideMonthlyRow,
+  type GuideRatingRow, type GuideAssignmentRow, type GuideMonthlyRow, type GuideReviewRow,
   type SessionGuideForEarnings, type SessionForEarnings,
 } from './guidePerformance';
 
@@ -348,5 +352,443 @@ describe('attributeSessionGuideCostByBooking', () => {
     });
     const total = Array.from(out.values()).reduce((s, v) => s + v, 0);
     expect(total).toBeCloseTo(150); // 100 + 50, NOT (100+50) * 3 bookings
+  });
+});
+
+describe('getAdminDateFilterBounds', () => {
+  const anchor = new Date(2026, 9, 15); // 2026-10-15 (month is 0-indexed: 9 = October)
+
+  it('is open-ended going forward from Oct 1 2026 — never clamped to "today", so upcoming tours are never silently excluded', () => {
+    expect(getAdminDateFilterBounds({ mode: 'fromDefaultStart' }, anchor)).toEqual({
+      start: ADMIN_DEFAULT_FILTER_START,
+      end: '9999-12-31',
+    });
+  });
+
+  it('stays open-ended regardless of what "today" is, including a clock set before Oct 1 2026', () => {
+    const earlyAnchor = new Date(2026, 8, 1); // 2026-09-01, before Oct 1 2026
+    expect(getAdminDateFilterBounds({ mode: 'fromDefaultStart' }, earlyAnchor)).toEqual({
+      start: ADMIN_DEFAULT_FILTER_START,
+      end: '9999-12-31',
+    });
+  });
+
+  it('thisMonth / lastMonth resolve to the correct calendar bounds', () => {
+    expect(getAdminDateFilterBounds({ mode: 'thisMonth' }, anchor)).toEqual({ start: '2026-10-01', end: '2026-10-31' });
+    expect(getAdminDateFilterBounds({ mode: 'lastMonth' }, anchor)).toEqual({ start: '2026-09-01', end: '2026-09-30' });
+  });
+
+  it('lastMonth correctly rolls back across a year boundary', () => {
+    const jan = new Date(2027, 0, 10); // 2027-01-10
+    expect(getAdminDateFilterBounds({ mode: 'lastMonth' }, jan)).toEqual({ start: '2026-12-01', end: '2026-12-31' });
+  });
+
+  it('allTime is wide enough to include any real date', () => {
+    const bounds = getAdminDateFilterBounds({ mode: 'allTime' }, anchor);
+    expect(bounds.start <= '2020-01-01').toBe(true);
+    expect(bounds.end >= '2030-01-01').toBe(true);
+  });
+
+  it('month resolves an arbitrary YYYY-MM to that month\'s full bounds, older data fully reachable', () => {
+    expect(getAdminDateFilterBounds({ mode: 'month', month: '2025-02' }, anchor)).toEqual({ start: '2025-02-01', end: '2025-02-28' });
+  });
+
+  it('month falls back to the current month if no/invalid month string is given', () => {
+    expect(getAdminDateFilterBounds({ mode: 'month', month: 'garbage' }, anchor)).toEqual({ start: '2026-10-01', end: '2026-10-31' });
+  });
+
+  it('range respects explicit from/to, and leaves either side unbounded if omitted', () => {
+    expect(getAdminDateFilterBounds({ mode: 'range', rangeFrom: '2026-05-01', rangeTo: '2026-05-31' }, anchor))
+      .toEqual({ start: '2026-05-01', end: '2026-05-31' });
+    const openEnded = getAdminDateFilterBounds({ mode: 'range', rangeFrom: '2026-05-01' }, anchor);
+    expect(openEnded.start).toBe('2026-05-01');
+    expect(openEnded.end >= '2030-01-01').toBe(true);
+  });
+});
+
+describe('computeGuidePaymentSummary', () => {
+  const monthly = (month: string, paid: boolean, paymentDate: string | null = null): GuideMonthlyRow => ({
+    id: `m-${month}`, guide_id: 'g1', guide_name: 'Maria', month,
+    tours_completed: 1, amount_owed: 100, invoice_received: null, invoice_amount: null, tva: null,
+    difference: null, payment_sent: paid, payment_date: paymentDate,
+  });
+
+  it('reports the latest PAID month and the latest payment date, ignoring unpaid rows entirely', () => {
+    const rows = [
+      monthly('2026-06', true, '2026-07-02'),
+      monthly('2026-07', true, '2026-08-01'),
+      monthly('2026-08', false), // unpaid — never counted toward either figure
+    ];
+    expect(computeGuidePaymentSummary(rows)).toEqual({ paidThroughMonth: '2026-07', lastPaymentDate: '2026-08-01' });
+  });
+
+  it('returns nulls when nothing has ever been marked paid', () => {
+    const rows = [monthly('2026-06', false), monthly('2026-07', false)];
+    expect(computeGuidePaymentSummary(rows)).toEqual({ paidThroughMonth: null, lastPaymentDate: null });
+  });
+
+  it('is unaffected by row order — always finds the true latest, not just the last one seen', () => {
+    const rows = [
+      monthly('2026-09', true, '2026-10-01'),
+      monthly('2026-06', true, '2026-07-01'),
+      monthly('2026-08', true, '2026-09-01'),
+    ];
+    expect(computeGuidePaymentSummary(rows)).toEqual({ paidThroughMonth: '2026-09', lastPaymentDate: '2026-10-01' });
+  });
+
+  it('handles an empty monthly history', () => {
+    expect(computeGuidePaymentSummary([])).toEqual({ paidThroughMonth: null, lastPaymentDate: null });
+  });
+});
+
+describe('filterMonthlyRowsByDateRange', () => {
+  const row = (month: string | null) => ({ id: month || 'x', month });
+
+  it('keeps only rows whose month falls within the bounds (inclusive)', () => {
+    const rows = [row('2026-09'), row('2026-10'), row('2026-11'), row('2027-01')];
+    const result = filterMonthlyRowsByDateRange(rows, { start: '2026-10-01', end: '2026-12-31' });
+    expect(result.map((r) => r.month)).toEqual(['2026-10', '2026-11']);
+  });
+
+  it('drops pre-October "Unlinked" history under the From-Oct-1-2026 default bounds', () => {
+    const rows = [row('2026-08'), row('2026-09'), row('2026-10'), row('2026-12')];
+    const bounds = getAdminDateFilterBounds({ mode: 'fromDefaultStart' }, new Date(2026, 11, 15));
+    const result = filterMonthlyRowsByDateRange(rows, bounds);
+    expect(result.map((r) => r.month)).toEqual(['2026-10', '2026-12']);
+  });
+
+  it('keeps everything under All Time bounds', () => {
+    const rows = [row('2019-01'), row('2026-10'), row('2099-12')];
+    const bounds = getAdminDateFilterBounds({ mode: 'allTime' });
+    expect(filterMonthlyRowsByDateRange(rows, bounds)).toHaveLength(3);
+  });
+
+  it('excludes rows with no month — never assumed to be in-range', () => {
+    const rows = [row(null), row('2026-10')];
+    const bounds = getAdminDateFilterBounds({ mode: 'allTime' });
+    expect(filterMonthlyRowsByDateRange(rows, bounds).map((r) => r.month)).toEqual(['2026-10']);
+  });
+});
+
+describe('matchesAdminStatusFilter', () => {
+  const stats = (overrides: Partial<{ toursDone: number; toursUpcoming: number; paidAmount: number; pendingAmount: number }> = {}) => ({
+    toursDone: 0, toursUpcoming: 0, paidAmount: 0, pendingAmount: 0, ...overrides,
+  });
+
+  it('"all" always matches, even a guide with nothing in range', () => {
+    expect(matchesAdminStatusFilter(stats(), 'all')).toBe(true);
+  });
+
+  it('"upcoming" matches only rows with upcoming tours', () => {
+    expect(matchesAdminStatusFilter(stats({ toursUpcoming: 1 }), 'upcoming')).toBe(true);
+    expect(matchesAdminStatusFilter(stats({ toursDone: 3 }), 'upcoming')).toBe(false);
+  });
+
+  it('"done" matches only rows with completed tours', () => {
+    expect(matchesAdminStatusFilter(stats({ toursDone: 2 }), 'done')).toBe(true);
+    expect(matchesAdminStatusFilter(stats({ toursUpcoming: 2 }), 'done')).toBe(false);
+  });
+
+  it('"paid" matches only rows with paid earnings', () => {
+    expect(matchesAdminStatusFilter(stats({ paidAmount: 50 }), 'paid')).toBe(true);
+    expect(matchesAdminStatusFilter(stats({ pendingAmount: 50 }), 'paid')).toBe(false);
+  });
+
+  it('"pending" matches only rows with pending earnings', () => {
+    expect(matchesAdminStatusFilter(stats({ pendingAmount: 50 }), 'pending')).toBe(true);
+    expect(matchesAdminStatusFilter(stats({ paidAmount: 50 }), 'pending')).toBe(false);
+  });
+});
+
+describe('isAssignmentDone — ONE definition of done/upcoming, used everywhere', () => {
+  const today = '2026-10-15';
+
+  it('a strictly past date is always done, checkin signal or not', () => {
+    expect(isAssignmentDone(assignment({ id: 'a1', travel_date: '2026-10-14' }), today)).toBe(true);
+    expect(isAssignmentDone(assignment({ id: 'a2', travel_date: '2026-10-14', guideCheckinTime: null }), today)).toBe(true);
+  });
+
+  it('a strictly future date is always upcoming, even if (erroneously) checked in', () => {
+    expect(isAssignmentDone(assignment({ id: 'a1', travel_date: '2026-10-16' }), today)).toBe(false);
+    expect(isAssignmentDone(assignment({ id: 'a2', travel_date: '2026-10-16', guideCheckinTime: '2026-10-16T09:00:00Z' }), today)).toBe(false);
+  });
+
+  it('dated today with NO checkin signal available falls back to the plain date rule (done)', () => {
+    expect(isAssignmentDone(assignment({ id: 'a1', travel_date: today }), today)).toBe(true);
+  });
+
+  it('dated today WITH a checkin signal available: done only once actually checked in', () => {
+    expect(isAssignmentDone(assignment({ id: 'a1', travel_date: today, guideCheckinTime: null }), today)).toBe(false);
+    expect(isAssignmentDone(assignment({ id: 'a2', travel_date: today, guideCheckinTime: '2026-10-15T08:30:00Z' }), today)).toBe(true);
+  });
+
+  it('a row with no travel_date at all is never done', () => {
+    expect(isAssignmentDone(assignment({ id: 'a1', travel_date: null }), today)).toBe(false);
+  });
+
+  it('is applied identically regardless of which date-filter window the row was selected under — the SAME row, same todayStr, always classifies the same way', () => {
+    const futureRow = assignment({ id: 'a1', travel_date: '2026-11-01' });
+    // Simulates the exact reported inconsistency: the row survives both a "This Month"-shaped
+    // window (end = end of month) and a "From Oct 1"-shaped window (end = far future) — its
+    // done/upcoming classification must not depend on which window let it through.
+    expect(isAssignmentDone(futureRow, today)).toBe(false);
+    expect(isAssignmentDone(futureRow, today)).toBe(isAssignmentDone(futureRow, today));
+  });
+});
+
+describe('filterAssignmentsByStatus', () => {
+  const today = '2026-10-15';
+  const rows = [
+    assignment({ id: 'done-paid', travel_date: '2026-10-10', calculated_pay: 60, is_paid: true }),
+    assignment({ id: 'upcoming-1', travel_date: '2026-10-20', calculated_pay: 100, is_paid: false }),
+    assignment({ id: 'upcoming-2', travel_date: '2026-10-25', calculated_pay: 100, is_paid: false }),
+  ];
+
+  it('"all" returns every row unchanged', () => {
+    expect(filterAssignmentsByStatus(rows, 'all', today)).toHaveLength(3);
+  });
+
+  it('"upcoming" returns only not-yet-done rows', () => {
+    const result = filterAssignmentsByStatus(rows, 'upcoming', today);
+    expect(result.map((r) => r.id)).toEqual(['upcoming-1', 'upcoming-2']);
+  });
+
+  it('"done" returns only already-happened rows', () => {
+    const result = filterAssignmentsByStatus(rows, 'done', today);
+    expect(result.map((r) => r.id)).toEqual(['done-paid']);
+  });
+
+  it('"paid" / "pending" split purely on is_paid', () => {
+    expect(filterAssignmentsByStatus(rows, 'paid', today).map((r) => r.id)).toEqual(['done-paid']);
+    expect(filterAssignmentsByStatus(rows, 'pending', today).map((r) => r.id)).toEqual(['upcoming-1', 'upcoming-2']);
+  });
+
+  it('the top-totals example from the bug report: done + upcoming earnings sum correctly with no double count', () => {
+    const doneTotal = filterAssignmentsByStatus(rows, 'done', today).reduce((s, r) => s + assignmentEarned(r), 0);
+    const upcomingTotal = filterAssignmentsByStatus(rows, 'upcoming', today).reduce((s, r) => s + assignmentEarned(r), 0);
+    const allTotal = filterAssignmentsByStatus(rows, 'all', today).reduce((s, r) => s + assignmentEarned(r), 0);
+    expect(doneTotal).toBe(60);
+    expect(upcomingTotal).toBe(200);
+    expect(doneTotal + upcomingTotal).toBe(allTotal); // 60 + 200 = 260 — additive, not a double count
+  });
+});
+
+describe('filterMonthlyRowsByStatus', () => {
+  const rows = [
+    { id: 'm1', payment_sent: true },
+    { id: 'm2', payment_sent: false },
+    { id: 'm3', payment_sent: null },
+  ];
+
+  it('"all" and "done" keep every row — imported monthly history is always already-completed work', () => {
+    expect(filterMonthlyRowsByStatus(rows, 'all')).toHaveLength(3);
+    expect(filterMonthlyRowsByStatus(rows, 'done')).toHaveLength(3);
+  });
+
+  it('"upcoming" always returns nothing — virtual rows can never be upcoming', () => {
+    expect(filterMonthlyRowsByStatus(rows, 'upcoming')).toEqual([]);
+  });
+
+  it('"paid" / "pending" split on payment_sent, treating null as unpaid', () => {
+    expect(filterMonthlyRowsByStatus(rows, 'paid').map((r) => r.id)).toEqual(['m1']);
+    expect(filterMonthlyRowsByStatus(rows, 'pending').map((r) => r.id)).toEqual(['m2', 'm3']);
+  });
+});
+
+describe('dedupeAssignmentsAcrossSources — a tour represented in both the legacy import and the session-pay system counts once', () => {
+  it('drops the imported row when a session-based row matches on guide_id + travel_date + travel_time', () => {
+    const imported = [
+      assignment({ id: 'imp-1', guide_id: 'g1', travel_date: '2026-10-20', travel_time: '09:00', calculated_pay: 0 }),
+    ];
+    const sessionBased = [
+      assignment({ id: 'session:s1:g1', guide_id: 'g1', travel_date: '2026-10-20', travel_time: '09:00', calculated_pay: 120 }),
+    ];
+    const result = dedupeAssignmentsAcrossSources(imported, sessionBased);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('session:s1:g1');
+    expect(assignmentEarned(result[0])).toBe(120); // counted once, via the pay-authoritative session row
+  });
+
+  it('keeps BOTH rows when they are genuinely different tours (different time) for the same guide/day', () => {
+    const imported = [
+      assignment({ id: 'imp-1', guide_id: 'g1', travel_date: '2026-10-20', travel_time: '09:00', calculated_pay: 60 }),
+    ];
+    const sessionBased = [
+      assignment({ id: 'session:s1:g1', guide_id: 'g1', travel_date: '2026-10-20', travel_time: '14:00', calculated_pay: 80 }),
+    ];
+    const result = dedupeAssignmentsAcrossSources(imported, sessionBased);
+    expect(result).toHaveLength(2);
+    expect(result.reduce((s, r) => s + assignmentEarned(r), 0)).toBe(140);
+  });
+
+  it('models a transfer correctly: after reassign_my_slot moves the session_guides row to the new guide, the tour counts once, under the new guide only', () => {
+    // Pre-transfer state is never observed here — guideTransfer.ts's own doc comment confirms
+    // reassign_my_slot UPDATES the existing session_guides row's guide_id rather than inserting a
+    // second one, so only the POST-transfer row (now owned by guideB) ever exists.
+    const sessionBased = [
+      assignment({ id: 'session:s1:guideB', guide_id: 'guideB', travel_date: '2026-10-20', travel_time: '09:00', calculated_pay: 100 }),
+    ];
+    const result = dedupeAssignmentsAcrossSources([], sessionBased);
+    expect(result).toHaveLength(1);
+    expect(result[0].guide_id).toBe('guideB');
+    const total = result.reduce((s, r) => s + assignmentEarned(r), 0);
+    expect(total).toBe(100); // counted once, system-wide — not 200 across two guides
+  });
+
+  it('passes through unrelated imported rows (no guide_id/travel_date match) untouched', () => {
+    const imported = [assignment({ id: 'imp-1', guide_id: null, travel_date: null, calculated_pay: 10 })];
+    const result = dedupeAssignmentsAcrossSources(imported, []);
+    expect(result).toEqual(imported);
+  });
+});
+
+const review = (overrides: Partial<GuideReviewRow> & { id: string }): GuideReviewRow => ({
+  guide_id: 'g1',
+  stars: 5,
+  reviewer_name: null,
+  comment: null,
+  platform: null,
+  review_date: '2026-10-15',
+  ...overrides,
+});
+
+describe('reviewPoints — the fixed points-per-star scale', () => {
+  it('matches the exact scale: 5★=+1.0, 4★=+0.5, 3★=−0.5, 2★=−1.0, 1★=−1.0', () => {
+    expect(reviewPoints(5)).toBe(1.0);
+    expect(reviewPoints(4)).toBe(0.5);
+    expect(reviewPoints(3)).toBe(-0.5);
+    expect(reviewPoints(2)).toBe(-1.0);
+    expect(reviewPoints(1)).toBe(-1.0);
+  });
+
+  it('1★ and 2★ penalize equally hard', () => {
+    expect(reviewPoints(1)).toBe(reviewPoints(2));
+  });
+
+  it('an unexpected star value scores 0 rather than throwing', () => {
+    expect(reviewPoints(0)).toBe(0);
+    expect(reviewPoints(6)).toBe(0);
+  });
+});
+
+describe('computeGuideReviewScore', () => {
+  it('zero guided bookings → score is null ("—"), never a divide-by-zero', () => {
+    const result = computeGuideReviewScore([review({ id: 'r1', stars: 5 })], 0);
+    expect(result).toEqual({ score: null, reviewCount: 1, bookingsGuided: 0 });
+  });
+
+  it('zero guided bookings with zero reviews too → still null, not NaN', () => {
+    expect(computeGuideReviewScore([], 0)).toEqual({ score: null, reviewCount: 0, bookingsGuided: 0 });
+  });
+
+  it('a guided booking with NO review dilutes the denominator without adding any points', () => {
+    // 1 reviewed 5★ tour + 2 unreviewed tours = 3 guided bookings, but only 1 review.
+    const result = computeGuideReviewScore([review({ id: 'r1', stars: 5 })], 3);
+    expect(result.reviewCount).toBe(1);
+    expect(result.bookingsGuided).toBe(3);
+    expect(result.score).toBeCloseTo(1.0 / 3, 10);
+  });
+
+  it('worked example from the spec: a mix of reviews over a guide\'s guided bookings', () => {
+    // 3×5★ (+3.0), 2×4★ (+1.0), 1×3★ (−0.5), 2×2★ (−2.0) = +1.5 points, over 20 bookings guided.
+    const reviews = [
+      review({ id: 'r1', stars: 5 }), review({ id: 'r2', stars: 5 }), review({ id: 'r3', stars: 5 }),
+      review({ id: 'r4', stars: 4 }), review({ id: 'r5', stars: 4 }),
+      review({ id: 'r6', stars: 3 }),
+      review({ id: 'r7', stars: 2 }), review({ id: 'r8', stars: 2 }),
+    ];
+    const result = computeGuideReviewScore(reviews, 20);
+    expect(result.reviewCount).toBe(8);
+    expect(result.bookingsGuided).toBe(20);
+    expect(result.score).toBeCloseTo(1.5 / 20, 10); // 0.075
+  });
+
+  it('an all-5★ guide with every booking reviewed scores exactly +1.0', () => {
+    const reviews = [review({ id: 'r1', stars: 5 }), review({ id: 'r2', stars: 5 })];
+    expect(computeGuideReviewScore(reviews, 2).score).toBe(1.0);
+  });
+});
+
+describe('computeGuidedBookingCounts — the score\'s denominator', () => {
+  it('counts a booking only when checked-in AND allotted to that guide', () => {
+    const checkins = [
+      { booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' },
+      { booking_ref: 'B2', status: 'no_show', travel_date: '2026-10-05' }, // not checked in — excluded
+    ];
+    const sessionBookings = [
+      { booking_ref: 'B1', allotted_guide_id: 'g1' },
+      { booking_ref: 'B2', allotted_guide_id: 'g1' },
+    ];
+    const counts = computeGuidedBookingCounts(checkins, sessionBookings, '2026-10-01');
+    expect(counts.get('g1')).toBe(1);
+  });
+
+  it('excludes checked-in bookings dated before the since-date floor', () => {
+    const checkins = [
+      { booking_ref: 'B1', status: 'checked_in', travel_date: '2026-09-20' }, // before Oct 1
+      { booking_ref: 'B2', status: 'checked_in', travel_date: '2026-10-05' },
+    ];
+    const sessionBookings = [
+      { booking_ref: 'B1', allotted_guide_id: 'g1' },
+      { booking_ref: 'B2', allotted_guide_id: 'g1' },
+    ];
+    expect(computeGuidedBookingCounts(checkins, sessionBookings, '2026-10-01').get('g1')).toBe(1);
+  });
+
+  it('attributes a reassigned booking to whichever guide currently holds it, never both (no double-counting on transfer)', () => {
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    // Post-reassignment state: ONE session_bookings row, now allotted to guideB.
+    const sessionBookings = [{ booking_ref: 'B1', allotted_guide_id: 'guideB' }];
+    const counts = computeGuidedBookingCounts(checkins, sessionBookings, '2026-10-01');
+    expect(counts.get('guideA')).toBeUndefined();
+    expect(counts.get('guideB')).toBe(1);
+  });
+
+  it('counts bookings, not pax and not tours — a booking appearing once counts once regardless of how many session_bookings rows reference it', () => {
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    const sessionBookings = [
+      { booking_ref: 'B1', allotted_guide_id: 'g1' },
+      { booking_ref: 'B1', allotted_guide_id: 'g1' }, // defensive duplicate — still counts once
+    ];
+    expect(computeGuidedBookingCounts(checkins, sessionBookings, '2026-10-01').get('g1')).toBe(1);
+  });
+
+  it('a booking with no allotted guide, or not checked in at all, contributes to no guide\'s count', () => {
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    const sessionBookings = [{ booking_ref: 'B1', allotted_guide_id: null }];
+    expect(computeGuidedBookingCounts(checkins, sessionBookings, '2026-10-01').size).toBe(0);
+  });
+});
+
+describe('computeGuideOverviewRows — review score wired through (replaces avgRating/reviewRatePct)', () => {
+  const guides = [{ id: 'g1', name: 'Maria', guide_number: 'SZT-2026-1' }];
+
+  it('a real guide\'s row carries reviewScore/reviewCount/bookingsGuided from the supplied reviews + counts', () => {
+    const reviews = [review({ id: 'r1', guide_id: 'g1', stars: 5 }), review({ id: 'r2', guide_id: 'g1', stars: 3 })];
+    const guidedCounts = new Map([['g1', 10]]);
+    const rows = computeGuideOverviewRows(guides, [], reviews, guidedCounts, [], '2026-10-15');
+    const row = rows.find((r) => r.id === 'g1')!;
+    expect(row.reviewCount).toBe(2);
+    expect(row.bookingsGuided).toBe(10);
+    expect(row.reviewScore).toBeCloseTo((1.0 - 0.5) / 10, 10);
+  });
+
+  it('a virtual (unlinked) row always has a null review score — reviews require a real guide_id', () => {
+    const monthlyRows = [{
+      id: 'm1', guide_id: null, guide_name: 'Old Guide', month: '2026-05', tours_completed: 3,
+      amount_owed: 150, invoice_received: null, invoice_amount: null, tva: null, difference: null,
+      payment_sent: true, payment_date: '2026-06-01',
+    }];
+    const rows = computeGuideOverviewRows([], [], [], new Map(), monthlyRows, '2026-10-15');
+    const virtual = rows.find((r) => r.kind === 'virtual')!;
+    expect(virtual.reviewScore).toBeNull();
+    expect(virtual.reviewCount).toBe(0);
+    expect(virtual.bookingsGuided).toBe(0);
+  });
+
+  it('a guide with zero guided bookings shows reviewScore null even with reviews on file', () => {
+    const reviews = [review({ id: 'r1', guide_id: 'g1', stars: 5 })];
+    const rows = computeGuideOverviewRows(guides, [], reviews, new Map(), [], '2026-10-15');
+    expect(rows.find((r) => r.id === 'g1')!.reviewScore).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { logChange } from '@/lib/changeLog';
-import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight, Search, Upload, Copy, RefreshCw, Link as LinkIcon, Star } from 'lucide-react';
+import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight, ChevronUp, ChevronDown, Search, Upload, Copy, RefreshCw, Link as LinkIcon, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import { computeRatingStats, type GuideRatingRow } from '@/lib/guidePerformance';
 import { verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, type RatingEditPayload } from '@/lib/guideRatingActions';
@@ -55,6 +55,28 @@ export default function GuidesPage() {
   const [existingOptions, setExistingOptions] = useState<string[]>([]);
   const [ratings, setRatings] = useState<RatingRow[]>([]);
   const [reviewsGuide, setReviewsGuide] = useState<Guide | null>(null);
+  // Sortable columns — defaults to guide number ascending. `localeCompare(..., { numeric: true })`
+  // sorts "SZT-2026-2" before "SZT-2026-10" correctly (numeric chunks compared as numbers), not
+  // "10" before "2" the way plain string comparison would if numbers aren't all zero-padded the
+  // same width.
+  const [sortKey, setSortKey] = useState<'guide_number' | 'name'>('guide_number');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+
+  const toggleSort = (key: 'guide_number' | 'name') => {
+    if (sortKey === key) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const sortedGuides = useMemo(() => {
+    const sorted = [...guides].sort((a, b) =>
+      (a[sortKey] || '').localeCompare(b[sortKey] || '', undefined, { numeric: true, sensitivity: 'base' })
+    );
+    return sortDir === 'asc' ? sorted : sorted.reverse();
+  }, [guides, sortKey, sortDir]);
 
   const [form, setForm] = useState({
     guideNumber: '',
@@ -629,8 +651,26 @@ export default function GuidesPage() {
               <table className="w-full text-left text-sm min-w-[900px]">
                 <thead className="bg-muted text-xs text-muted-foreground uppercase tracking-widest font-bold">
                   <tr>
-                    <th className="px-6 py-4">Guide #</th>
-                    <th className="px-6 py-4">Name</th>
+                    <th className="px-6 py-4">
+                      <button
+                        onClick={() => toggleSort('guide_number')}
+                        className={`flex items-center gap-1 hover:text-foreground transition-colors ${sortKey === 'guide_number' ? 'text-gold' : ''}`}
+                        title="Sort by guide number"
+                      >
+                        Guide #
+                        {sortKey === 'guide_number' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronDown size={12} className="opacity-30" />}
+                      </button>
+                    </th>
+                    <th className="px-6 py-4">
+                      <button
+                        onClick={() => toggleSort('name')}
+                        className={`flex items-center gap-1 hover:text-foreground transition-colors ${sortKey === 'name' ? 'text-gold' : ''}`}
+                        title="Sort by name"
+                      >
+                        Name
+                        {sortKey === 'name' ? (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronDown size={12} className="opacity-30" />}
+                      </button>
+                    </th>
                     <th className="px-6 py-4">WhatsApp / Phone</th>
                     <th className="px-6 py-4">Base Rate</th>
                     <th className="px-6 py-4">Status</th>
@@ -639,7 +679,7 @@ export default function GuidesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {guides.map(g => (
+                  {sortedGuides.map(g => (
                     <tr key={g.id} className="hover:bg-muted transition-colors group">
                       <td className="px-6 py-4 font-mono font-bold text-gold">{g.guide_number}</td>
                       <td className="px-6 py-4">

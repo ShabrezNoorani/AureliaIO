@@ -2,6 +2,10 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { Star } from 'lucide-react';
+import {
+  computeGuideReviewScore, computeGuidedBookingCounts, ADMIN_DEFAULT_FILTER_START,
+  type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding,
+} from '@/lib/guidePerformance';
 
 interface RatingRow {
   id: string;
@@ -26,7 +30,7 @@ function StarRow({ count, size = 14 }: { count: number; size?: number }) {
 }
 
 export default function GuideReviews() {
-  const { guideId } = useAuth();
+  const { guideId, guideUserId } = useAuth();
   const [ratings, setRatings] = useState<RatingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -36,6 +40,12 @@ export default function GuideReviews() {
   const [formQuantity, setFormQuantity] = useState(1);
   const [formSource, setFormSource] = useState('');
   const [formNote, setFormNote] = useState('');
+
+  // Individually admin-entered reviews about THIS guide only (guide_reviews) — read-only here; a
+  // guide never writes to this table, only the owner does (see guideReviewActions.ts). A
+  // completely separate, newer concept from the self-reported guide_ratings log below.
+  const [myReviews, setMyReviews] = useState<GuideReviewRow[]>([]);
+  const [myReviewsLoading, setMyReviewsLoading] = useState(true);
 
   const loadRatings = async () => {
     if (!guideId) return;
@@ -49,9 +59,38 @@ export default function GuideReviews() {
     setLoading(false);
   };
 
+  // Own score = sum(review points since Oct 1 2026) ÷ own bookings guided since Oct 1 2026 — same
+  // computeGuideReviewScore/computeGuidedBookingCounts the admin dashboard uses, just scoped to
+  // this one guide (session_bookings queried pre-filtered to allotted_guide_id = this guide, so
+  // no other guide's booking_refs are ever fetched here).
+  const [myGuidedBookingCount, setMyGuidedBookingCount] = useState(0);
+  const loadMyReviewsAndScore = async () => {
+    if (!guideId || !guideUserId) return;
+    setMyReviewsLoading(true);
+    const [reviewsRes, sbRes, checkinsRes] = await Promise.all([
+      supabase.from('guide_reviews').select('*').eq('guide_id', guideId),
+      supabase.from('session_bookings').select('booking_ref, allotted_guide_id')
+        .eq('user_id', guideUserId).eq('allotted_guide_id', guideId),
+      supabase.from('checkins').select('booking_ref, status, travel_date')
+        .eq('user_id', guideUserId).eq('status', 'checked_in').gte('travel_date', ADMIN_DEFAULT_FILTER_START),
+    ]);
+    const sessionBookings: SessionBookingForGuiding[] = sbRes.data || [];
+    const checkins: CheckinForGuiding[] = checkinsRes.data || [];
+    const counts = computeGuidedBookingCounts(checkins, sessionBookings, ADMIN_DEFAULT_FILTER_START);
+    setMyGuidedBookingCount(counts.get(guideId) || 0);
+    setMyReviews(reviewsRes.data || []);
+    setMyReviewsLoading(false);
+  };
+
+  const myReviewScore = useMemo(() => {
+    const sinceOct1 = myReviews.filter(r => r.review_date >= ADMIN_DEFAULT_FILTER_START);
+    return computeGuideReviewScore(sinceOct1, myGuidedBookingCount);
+  }, [myReviews, myGuidedBookingCount]);
+
   useEffect(() => {
     loadRatings();
-  }, [guideId]);
+    loadMyReviewsAndScore();
+  }, [guideId, guideUserId]);
 
   const { verifiedAvg, verifiedCount, pendingCount } = useMemo(() => {
     const verified = ratings.filter(r => r.verified);
@@ -96,6 +135,54 @@ export default function GuideReviews() {
         <h1 className="text-3xl font-extrabold tracking-tight mb-2">My Reviews</h1>
         <p className="text-muted-foreground text-sm">Log reviews you've received and track verification.</p>
       </div>
+
+      <section className="space-y-3">
+        <h2 className="text-xs font-bold text-gold uppercase tracking-widest">My Score · Since Oct 1, 2026</h2>
+        {myReviewsLoading ? (
+          <div className="flex justify-center p-8"><div className="w-6 h-6 rounded-full border-2 border-gold border-t-transparent animate-spin" /></div>
+        ) : (
+          <>
+            <div className="aurelia-card p-5 border-l-[3px] border-l-gold flex flex-wrap items-center gap-6">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Score</p>
+                <span className={`text-3xl font-extrabold ${myReviewScore.score != null ? (myReviewScore.score >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
+                  {myReviewScore.score != null ? `${myReviewScore.score >= 0 ? '+' : ''}${myReviewScore.score.toFixed(2)}` : '—'}
+                </span>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Reviews</p>
+                <span className="text-3xl font-extrabold">{myReviewScore.reviewCount}</span>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Bookings Guided</p>
+                <span className="text-3xl font-extrabold">{myReviewScore.bookingsGuided}</span>
+              </div>
+            </div>
+            {myReviews.length > 0 && (
+              <div className="space-y-2">
+                {myReviews
+                  .slice()
+                  .sort((a, b) => (b.review_date || '').localeCompare(a.review_date || ''))
+                  .map(r => (
+                    <div key={r.id} className="aurelia-card p-4 flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <StarRow count={r.stars} size={12} />
+                          {r.platform && (
+                            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">{r.platform}</span>
+                          )}
+                          <span className="text-[11px] text-muted-foreground font-mono">{r.review_date}</span>
+                        </div>
+                        {r.reviewer_name && <p className="text-xs font-semibold text-foreground/80">{r.reviewer_name}</p>}
+                        {r.comment && <p className="text-xs text-muted-foreground mt-0.5">{r.comment}</p>}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </>
+        )}
+      </section>
 
       <div className="grid grid-cols-2 gap-4">
         <div className="aurelia-card p-5 border-l-[3px] border-l-gold">

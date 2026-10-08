@@ -648,6 +648,47 @@ export type Database = {
           },
         ]
       }
+      guide_reviews: {
+        Row: {
+          comment: string | null
+          guide_id: string
+          id: string
+          platform: string | null
+          review_date: string
+          reviewer_name: string | null
+          stars: number
+          user_id: string
+        }
+        Insert: {
+          comment?: string | null
+          guide_id: string
+          id?: string
+          platform?: string | null
+          review_date: string
+          reviewer_name?: string | null
+          stars: number
+          user_id: string
+        }
+        Update: {
+          comment?: string | null
+          guide_id?: string
+          id?: string
+          platform?: string | null
+          review_date?: string
+          reviewer_name?: string | null
+          stars?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "guide_reviews_guide_id_fkey"
+            columns: ["guide_id"]
+            isOneToOne: false
+            referencedRelation: "guides"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       guides: {
         Row: {
           account_holder: string | null
