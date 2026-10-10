@@ -38,25 +38,70 @@ const OWNER_GUIDE_ROW = (data: NonNullable<GuideRowLookupResult>): RoleResolutio
 const RESOLVED_OWNER: RoleResolution = { role: 'owner', guideId: null, guideName: null, guideUserId: null };
 const FAILED_CLOSED_GUIDE: RoleResolution = { role: 'guide', guideId: null, guideName: null, guideUserId: null };
 
+export interface DirectLookupRetryPolicy {
+  /** Timeout for the very first attempt — generous, since this runs right after login/bootstrap
+      on a connection that may have no warm keep-alive yet (the slowest case in practice). */
+  firstTimeoutMs: number;
+  /** Timeout for each retry attempt, AFTER the first has already timed out/errored — the
+      connection has had a moment to settle by then, so this can be tighter. */
+  retryTimeoutMs: number;
+  /** How many fresh retry attempts to make after the first, before giving up. "Once or twice" —
+      a genuinely dead connection shouldn't retry forever, but ordinary cold-start latency
+      deserves more than a single shot. */
+  maxRetries: number;
+}
+
+/** The generous policy for the FIRST resolution after login/bootstrap: up to 3 attempts
+    (10s + 6s + 6s = 22s worst case) before concluding anything short of a definitive result.
+    Callers resolving again later (e.g. an explicit retry once already on the fail-closed screen)
+    should pass a lighter policy — the cold-start cost has already been paid by then. */
+export const DEFAULT_DIRECT_LOOKUP_RETRY_POLICY: DirectLookupRetryPolicy = {
+  firstTimeoutMs: 10000,
+  retryTimeoutMs: 6000,
+  maxRetries: 2,
+};
+
+/** For a LATER, explicit re-resolution attempt (the "Couldn't confirm your account" screen's
+    auto-retry loop, or a user-triggered retry) — a single, moderate-timeout attempt. The cold-
+    start cost the generous policy above exists for has already been paid by the time this runs;
+    stacking a full multi-retry policy on top of an outer retry loop that already fires every few
+    seconds would just compound delay for no benefit. */
+export const RESOLVE_AGAIN_RETRY_POLICY: DirectLookupRetryPolicy = {
+  firstTimeoutMs: 6000,
+  retryTimeoutMs: 6000,
+  maxRetries: 0,
+};
+
 /**
  * The ONLY step that may fail closed to 'guide'. A guide row found → 'guide'. The lookup
  * COMPLETING SUCCESSFULLY with no row → positively confirmed 'owner', unconditionally — nothing
- * downstream (repair_guide_claim) can override this. A thrown error or a timeout on THIS lookup
- * is the one and only path to the fail-closed 'guide' default — not knowing the answer must never
- * resolve to 'owner', but knowing the answer is 'owner' must never be second-guessed by a
- * separate, unrelated step's own unreliability.
+ * downstream (repair_guide_claim) can override this, and no further attempt even runs once this
+ * happens. A thrown error or a TIMEOUT on this lookup is not a definitive result — it's retried,
+ * fresh, up to `policy.maxRetries` more times (each a brand-new call to `lookupGuideRow`, never
+ * re-awaiting the same stuck promise) before falling back to the fail-closed 'guide' default.
+ * Only exhausting every attempt without ever getting a definitive answer reaches that default —
+ * not knowing the answer must never resolve to 'owner', but knowing the answer is 'owner' must
+ * never be second-guessed by a separate, unrelated step's own unreliability (see
+ * resolveRepairUpgrade below), nor by one slow attempt when a retry might simply succeed.
  */
 export async function resolveDirectRole(
   lookupGuideRow: () => PromiseLike<{ data: GuideRowLookupResult; error: unknown }>,
-  timeoutMs: number
+  policy: DirectLookupRetryPolicy = DEFAULT_DIRECT_LOOKUP_RETRY_POLICY
 ): Promise<RoleResolution> {
-  try {
-    const { data, error } = await withTimeout(lookupGuideRow(), timeoutMs);
-    if (error) throw error;
-    return data ? OWNER_GUIDE_ROW(data) : RESOLVED_OWNER;
-  } catch {
-    return FAILED_CLOSED_GUIDE;
+  const totalAttempts = 1 + Math.max(0, policy.maxRetries);
+  for (let attempt = 0; attempt < totalAttempts; attempt++) {
+    const timeoutMs = attempt === 0 ? policy.firstTimeoutMs : policy.retryTimeoutMs;
+    try {
+      const { data, error } = await withTimeout(lookupGuideRow(), timeoutMs);
+      if (error) throw error;
+      return data ? OWNER_GUIDE_ROW(data) : RESOLVED_OWNER;
+    } catch {
+      if (attempt === totalAttempts - 1) return FAILED_CLOSED_GUIDE;
+      // Not the last attempt — fall through and retry with a fresh call, no delay (the point is
+      // to give the connection a second shot promptly, not to wait around).
+    }
   }
+  return FAILED_CLOSED_GUIDE; // unreachable (loop always returns), kept for TS's control-flow analysis
 }
 
 /**

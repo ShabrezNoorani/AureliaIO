@@ -60,11 +60,22 @@ const formatDate = (dateStr: string) =>
   new Date(dateStr).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
 
 export default function GuideHome() {
-  const { guideId, guideName, guideUserId } = useAuth();
+  const { guideId, guideName, guideUserId, retryRoleResolution } = useAuth();
 
   // Leads the dashboard — this guide's own review score, verdict and anonymized rank/top-score.
   // Shared with GuideReviews.tsx via useGuideOwnScore, so the two can never disagree.
   const ownScore = useGuideOwnScore(guideId, guideUserId);
+
+  // Self-heals the "Couldn't confirm your account" fail-closed state (see roleResolution.ts) —
+  // retries role resolution every few seconds without a full reload, so a connection that was
+  // merely slow at login time recovers on its own instead of requiring the guide to act. Stops
+  // the instant guideId actually resolves (the effect itself still runs every render per the
+  // Rules of Hooks; the early-exit is inside it).
+  useEffect(() => {
+    if (guideId && guideUserId) return;
+    const interval = setInterval(() => { retryRoleResolution(); }, 4000);
+    return () => clearInterval(interval);
+  }, [guideId, guideUserId, retryRoleResolution]);
 
   const [sessionGuides, setSessionGuides] = useState<SessionGuideRow[]>([]);
   const [sessions, setSessions] = useState<TourSession[]>([]);
@@ -324,11 +335,17 @@ export default function GuideHome() {
   if (!guideId || !guideUserId) {
     return (
       <div className="p-4 md:p-8 pb-32 max-w-3xl mx-auto flex flex-col items-center justify-center min-h-[60vh] text-center gap-3 animate-fade-in">
-        <div className="text-5xl">🔄</div>
+        <div className="w-10 h-10 rounded-full border-2 border-gold border-t-transparent animate-spin" />
         <h2 className="text-xl font-bold">Couldn't confirm your account</h2>
         <p className="text-muted-foreground text-sm max-w-sm">
-          Pull down to refresh, or tap the refresh button, to try again.
+          This usually clears up on its own in a few seconds — retrying automatically. Pull down to refresh if it takes longer.
         </p>
+        <button
+          onClick={() => retryRoleResolution()}
+          className="mt-2 text-xs font-bold uppercase tracking-widest text-gold border border-gold/30 rounded-xl px-4 py-2 hover:bg-gold/10 transition-colors"
+        >
+          Try again now
+        </button>
       </div>
     );
   }

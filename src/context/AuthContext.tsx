@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { resolveDirectRole, resolveRepairUpgrade } from '@/lib/roleResolution';
+import { resolveDirectRole, resolveRepairUpgrade, RESOLVE_AGAIN_RETRY_POLICY, type RoleResolution } from '@/lib/roleResolution';
 
 export interface Profile {
   id: string;
@@ -37,6 +37,12 @@ interface AuthContextType {
   // the root cause of a guide occasionally rendering the owner shell.
   loading: boolean;
   refreshProfile: () => Promise<void>;
+  // Re-attempts JUST the direct guide-row lookup (lighter than the full fetchRole — see its own
+  // doc comment), updating role/guideId in place with no `loading` flash. Exposed so a stuck
+  // fail-closed screen (role resolved to 'guide' with no guideId — see roleResolution.ts) can
+  // self-heal on its own, either via its own auto-retry interval or an explicit retry action,
+  // without requiring a full page reload.
+  retryRoleResolution: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<{ error?: string }>;
   signOut: () => Promise<void>;
 }
@@ -51,6 +57,7 @@ const AuthContext = createContext<AuthContextType>({
   guideUserId: null,
   loading: true,
   refreshProfile: async () => {},
+  retryRoleResolution: async () => {},
   signIn: async () => ({}),
   signOut: async () => {},
 });
@@ -142,6 +149,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // SAME timeout; a slow repair step on a cold connection could fail the whole thing closed to
   // 'guide', misclassifying a genuine owner. Now repair only ever runs AFTER 'owner' is already
   // the resolved answer, as a non-blocking, best-effort UPGRADE that can never undo it.
+  // Applies a resolved role to state, guarded against a stale result landing after a different
+  // user has since signed in (hydratedUserIdRef is bumped the instant a new hydrate starts — see
+  // signIn/bootstrapSession/onAuthStateChange below) or after unmount.
+  const applyRoleResolution = useCallback((userId: string, resolved: RoleResolution) => {
+    if (!mountedRef.current || hydratedUserIdRef.current !== userId) return;
+    setRole(resolved.role);
+    setGuideId(resolved.guideId);
+    setGuideName(resolved.guideName);
+    setGuideUserId(resolved.guideUserId);
+  }, []);
+
   const fetchRole = useCallback(async (userId: string) => {
     const lookupGuideRow = () => supabase
       .from('guides')
@@ -150,17 +168,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .neq('user_id', userId)
       .maybeSingle();
 
-    // A more generous budget than the old shared 3s — this is now the ONLY lookup gating
-    // hydrateUser/loading, so widening it directly reduces how often ordinary first-load latency
-    // (right after signInWithPassword's own round-trip, on connections with no warm keep-alive
-    // yet) trips the fail-closed default for a genuine owner.
-    const resolved = await resolveDirectRole(lookupGuideRow, 6000);
+    // Generous, multi-attempt policy — this is the FIRST resolution after login/bootstrap, when
+    // the connection is coldest (right after signInWithPassword's own round-trip, no warm
+    // keep-alive yet) and therefore slowest. A timeout or a thrown error on any one attempt is
+    // retried FRESH (a brand-new call, never re-awaiting the same stuck promise) before falling
+    // back to the fail-closed 'guide' default — see DEFAULT_DIRECT_LOOKUP_RETRY_POLICY and
+    // resolveDirectRole's own doc comment for exactly how many attempts and at what timeouts.
+    const resolved = await resolveDirectRole(lookupGuideRow);
     if (!mountedRef.current) return;
-
-    setRole(resolved.role);
-    setGuideId(resolved.guideId);
-    setGuideName(resolved.guideName);
-    setGuideUserId(resolved.guideUserId);
+    applyRoleResolution(userId, resolved);
 
     if (resolved.role !== 'owner') return;
 
@@ -171,20 +187,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // on it would reintroduce the exact slow-cold-login failure mode this fix removes. If it
     // finds and links a row, it upgrades role to 'guide' a moment later; anything else (nothing
     // to repair, an error, a timeout) leaves the 'owner' resolution above exactly as it is.
-    const userIdAtCallTime = userId;
     resolveRepairUpgrade(() => supabase.rpc('repair_guide_claim'), lookupGuideRow, 3000).then((upgrade) => {
-      if (!upgrade) return;
-      // Guards against a slow repair result from a PREVIOUS user landing after a different user
-      // has since signed in — hydratedUserIdRef is bumped the instant a new hydrate starts (see
-      // signIn/bootstrapSession/onAuthStateChange below), so a mismatch here means this result is
-      // stale and must never be applied.
-      if (!mountedRef.current || hydratedUserIdRef.current !== userIdAtCallTime) return;
-      setRole(upgrade.role);
-      setGuideId(upgrade.guideId);
-      setGuideName(upgrade.guideName);
-      setGuideUserId(upgrade.guideUserId);
+      if (upgrade) applyRoleResolution(userId, upgrade);
     });
-  }, []);
+  }, [applyRoleResolution]);
+
+  // Re-runs JUST the direct lookup (not the repair side-effect — see fetchRole) with a lighter,
+  // single-attempt policy: this is called either explicitly (pull-to-refresh triggers a full
+  // page reload, which re-runs fetchRole itself via bootstrapSession — but a lighter in-place
+  // retry is what the "Couldn't confirm your account" screen's own auto-retry loop uses, every
+  // few seconds, without a jarring full reload) or automatically while role is stuck fail-closed.
+  // By the time this runs, the cold-start cost the generous first-resolution policy exists for
+  // has already been paid, so a single, moderate-timeout attempt is the right amount of patience
+  // — a tight retry loop stacking the full multi-attempt policy on every tick would just compound
+  // delay for no benefit. Never weakens the fail-closed guarantee: still only ever resolves
+  // 'owner' on a clean, definitive null.
+  const retryRoleResolution = useCallback(async () => {
+    if (!user) return;
+    const userId = user.id;
+    const lookupGuideRow = () => supabase
+      .from('guides')
+      .select('id, name, user_id')
+      .eq('auth_user_id', userId)
+      .neq('user_id', userId)
+      .maybeSingle();
+    const resolved = await resolveDirectRole(lookupGuideRow, RESOLVE_AGAIN_RETRY_POLICY);
+    applyRoleResolution(userId, resolved);
+  }, [user, applyRoleResolution]);
 
   // Resolves profile + role together so routing never has to guess (and flash the wrong shell)
   // before both are known. This is the ONLY place loading is ever set back to false, and the
@@ -359,7 +388,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [hydrateUser]);
 
   return (
-    <AuthContext.Provider value={{ user, session, profile, role, guideId, guideName, guideUserId, loading, refreshProfile, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, profile, role, guideId, guideName, guideUserId, loading, refreshProfile, retryRoleResolution, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );
