@@ -77,6 +77,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Tracks which user id profile/role have already been hydrated for, so a repeat auth event
   // for the SAME user (token refresh, tab-refocus re-announcement) never re-triggers a fetch.
   const hydratedUserIdRef = useRef<string | null>(null);
+  // Guards retryRoleResolution against overlapping calls — GuideHome's auto-retry interval and
+  // its "Try again now" button can both call this, and on a slow connection a single attempt can
+  // easily outlast the interval's own period. Without this, overlapping attempts stack up (more
+  // concurrent load on a connection that's already struggling) and can resolve out of order.
+  const retryInFlightRef = useRef(false);
+  // Monotonically increasing — only the result from the LATEST dispatched attempt is ever
+  // applied, so even if an older, slower attempt somehow resolves after a newer one (the in-flight
+  // guard above should already prevent this in practice, but this is a second, independent line
+  // of defense), its stale result is discarded rather than overwriting the newer one.
+  const retryAttemptRef = useRef(0);
 
   const fetchProfile = useCallback(async (userId: string) => {
     try {
@@ -202,17 +212,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // — a tight retry loop stacking the full multi-attempt policy on every tick would just compound
   // delay for no benefit. Never weakens the fail-closed guarantee: still only ever resolves
   // 'owner' on a clean, definitive null.
+  //
+  // Guarded against overlapping calls (retryInFlightRef) and out-of-order application
+  // (retryAttemptRef) — see their own doc comments above. A caller (the auto-retry interval, the
+  // manual button) that fires while one is already pending is a silent no-op, not queued and not
+  // stacked; the next tick/tap after this one finishes is what actually runs again.
   const retryRoleResolution = useCallback(async () => {
     if (!user) return;
+    if (retryInFlightRef.current) return;
+    retryInFlightRef.current = true;
+    const myAttempt = ++retryAttemptRef.current;
     const userId = user.id;
-    const lookupGuideRow = () => supabase
-      .from('guides')
-      .select('id, name, user_id')
-      .eq('auth_user_id', userId)
-      .neq('user_id', userId)
-      .maybeSingle();
-    const resolved = await resolveDirectRole(lookupGuideRow, RESOLVE_AGAIN_RETRY_POLICY);
-    applyRoleResolution(userId, resolved);
+    try {
+      const lookupGuideRow = () => supabase
+        .from('guides')
+        .select('id, name, user_id')
+        .eq('auth_user_id', userId)
+        .neq('user_id', userId)
+        .maybeSingle();
+      const resolved = await resolveDirectRole(lookupGuideRow, RESOLVE_AGAIN_RETRY_POLICY);
+      if (myAttempt === retryAttemptRef.current) {
+        applyRoleResolution(userId, resolved);
+      }
+    } finally {
+      retryInFlightRef.current = false;
+    }
   }, [user, applyRoleResolution]);
 
   // Resolves profile + role together so routing never has to guess (and flash the wrong shell)

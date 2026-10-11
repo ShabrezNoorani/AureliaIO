@@ -51,14 +51,19 @@ export interface DirectLookupRetryPolicy {
   maxRetries: number;
 }
 
-/** The generous policy for the FIRST resolution after login/bootstrap: up to 3 attempts
-    (10s + 6s + 6s = 22s worst case) before concluding anything short of a definitive result.
-    Callers resolving again later (e.g. an explicit retry once already on the fail-closed screen)
-    should pass a lighter policy — the cold-start cost has already been paid by then. */
+/** The policy for the FIRST resolution after login/bootstrap: up to 2 attempts (6s + 6s = 12s
+    worst case) before concluding anything short of a definitive result. A definitive answer on
+    attempt 1 still returns instantly, unaffected — this ceiling only matters when the connection
+    is genuinely struggling. Previously 3 attempts at 10s+6s+6s (22s worst case); that silent,
+    un-differentiated 22s wait (see ProtectedRoute's own "still checking" message, added
+    alongside this) was itself a latency regression this fixes — a real connection issue should
+    surface as a legible, bounded wait, not a near-half-minute hang. Callers resolving again
+    later (e.g. the fail-closed screen's own retry) should pass a lighter policy — the cold-start
+    cost has already been paid by then. */
 export const DEFAULT_DIRECT_LOOKUP_RETRY_POLICY: DirectLookupRetryPolicy = {
-  firstTimeoutMs: 10000,
+  firstTimeoutMs: 6000,
   retryTimeoutMs: 6000,
-  maxRetries: 2,
+  maxRetries: 1,
 };
 
 /** For a LATER, explicit re-resolution attempt (the "Couldn't confirm your account" screen's

@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 
@@ -9,8 +9,25 @@ interface ProtectedRouteProps {
   requiredRole?: 'owner' | 'guide';
 }
 
+// After this long still resolving, swap the generic caption for something that makes an
+// unusually slow resolve legible instead of a silent, indistinguishable-from-stuck hang. Picked
+// to sit comfortably inside a single attempt's own timeout (see
+// DEFAULT_DIRECT_LOOKUP_RETRY_POLICY in lib/roleResolution.ts — 6s per attempt, 12s worst case
+// overall) — if this message is showing, resolution is still genuinely in progress, not frozen.
+const STILL_CHECKING_DELAY_MS = 4500;
+
 export default function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
   const { session, profile, role, loading } = useAuth();
+
+  const [showStillChecking, setShowStillChecking] = useState(false);
+  useEffect(() => {
+    if (!loading) {
+      setShowStillChecking(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowStillChecking(true), STILL_CHECKING_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   // No local failsafe timer here anymore — there used to be one that force-cleared `loading`
   // after 3s regardless of whether AuthContext had actually finished resolving role. That timer
@@ -28,7 +45,7 @@ export default function ProtectedRoute({ children, requiredRole }: ProtectedRout
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="w-8 h-8 border-2 border-gold border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <p className="text-sm text-muted-foreground">{showStillChecking ? 'Still checking your account…' : 'Loading…'}</p>
         </div>
       </div>
     );

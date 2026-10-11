@@ -71,9 +71,16 @@ export default function GuideHome() {
   // merely slow at login time recovers on its own instead of requiring the guide to act. Stops
   // the instant guideId actually resolves (the effect itself still runs every render per the
   // Rules of Hooks; the early-exit is inside it).
+  //
+  // 7s, not the original 4s — retryRoleResolution's own single attempt can take up to 6s
+  // (RESOLVE_AGAIN_RETRY_POLICY), and retryRoleResolution already no-ops if a previous call is
+  // still in flight (see AuthContext.tsx's retryInFlightRef) — widening this is what keeps a
+  // normal-case tick from firing uselessly mid-attempt and finding nothing to do, rather than
+  // being what prevents overlap (that guard lives in AuthContext, protecting every caller,
+  // including the "Try again now" button below, not just this interval).
   useEffect(() => {
     if (guideId && guideUserId) return;
-    const interval = setInterval(() => { retryRoleResolution(); }, 4000);
+    const interval = setInterval(() => { retryRoleResolution(); }, 7000);
     return () => clearInterval(interval);
   }, [guideId, guideUserId, retryRoleResolution]);
 

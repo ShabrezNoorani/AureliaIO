@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { resolveDirectRole, resolveRepairUpgrade, RESOLVE_AGAIN_RETRY_POLICY } from './roleResolution';
+import {
+  resolveDirectRole, resolveRepairUpgrade, RESOLVE_AGAIN_RETRY_POLICY, DEFAULT_DIRECT_LOOKUP_RETRY_POLICY,
+} from './roleResolution';
 
 const never = () => new Promise<never>(() => {}); // simulates a hanging call, for timeout tests
 const singleAttempt = (ms = 50) => ({ firstTimeoutMs: ms, retryTimeoutMs: ms, maxRetries: 0 });
@@ -83,6 +85,18 @@ describe('resolveDirectRole', () => {
 
   it('RESOLVE_AGAIN_RETRY_POLICY is a single attempt, no retries — appropriate for a later, already-past-cold-start re-resolution', () => {
     expect(RESOLVE_AGAIN_RETRY_POLICY.maxRetries).toBe(0);
+  });
+
+  it('DEFAULT_DIRECT_LOOKUP_RETRY_POLICY caps the worst case at 12s (6s + 6s), not the old 22s — the latency regression this fixes', () => {
+    expect(DEFAULT_DIRECT_LOOKUP_RETRY_POLICY).toEqual({ firstTimeoutMs: 6000, retryTimeoutMs: 6000, maxRetries: 1 });
+    const worstCaseMs = DEFAULT_DIRECT_LOOKUP_RETRY_POLICY.firstTimeoutMs
+      + DEFAULT_DIRECT_LOOKUP_RETRY_POLICY.maxRetries * DEFAULT_DIRECT_LOOKUP_RETRY_POLICY.retryTimeoutMs;
+    expect(worstCaseMs).toBe(12000);
+  });
+
+  it('with the DEFAULT policy, a definitive answer on attempt 1 still returns instantly — unaffected by the lower ceiling', async () => {
+    const r = await resolveDirectRole(async () => ({ data: null, error: null }));
+    expect(r.role).toBe('owner');
   });
 });
 
