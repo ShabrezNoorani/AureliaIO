@@ -651,6 +651,7 @@ export type Database = {
       guide_reviews: {
         Row: {
           comment: string | null
+          excluded_from_score: boolean | null
           guide_id: string
           id: string
           platform: string | null
@@ -661,6 +662,7 @@ export type Database = {
         }
         Insert: {
           comment?: string | null
+          excluded_from_score?: boolean | null
           guide_id: string
           id?: string
           platform?: string | null
@@ -671,6 +673,7 @@ export type Database = {
         }
         Update: {
           comment?: string | null
+          excluded_from_score?: boolean | null
           guide_id?: string
           id?: string
           platform?: string | null

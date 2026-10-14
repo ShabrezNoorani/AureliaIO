@@ -1,12 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import { localDateStr } from '@/lib/utils';
 import {
-  computeDoneBookingRecords, countDoneBookingsByGuideAndMonth, groupReviewsByMonth,
-  computeGuideLeaderboard, getScoreBand, GUIDE_SCORE_MIN_TOURS, ADMIN_SCORE_BAND_LABELS,
+  computeCheckedInBookingRecords, countCheckedInBookingsByGuideAndMonth, groupReviewsByMonth,
+  computeGuideLeaderboard, getScoreBand, GUIDE_SCORE_MIN_BOOKINGS, ADMIN_SCORE_BAND_LABELS,
   ADMIN_DEFAULT_FILTER_START,
-  type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding, type SessionDateForGuiding,
+  type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding,
 } from '@/lib/guidePerformance';
 import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 
@@ -24,7 +23,6 @@ export default function LeaderboardPage() {
   const [reviews, setReviews] = useState<GuideReviewRow[]>([]);
   const [checkins, setCheckins] = useState<CheckinForGuiding[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingForGuiding[]>([]);
-  const [sessions, setSessions] = useState<SessionDateForGuiding[]>([]);
 
   // 'overall' = since Oct 1, 2026 (the headline window); any other value is a YYYY-MM month.
   const [period, setPeriod] = useState<string>('overall');
@@ -32,44 +30,46 @@ export default function LeaderboardPage() {
   const fetchData = async () => {
     if (!user) return;
     setLoading(true);
-    const [guidesRes, reviewsRes, checkinsRes, sbRes, sessRes] = await Promise.all([
+    const [guidesRes, reviewsRes, checkinsRes, sbRes] = await Promise.all([
       supabase.from('guides').select('id, name, guide_number').eq('user_id', user.id).order('name'),
       supabase.from('guide_reviews').select('*').eq('user_id', user.id).gte('review_date', ADMIN_DEFAULT_FILTER_START),
-      supabase.from('checkins').select('booking_ref, status').eq('user_id', user.id)
+      // travel_date is the checkin's OWN date — computeCheckedInBookingRecords counts off this
+      // column directly, never a joined session's tour_date (see its own doc comment for why).
+      supabase.from('checkins').select('booking_ref, status, travel_date').eq('user_id', user.id)
         .eq('status', 'checked_in').gte('travel_date', ADMIN_DEFAULT_FILTER_START),
       supabase.from('session_bookings').select('booking_ref, allotted_guide_id, session_id').eq('user_id', user.id),
-      supabase.from('tour_sessions').select('id, tour_date').eq('user_id', user.id),
     ]);
     setGuides(guidesRes.data || []);
     setReviews(reviewsRes.data || []);
     setCheckins(checkinsRes.data || []);
     setSessionBookings(sbRes.data || []);
-    setSessions(sessRes.data || []);
     setLoading(false);
   };
 
   useEffect(() => { fetchData(); }, [user]);
 
-  const todayStr = localDateStr();
-  const doneBookingRecords = useMemo(
-    () => computeDoneBookingRecords(sessionBookings, sessions, checkins, ADMIN_DEFAULT_FILTER_START, todayStr),
-    [sessionBookings, sessions, checkins, todayStr]
+  const checkedInBookingRecords = useMemo(
+    () => computeCheckedInBookingRecords(sessionBookings, checkins, ADMIN_DEFAULT_FILTER_START),
+    [sessionBookings, checkins]
   );
-  const doneCountsByGuideAndMonth = useMemo(() => countDoneBookingsByGuideAndMonth(doneBookingRecords), [doneBookingRecords]);
+  const checkedInCountsByGuideAndMonth = useMemo(
+    () => countCheckedInBookingsByGuideAndMonth(checkedInBookingRecords),
+    [checkedInBookingRecords]
+  );
   const reviewsByMonth = useMemo(() => groupReviewsByMonth(reviews), [reviews]);
 
-  // Every distinct month with either a done tour or a logged review, since Oct 1. Sorted newest-first.
+  // Every distinct month with either a checked-in booking or a logged review, since Oct 1. Sorted newest-first.
   const monthOptions = useMemo(() => {
     const months = new Set<string>();
-    doneBookingRecords.forEach(r => months.add(r.month));
+    checkedInBookingRecords.forEach(r => months.add(r.month));
     reviewsByMonth.forEach((_, month) => months.add(month));
     return Array.from(months).sort().reverse();
-  }, [doneBookingRecords, reviewsByMonth]);
+  }, [checkedInBookingRecords, reviewsByMonth]);
 
-  // Recomputes EVERYTHING — reviews grouping AND done-tour counts — for whichever period is
-  // selected. Selecting a specific month means the leaderboard (ranking, scores, counts, verdicts)
-  // reflects ONLY that month's done tours, never the guide's larger overall total.
-  const { reviewsByGuideForPeriod, doneCountsForPeriod } = useMemo(() => {
+  // Recomputes EVERYTHING — reviews grouping AND checked-in-booking counts — for whichever period
+  // is selected. Selecting a specific month means the leaderboard (ranking, scores, counts,
+  // verdicts) reflects ONLY that month's checked-in bookings, never the guide's larger overall total.
+  const { reviewsByGuideForPeriod, bookingCountsForPeriod } = useMemo(() => {
     if (period === 'overall') {
       const out = new Map<string, GuideReviewRow[]>();
       reviews.forEach(r => {
@@ -78,8 +78,8 @@ export default function LeaderboardPage() {
         out.set(r.guide_id, arr);
       });
       const overallCounts = new Map<string, number>();
-      doneBookingRecords.forEach(r => overallCounts.set(r.guide_id, (overallCounts.get(r.guide_id) || 0) + 1));
-      return { reviewsByGuideForPeriod: out, doneCountsForPeriod: overallCounts };
+      checkedInBookingRecords.forEach(r => overallCounts.set(r.guide_id, (overallCounts.get(r.guide_id) || 0) + 1));
+      return { reviewsByGuideForPeriod: out, bookingCountsForPeriod: overallCounts };
     }
     const out = new Map<string, GuideReviewRow[]>();
     (reviewsByMonth.get(period) || []).forEach(r => {
@@ -88,16 +88,16 @@ export default function LeaderboardPage() {
       out.set(r.guide_id, arr);
     });
     const monthCounts = new Map<string, number>();
-    doneCountsByGuideAndMonth.forEach((byMonth, guideId) => {
+    checkedInCountsByGuideAndMonth.forEach((byMonth, guideId) => {
       const count = byMonth.get(period);
       if (count) monthCounts.set(guideId, count);
     });
-    return { reviewsByGuideForPeriod: out, doneCountsForPeriod: monthCounts };
-  }, [period, reviews, doneBookingRecords, reviewsByMonth, doneCountsByGuideAndMonth]);
+    return { reviewsByGuideForPeriod: out, bookingCountsForPeriod: monthCounts };
+  }, [period, reviews, checkedInBookingRecords, reviewsByMonth, checkedInCountsByGuideAndMonth]);
 
   const leaderboard = useMemo(
-    () => computeGuideLeaderboard(guides.map(g => g.id), reviewsByGuideForPeriod, doneCountsForPeriod),
-    [guides, reviewsByGuideForPeriod, doneCountsForPeriod]
+    () => computeGuideLeaderboard(guides.map(g => g.id), reviewsByGuideForPeriod, bookingCountsForPeriod),
+    [guides, reviewsByGuideForPeriod, bookingCountsForPeriod]
   );
   const nameById = useMemo(() => new Map(guides.map(g => [g.id, g.name])), [guides]);
   const guideNumberById = useMemo(() => new Map(guides.map(g => [g.id, g.guide_number])), [guides]);
@@ -131,7 +131,7 @@ export default function LeaderboardPage() {
         </div>
 
         <p className="text-xs text-muted-foreground">
-          Showing <span className="font-bold text-foreground">{periodLabel}</span>. Guides need {GUIDE_SCORE_MIN_TOURS}+ done tours
+          Showing <span className="font-bold text-foreground">{periodLabel}</span>. Guides need {GUIDE_SCORE_MIN_BOOKINGS}+ bookings
           within this period to be ranked — the threshold and every number below recompute entirely for whichever period is selected.
         </p>
 
@@ -141,7 +141,7 @@ export default function LeaderboardPage() {
           </div>
         ) : leaderboard.length === 0 ? (
           <div className="aurelia-card border border-dashed border-border p-10 text-center">
-            <p className="text-sm text-muted-foreground">No guide has {GUIDE_SCORE_MIN_TOURS}+ done tours in this period yet.</p>
+            <p className="text-sm text-muted-foreground">No guide has {GUIDE_SCORE_MIN_BOOKINGS}+ bookings in this period yet.</p>
           </div>
         ) : (
           <div className="aurelia-card border border-border divide-y divide-border overflow-hidden">
@@ -156,7 +156,7 @@ export default function LeaderboardPage() {
                       <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">{guideNumberById.get(entry.guide_id)}</div>
                     )}
                   </div>
-                  <div className="text-xs text-muted-foreground shrink-0">{entry.reviewCount} review{entry.reviewCount !== 1 ? 's' : ''} / {entry.doneTours} done</div>
+                  <div className="text-xs text-muted-foreground shrink-0">{entry.reviewCount} review{entry.reviewCount !== 1 ? 's' : ''} / {entry.bookingsCount} bookings</div>
                   {band && (
                     <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${
                       band === 'excellent' ? 'bg-green-600/15 text-green-700'

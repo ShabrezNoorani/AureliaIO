@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import { Calendar as CalendarIcon, Compass, Users } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
 import {
@@ -61,6 +62,7 @@ const formatDate = (dateStr: string) =>
 
 export default function GuideHome() {
   const { guideId, guideName, guideUserId, retryRoleResolution } = useAuth();
+  const navigate = useNavigate();
 
   // Leads the dashboard — this guide's own review score, verdict and anonymized rank/top-score.
   // Shared with GuideReviews.tsx via useGuideOwnScore, so the two can never disagree.
@@ -362,9 +364,17 @@ export default function GuideHome() {
       {/* YOUR SCORE — leads the dashboard, above everything else (requirement: first thing a
           guide sees). Same gated/encouraging card GuideReviews.tsx shows, just prominent here. */}
       <section className="space-y-2">
-        <div className="flex items-center gap-1.5">
-          <h2 className="text-xs font-bold text-gold uppercase tracking-widest">Your Score · Since Oct 1, 2026</h2>
-          <ScoreInfoTooltip />
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-xs font-bold text-gold uppercase tracking-widest">Your Score · Since Oct 1, 2026</h2>
+            <ScoreInfoTooltip />
+          </div>
+          <button
+            onClick={() => navigate('/guide/reviews')}
+            className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-gold border border-border hover:border-gold/30 rounded-lg px-2.5 py-1.5 shrink-0 transition-colors"
+          >
+            View Reviews
+          </button>
         </div>
         <GuideOwnScoreCard data={ownScore} prominent />
       </section>

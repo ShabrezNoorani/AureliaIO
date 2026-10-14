@@ -6,8 +6,9 @@ import {
   filterMonthlyRowsByDateRange, matchesAdminStatusFilter,
   isAssignmentDone, filterAssignmentsByStatus, filterMonthlyRowsByStatus, dedupeAssignmentsAcrossSources,
   reviewPoints, computeGuideReviewScore, computeGuideOverviewRows,
-  computeDoneBookingRecords, countDoneBookingsByGuide, countDoneBookingsByGuideAndMonth,
+  computeCheckedInBookingRecords, countCheckedInBookingsByGuide, countCheckedInBookingsByGuideAndMonth,
   groupReviewsByMonth, computeGuideLeaderboard, getScoreBand,
+  computeCombinedGuideScore, PUNCTUALITY_SCORE_WEIGHT, GUIDE_SCORE_MIN_BOOKINGS,
   ADMIN_DEFAULT_FILTER_START,
   PUNCTUALITY_GRACE_MINUTES,
   type GuideRatingRow, type GuideAssignmentRow, type GuideMonthlyRow, type GuideReviewRow,
@@ -709,84 +710,111 @@ describe('computeGuideReviewScore', () => {
     const reviews = [review({ id: 'r1', stars: 5 }), review({ id: 'r2', stars: 5 })];
     expect(computeGuideReviewScore(reviews, 2).score).toBe(1.0);
   });
+
+  it('a review marked excluded_from_score is not counted in reviewCount or in the points', () => {
+    const reviews = [
+      review({ id: 'r1', stars: 5 }),
+      review({ id: 'r2', stars: 1, excluded_from_score: true }), // would otherwise drag the score down hard
+    ];
+    const result = computeGuideReviewScore(reviews, 2);
+    expect(result.reviewCount).toBe(1);
+    expect(result.score).toBe(0.5); // 1.0 / 2 — the excluded 1★ contributes nothing at all
+  });
+
+  it('excluded_from_score: false or undefined/null still counts normally (not excluded)', () => {
+    const reviews = [
+      review({ id: 'r1', stars: 5, excluded_from_score: false }),
+      review({ id: 'r2', stars: 5 }), // field absent entirely
+    ];
+    const result = computeGuideReviewScore(reviews, 2);
+    expect(result.reviewCount).toBe(2);
+    expect(result.score).toBe(1.0);
+  });
 });
 
-describe('computeDoneBookingRecords — the score\'s denominator, DONE tours only', () => {
-  const sessions = [
-    { id: 's-past', tour_date: '2026-10-05' },
-    { id: 's-today', tour_date: '2026-10-15' },
-    { id: 's-future', tour_date: '2026-10-25' },
-  ];
-  const today = '2026-10-15';
+describe('computeCheckedInBookingRecords — the score\'s denominator: checked-in BOOKINGS, dated off the checkins row itself', () => {
+  const since = '2026-10-01';
 
-  it('a strictly past tour that was never checked in (an unresolved booking) is NOT a done tour', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' }];
-    const records = computeDoneBookingRecords(sb, sessions, [], '2026-10-01', today);
-    expect(records).toEqual([]);
+  it('a booking with no checkins row at all (unresolved) is NOT counted', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
+    expect(computeCheckedInBookingRecords(sb, [], since)).toEqual([]);
   });
 
-  it('a strictly past tour marked NO-SHOW is NOT a done tour — only checked_in counts', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' }];
-    const checkins = [{ booking_ref: 'B1', status: 'no_show' }];
-    const records = computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today);
-    expect(records).toEqual([]);
+  it('a booking marked NO-SHOW is NOT counted — only checked_in counts', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
+    const checkins = [{ booking_ref: 'B1', status: 'no_show', travel_date: '2026-10-05' }];
+    expect(computeCheckedInBookingRecords(sb, checkins, since)).toEqual([]);
   });
 
-  it('a strictly past tour that WAS checked in counts as done', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' }];
-    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }];
-    const records = computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today);
-    expect(records.map((r) => r.booking_ref)).toEqual(['B1']);
+  it('a checked-in booking counts, dated and month-grouped from the CHECKIN\'s own travel_date — never a joined session', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    const records = computeCheckedInBookingRecords(sb, checkins, since);
+    expect(records).toEqual([{ guide_id: 'g1', booking_ref: 'B1', month: '2026-10' }]);
   });
 
-  it('a FUTURE tour is NEVER counted, even if (erroneously) checked in — this is the exact "26 guided" bug this fixes', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-future' }];
-    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }];
-    const records = computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today);
-    expect(records).toEqual([]);
+  it('excludes a checked-in booking dated before the since-date floor', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-09-30' }];
+    expect(computeCheckedInBookingRecords(sb, checkins, since)).toEqual([]);
   });
 
-  it('a tour dated today counts as done ONLY once actually checked in', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-today' }];
-    expect(computeDoneBookingRecords(sb, sessions, [], '2026-10-01', today)).toEqual([]);
-    const checkedIn = [{ booking_ref: 'B1', status: 'checked_in' }];
-    expect(computeDoneBookingRecords(sb, sessions, checkedIn, '2026-10-01', today)).toHaveLength(1);
-  });
-
-  it('excludes tours dated before the since-date floor, even if checked in', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' }];
-    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }];
-    expect(computeDoneBookingRecords(sb, sessions, checkins, '2026-10-06', today)).toEqual([]);
+  it('a checkins row with no travel_date is never assumed in-range', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: null }];
+    expect(computeCheckedInBookingRecords(sb, checkins, since)).toEqual([]);
   });
 
   it('attributes a reassigned, checked-in booking to whichever guide currently holds it, never both (no double-counting on transfer)', () => {
     // Post-reassignment state: ONE session_bookings row, now allotted to guideB.
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'guideB', session_id: 's-past' }];
-    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }];
-    const records = computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today);
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'guideB' }];
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    const records = computeCheckedInBookingRecords(sb, checkins, since);
     expect(records).toEqual([{ guide_id: 'guideB', booking_ref: 'B1', month: '2026-10' }]);
   });
 
-  it('counts bookings, not pax and not tours — a checked-in booking appearing twice counts once', () => {
+  it('counts DISTINCT BOOKINGS, not people/pax and not tours — a checked-in booking appearing twice in session_bookings counts once, regardless of how many guests it carries', () => {
     const sb = [
-      { booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' },
-      { booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-past' },
+      { booking_ref: 'B1', allotted_guide_id: 'g1' },
+      { booking_ref: 'B1', allotted_guide_id: 'g1' },
     ];
-    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }];
-    expect(computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today)).toHaveLength(1);
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    expect(computeCheckedInBookingRecords(sb, checkins, since)).toHaveLength(1);
   });
 
-  it('a booking with no allotted guide, or whose session is unknown, is skipped even if checked in', () => {
+  it('a booking with no allotted guide is skipped even if checked in', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: null }];
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    expect(computeCheckedInBookingRecords(sb, checkins, since)).toEqual([]);
+  });
+
+  it('REGRESSION: counting off the checkin\'s own travel_date (not a joined session\'s tour_date) means a stale/mismatched session_bookings link can never under- or over-count — this is the exact "35 vs 47" bug fixed', () => {
+    // Two guides, several bookings each, a mix of checked-in/no-show/unresolved, spanning the
+    // since-date floor — proves the count is exactly the distinct checked-in bookings on/after
+    // the floor, nothing aggregated by person/pax and nothing pulled in from before it.
     const sb = [
-      { booking_ref: 'B1', allotted_guide_id: null, session_id: 's-past' },
-      { booking_ref: 'B2', allotted_guide_id: 'g1', session_id: 'missing-session' },
+      { booking_ref: 'A1', allotted_guide_id: 'g1' },
+      { booking_ref: 'A2', allotted_guide_id: 'g1' },
+      { booking_ref: 'A3', allotted_guide_id: 'g1' }, // no-show — excluded
+      { booking_ref: 'A4', allotted_guide_id: 'g1' }, // unresolved — excluded
+      { booking_ref: 'A5', allotted_guide_id: 'g1' }, // checked in but BEFORE the floor — excluded
+      { booking_ref: 'B1', allotted_guide_id: 'g2' },
     ];
-    const checkins = [{ booking_ref: 'B1', status: 'checked_in' }, { booking_ref: 'B2', status: 'checked_in' }];
-    expect(computeDoneBookingRecords(sb, sessions, checkins, '2026-10-01', today)).toEqual([]);
+    const checkins = [
+      { booking_ref: 'A1', status: 'checked_in', travel_date: '2026-10-02' },
+      { booking_ref: 'A2', status: 'checked_in', travel_date: '2026-10-10' },
+      { booking_ref: 'A3', status: 'no_show', travel_date: '2026-10-11' },
+      { booking_ref: 'A5', status: 'checked_in', travel_date: '2026-09-15' },
+      { booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-03' },
+    ];
+    const records = computeCheckedInBookingRecords(sb, checkins, since);
+    const counts = countCheckedInBookingsByGuide(records);
+    expect(counts.get('g1')).toBe(2); // A1, A2 only
+    expect(counts.get('g2')).toBe(1); // B1
   });
 });
 
-describe('countDoneBookingsByGuide / countDoneBookingsByGuideAndMonth', () => {
+describe('countCheckedInBookingsByGuide / countCheckedInBookingsByGuideAndMonth', () => {
   const records = [
     { guide_id: 'g1', booking_ref: 'B1', month: '2026-10' },
     { guide_id: 'g1', booking_ref: 'B2', month: '2026-10' },
@@ -794,14 +822,14 @@ describe('countDoneBookingsByGuide / countDoneBookingsByGuideAndMonth', () => {
     { guide_id: 'g2', booking_ref: 'B4', month: '2026-10' },
   ];
 
-  it('counts overall done tours per guide', () => {
-    const counts = countDoneBookingsByGuide(records);
+  it('counts overall checked-in bookings per guide', () => {
+    const counts = countCheckedInBookingsByGuide(records);
     expect(counts.get('g1')).toBe(3);
     expect(counts.get('g2')).toBe(1);
   });
 
-  it('counts done tours per guide AND month, for the monthly score view', () => {
-    const byMonth = countDoneBookingsByGuideAndMonth(records);
+  it('counts checked-in bookings per guide AND month, for the monthly score view', () => {
+    const byMonth = countCheckedInBookingsByGuideAndMonth(records);
     expect(byMonth.get('g1')?.get('2026-10')).toBe(2);
     expect(byMonth.get('g1')?.get('2026-11')).toBe(1);
     expect(byMonth.get('g2')?.get('2026-10')).toBe(1);
@@ -822,7 +850,7 @@ describe('groupReviewsByMonth', () => {
 });
 
 describe('computeGuideLeaderboard', () => {
-  it('excludes a guide below the 3-done-tour threshold IN THE PERIOD, even with great reviews', () => {
+  it('excludes a guide below the 3-booking threshold IN THE PERIOD, even with great reviews', () => {
     const reviewsByGuide = new Map([
       ['g1', [review({ id: 'r1', guide_id: 'g1', stars: 5 })]],
       ['g3', [review({ id: 'r2', guide_id: 'g3', stars: 5 })]],
@@ -844,7 +872,7 @@ describe('computeGuideLeaderboard', () => {
     expect(board[1].rank).toBe(2);
   });
 
-  it('leaves out a guide with zero done tours in the selected period (e.g. a quiet month)', () => {
+  it('leaves out a guide with zero checked-in bookings in the selected period (e.g. a quiet month)', () => {
     const reviewsByGuide = new Map<string, GuideReviewRow[]>();
     const periodCounts = new Map([['g1', 0], ['g2', 4]]);
     reviewsByGuide.set('g2', [review({ id: 'r1', guide_id: 'g2', stars: 5 })]);
@@ -857,23 +885,42 @@ describe('computeGuideLeaderboard', () => {
     expect(board).toEqual([]);
   });
 
-  it('a guide eligible OVERALL (26 done tours) but with only 2 done tours in October is excluded from October\'s board — the 3-tour threshold applies PER PERIOD, not overall', () => {
+  it('a guide eligible OVERALL (26 checked-in bookings) but with only 2 in October is excluded from October\'s board — the 3-booking threshold applies PER PERIOD, not overall', () => {
     const reviewsByGuide = new Map([['g1', [review({ id: 'r1', guide_id: 'g1', stars: 5 })]]]);
-    const octoberCounts = new Map([['g1', 2]]); // only 2 of their 26 overall tours were in October
+    const octoberCounts = new Map([['g1', 2]]); // only 2 of their 26 overall bookings were in October
     const board = computeGuideLeaderboard(['g1'], reviewsByGuide, octoberCounts);
     expect(board).toEqual([]);
   });
 
-  it('October\'s doneTours reflects ONLY October (6), never the guide\'s larger overall total (26) — the exact reported bug', () => {
+  it('October\'s bookingsCount reflects ONLY October (6), never the guide\'s larger overall total (26) — the exact reported bug', () => {
     const reviewsByGuide = new Map([['g1', [
       review({ id: 'r1', guide_id: 'g1', stars: 5 }), review({ id: 'r2', guide_id: 'g1', stars: 5 }),
     ]]]);
     const octoberCounts = new Map([['g1', 6]]); // same guide's overall total elsewhere is 26
     const board = computeGuideLeaderboard(['g1'], reviewsByGuide, octoberCounts);
     expect(board).toHaveLength(1);
-    expect(board[0].doneTours).toBe(6);
+    expect(board[0].bookingsCount).toBe(6);
     expect(board[0].reviewCount).toBe(2);
     expect(board[0].score).toBeCloseTo(2.0 / 6, 10);
+  });
+
+  it('GUIDE_SCORE_MIN_BOOKINGS is the exact threshold used (3)', () => {
+    expect(GUIDE_SCORE_MIN_BOOKINGS).toBe(3);
+  });
+});
+
+describe('computeCombinedGuideScore — punctuality, built now, zero weight', () => {
+  it('at PUNCTUALITY_SCORE_WEIGHT === 0, always returns the review score unchanged, regardless of punctuality', () => {
+    expect(PUNCTUALITY_SCORE_WEIGHT).toBe(0);
+    expect(computeCombinedGuideScore(0.2, 100)).toBe(0.2);
+    expect(computeCombinedGuideScore(0.2, 0)).toBe(0.2);
+    expect(computeCombinedGuideScore(-0.3, 50)).toBe(-0.3);
+    expect(computeCombinedGuideScore(0.2, null)).toBe(0.2);
+  });
+
+  it('a null review score stays null regardless of punctuality — nothing to combine', () => {
+    expect(computeCombinedGuideScore(null, 100)).toBeNull();
+    expect(computeCombinedGuideScore(null, null)).toBeNull();
   });
 });
 

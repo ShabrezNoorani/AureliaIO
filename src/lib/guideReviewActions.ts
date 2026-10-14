@@ -63,6 +63,31 @@ export async function updateGuideReview(
   return { error: null };
 }
 
+/** Toggles a review's `excluded_from_score` flag — the review itself is never touched/removed,
+    only whether its points count toward that guide's score (see computeGuideReviewScore). */
+export async function setReviewExcluded(
+  supabase: SupabaseClient,
+  userId: string,
+  review: GuideReviewRow,
+  excluded: boolean,
+  guideName: string
+): Promise<{ error: string | null }> {
+  const { error } = await supabase
+    .from('guide_reviews')
+    .update({ excluded_from_score: excluded })
+    .eq('id', review.id);
+  if (error) return { error: error.message };
+
+  await logChange(supabase, userId, {
+    tableName: 'guide_reviews',
+    recordId: review.id,
+    description: `${excluded ? 'Excluded' : 'Re-included'} a ${review.stars}★ review for ${guideName} from the score`,
+    oldValue: { excluded_from_score: review.excluded_from_score ?? false },
+    newValue: { excluded_from_score: excluded },
+  });
+  return { error: null };
+}
+
 export async function deleteGuideReview(
   supabase: SupabaseClient,
   userId: string,

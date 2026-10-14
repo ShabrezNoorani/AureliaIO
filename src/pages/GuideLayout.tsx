@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, CalendarCheck, User, Star, LogOut, Menu, X } from 'lucide-react';
+import { Home, CalendarCheck, User, Star, History, LogOut, Menu, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Logo from '@/components/Logo';
 import PullToRefreshChrome from '@/components/PullToRefreshChrome';
@@ -8,8 +8,9 @@ import GuideHome from './GuideHome';
 import GuideCheckin from './GuideCheckin';
 import GuideProfile from './GuideProfile';
 import GuideReviews from './GuideReviews';
+import GuideHistory from './GuideHistory';
 
-type GuideView = 'dashboard' | 'checkin' | 'profile' | 'reviews';
+type GuideView = 'dashboard' | 'checkin' | 'profile' | 'reviews' | 'history';
 
 interface NavItemProps {
   icon: React.ElementType;
@@ -46,6 +47,7 @@ export default function GuideLayout() {
     if (path.includes('/guide/checkin')) setView('checkin');
     else if (path.includes('/guide/profile')) setView('profile');
     else if (path.includes('/guide/reviews')) setView('reviews');
+    else if (path.includes('/guide/history')) setView('history');
     else setView('dashboard');
   }, []);
 
@@ -99,6 +101,7 @@ export default function GuideLayout() {
           <NavItem icon={CalendarCheck} label="Today's Check-in" active={view === 'checkin'} onClick={() => handleNavigate('checkin', '/guide/checkin')} />
           <NavItem icon={User} label="My Profile" active={view === 'profile'} onClick={() => handleNavigate('profile', '/guide/profile')} />
           <NavItem icon={Star} label="My Reviews" active={view === 'reviews'} onClick={() => handleNavigate('reviews', '/guide/reviews')} />
+          <NavItem icon={History} label="History" active={view === 'history'} onClick={() => handleNavigate('history', '/guide/history')} />
         </div>
 
         <div className="p-3 border-t border-border/30">
@@ -121,6 +124,7 @@ export default function GuideLayout() {
         {view === 'checkin' && <GuideCheckin />}
         {view === 'profile' && <GuideProfile />}
         {view === 'reviews' && <GuideReviews />}
+        {view === 'history' && <GuideHistory />}
       </main>
       <PullToRefreshChrome />
     </div>

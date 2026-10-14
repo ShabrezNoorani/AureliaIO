@@ -1,14 +1,18 @@
-import { GUIDE_SCORE_BAND_LABELS, GUIDE_SCORE_MIN_TOURS } from '@/lib/guidePerformance';
+import { GUIDE_SCORE_BAND_LABELS, GUIDE_SCORE_MIN_BOOKINGS } from '@/lib/guidePerformance';
 import type { GuideOwnScore } from '@/hooks/use-guide-own-score';
 
 /**
- * Renders a guide's own score (+ reviews/done-tours context, verdict, anonymized rank/top-score)
- * — shared by GuideHome.tsx (leads the page with it, `prominent`) and GuideReviews.tsx (shows it
- * alongside the full review list, default size), so the two can never visually or numerically
- * drift apart. `data` comes from the useGuideOwnScore hook — this component is pure rendering.
+ * Renders a guide's own score (+ reviews/bookings context, verdict, anonymized rank/top-score,
+ * and a display-only punctuality figure) — shared by GuideHome.tsx (leads the page with it,
+ * `prominent`) and GuideReviews.tsx (shows it alongside the full review list, default size), so
+ * the two can never visually or numerically drift apart. `data` comes from the useGuideOwnScore
+ * hook — this component is pure rendering.
  */
 export default function GuideOwnScoreCard({ data, prominent = false }: { data: GuideOwnScore; prominent?: boolean }) {
-  const { loading, unlocked, doneTours, reviewCount, score, band, topScore, rank, totalRanked } = data;
+  const {
+    loading, unlocked, bookingsCount, reviewCount, score, band, topScore, rank, totalRanked,
+    onTimeCount, countedArrivals,
+  } = data;
 
   if (loading) {
     return (
@@ -21,8 +25,8 @@ export default function GuideOwnScoreCard({ data, prominent = false }: { data: G
   if (!unlocked) {
     return (
       <div className="aurelia-card p-6 text-center">
-        <p className="text-sm font-semibold text-foreground">Your score appears after 3 completed tours.</p>
-        <p className="text-xs text-muted-foreground mt-1">You're at {doneTours} of {GUIDE_SCORE_MIN_TOURS} since Oct 1, 2026.</p>
+        <p className="text-sm font-semibold text-foreground">Your score appears after {GUIDE_SCORE_MIN_BOOKINGS} completed bookings.</p>
+        <p className="text-xs text-muted-foreground mt-1">You're at {bookingsCount} of {GUIDE_SCORE_MIN_BOOKINGS} since Oct 1, 2026.</p>
       </div>
     );
   }
@@ -43,8 +47,8 @@ export default function GuideOwnScoreCard({ data, prominent = false }: { data: G
           <span className="text-3xl font-extrabold">{reviewCount}</span>
         </div>
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Done Tours</p>
-          <span className="text-3xl font-extrabold">{doneTours}</span>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Bookings</p>
+          <span className="text-3xl font-extrabold">{bookingsCount}</span>
         </div>
       </div>
 
@@ -60,6 +64,13 @@ export default function GuideOwnScoreCard({ data, prominent = false }: { data: G
         <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-border text-xs text-muted-foreground">
           <span>Top score: <span className="font-bold text-foreground">{topScore != null ? `${topScore >= 0 ? '+' : ''}${topScore.toFixed(2)}` : '—'}</span></span>
           <span>Your rank: <span className="font-bold text-foreground">#{rank} of {totalRanked}</span></span>
+        </div>
+      )}
+
+      {/* Display-only — doesn't affect the score above yet (see PUNCTUALITY_SCORE_WEIGHT). */}
+      {countedArrivals > 0 && (
+        <div className="pt-3 border-t border-border text-xs text-muted-foreground">
+          Punctuality: <span className="font-bold text-foreground">On-time {onTimeCount}/{countedArrivals}</span>
         </div>
       )}
     </div>

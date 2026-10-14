@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Euro, BarChart2, Calendar, FileText, X, Star, Info, CheckCircle2, CalendarRange, Plus, Pencil, Trash2 } from 'lucide-react';
+import { Activity, Euro, BarChart2, Calendar, FileText, X, Star, Info, CheckCircle2, CalendarRange, Plus, Pencil, Trash2, EyeOff, Eye } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
 import {
   computeGuideOverviewRows, computeAssignmentStats, computeRatingStats, computePunctualityStats,
@@ -12,7 +12,7 @@ import {
   filterMonthlyRowsByDateRange, matchesAdminStatusFilter, ADMIN_STATUS_FILTER_OPTIONS,
   filterAssignmentsByStatus, filterMonthlyRowsByStatus, dedupeAssignmentsAcrossSources,
   computeGuideReviewScore, REVIEW_PLATFORMS,
-  computeDoneBookingRecords, countDoneBookingsByGuide, getScoreBand,
+  computeCheckedInBookingRecords, countCheckedInBookingsByGuide, getScoreBand,
   ADMIN_SCORE_BAND_LABELS,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type GuideReviewRow,
   type AdminDateFilter, type GuidePaymentSummary, type AdminStatusFilter, type GuideReviewScore,
@@ -23,7 +23,7 @@ import {
   verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, updateGuideMonthlyPayment,
   insertGuideMonthlyPayment,
 } from '@/lib/guideRatingActions';
-import { addGuideReview, updateGuideReview, deleteGuideReview, type ReviewPayload } from '@/lib/guideReviewActions';
+import { addGuideReview, updateGuideReview, deleteGuideReview, setReviewExcluded, type ReviewPayload } from '@/lib/guideReviewActions';
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
@@ -225,6 +225,15 @@ export default function GuideDashboard() {
     await refreshReviews();
   };
 
+  // Exclude/re-include a review from the score — the review itself stays on file either way.
+  const handleToggleReviewExcluded = async (r: GuideReviewRow) => {
+    if (!user) return;
+    const guideName = guides.find(g => g.id === r.guide_id)?.name || 'Guide';
+    const { error } = await setReviewExcluded(supabase, user.id, r, !r.excluded_from_score, guideName);
+    if (error) { alert(`Failed to update review: ${error}`); return; }
+    await refreshReviews();
+  };
+
   const filteredReviewList = useMemo(() => {
     return reviews
       .filter(r => reviewListGuideFilter === 'All' || r.guide_id === reviewListGuideFilter)
@@ -259,9 +268,9 @@ export default function GuideDashboard() {
       supabase.from('guide_reviews').select('*').eq('user_id', user.id),
       // Only ever need checked-in bookings from Oct 1 2026 onward — the score's floor is fixed,
       // never reactive to adminFilter (see ADMIN_DEFAULT_FILTER_START's own usage elsewhere).
-      // travel_date is used only to narrow this fetch — the actual done/upcoming decision is made
-      // against the session's own tour_date (via sessionsForPay/sessRes above), not this column.
-      supabase.from('checkins').select('booking_ref, status').eq('user_id', user.id)
+      // travel_date is the checkin's OWN date — computeCheckedInBookingRecords counts off this
+      // column directly, never a joined session's tour_date (see its own doc comment for why).
+      supabase.from('checkins').select('booking_ref, status, travel_date').eq('user_id', user.id)
         .eq('status', 'checked_in').gte('travel_date', ADMIN_DEFAULT_FILTER_START),
       supabase.from('session_bookings').select('booking_ref, allotted_guide_id, session_id').eq('user_id', user.id),
     ]);
@@ -342,15 +351,14 @@ export default function GuideDashboard() {
     return filterMonthlyRowsByStatus(dateScoped, statusFilter);
   }, [monthlyRows, adminFilter, statusFilter]);
 
-  // The score's denominator — DONE tours only, since Oct 1 2026, fixed regardless of whatever
-  // adminFilter/statusFilter the rest of the page is currently showing. Built from ONE done/
-  // upcoming rule (computeDoneBookingRecords) that can never count a future/upcoming tour — see
-  // its own doc comment for exactly what replaced the earlier, buggier version of this.
-  const doneBookingRecords = useMemo(
-    () => computeDoneBookingRecords(sessionBookingsForGuiding, sessionsForPay, checkinsForGuiding, ADMIN_DEFAULT_FILTER_START, todayStr),
-    [sessionBookingsForGuiding, sessionsForPay, checkinsForGuiding, todayStr]
+  // The score's denominator — checked-in BOOKINGS only, since Oct 1 2026, fixed regardless of
+  // whatever adminFilter/statusFilter the rest of the page is currently showing. Dated directly
+  // off each checkin row's own travel_date (see computeCheckedInBookingRecords' own doc comment).
+  const checkedInBookingRecords = useMemo(
+    () => computeCheckedInBookingRecords(sessionBookingsForGuiding, checkinsForGuiding, ADMIN_DEFAULT_FILTER_START),
+    [sessionBookingsForGuiding, checkinsForGuiding]
   );
-  const overallDoneCounts = useMemo(() => countDoneBookingsByGuide(doneBookingRecords), [doneBookingRecords]);
+  const overallBookingCounts = useMemo(() => countCheckedInBookingsByGuide(checkedInBookingRecords), [checkedInBookingRecords]);
 
   // Reviews feeding the score are likewise always scoped to Oct 1 2026 onward, never to
   // adminFilter — the review LIST further down the page (filterable by guide/platform) uses the
@@ -368,10 +376,10 @@ export default function GuideDashboard() {
     const out = new Map<string, GuideReviewScore>();
     guides.forEach(g => {
       const guideReviews = reviewsSinceOct1.filter(r => r.guide_id === g.id);
-      out.set(g.id, computeGuideReviewScore(guideReviews, overallDoneCounts.get(g.id) || 0));
+      out.set(g.id, computeGuideReviewScore(guideReviews, overallBookingCounts.get(g.id) || 0));
     });
     return out;
-  }, [guides, reviewsSinceOct1, overallDoneCounts]);
+  }, [guides, reviewsSinceOct1, overallBookingCounts]);
 
   // "All Guides" overview now respects both the selected period AND status (per-guide
   // cards/totals strip/table all agree, all built from the same narrowed arrays) — pass
@@ -379,8 +387,8 @@ export default function GuideDashboard() {
   // including every "Unlinked" row regardless of date. The review score columns are the one
   // exception — always Oct-1-onward, per computeGuideOverviewRows' own inputs here.
   const overviewRows = useMemo(
-    () => computeGuideOverviewRows(guides, statusFilteredAssignments, reviewsSinceOct1, overallDoneCounts, filteredMonthlyRowsForOverview, todayStr),
-    [guides, statusFilteredAssignments, reviewsSinceOct1, overallDoneCounts, filteredMonthlyRowsForOverview, todayStr]
+    () => computeGuideOverviewRows(guides, statusFilteredAssignments, reviewsSinceOct1, overallBookingCounts, filteredMonthlyRowsForOverview, todayStr),
+    [guides, statusFilteredAssignments, reviewsSinceOct1, overallBookingCounts, filteredMonthlyRowsForOverview, todayStr]
   );
   // Drops a guide with literally nothing left after the status narrowing above, instead of
   // rendering an empty €0 row — see matchesAdminStatusFilter's own doc comment.
@@ -449,6 +457,13 @@ export default function GuideDashboard() {
     const punctualityStats = computePunctualityStats(detailGuideArrivals);
     return computeGuideScore(ratingStats, punctualityStats, detailGuideStats.toursDone);
   }, [detailGuideRatings, detailGuideArrivals, detailGuideStats.toursDone]);
+  // Display-only "On-time X/Y" next to the review score below — zero-weight in the real score
+  // today (see PUNCTUALITY_SCORE_WEIGHT in guidePerformance.ts), shown here as the same raw
+  // arrival-vs-checkin_time count the guide's own dashboard shows (GuideOwnScoreCard).
+  const detailGuidePunctuality = useMemo(
+    () => computePunctualityStats(detailGuideArrivals),
+    [detailGuideArrivals]
+  );
 
   const virtualMonthlyByName = useMemo(() => groupOrphanedMonthlyByName(monthlyRows), [monthlyRows]);
   const detailVirtualRows = detailVirtualName ? (virtualMonthlyByName.get(detailVirtualName) || []) : [];
@@ -826,7 +841,7 @@ export default function GuideDashboard() {
                           <span className={`font-semibold ${rs?.score != null ? (rs.score >= 0 ? 'text-green-700' : 'text-red-600') : 'text-foreground'}`}>
                             {rs?.score != null ? `${rs.score >= 0 ? '+' : ''}${rs.score.toFixed(2)}` : '—'}
                           </span>
-                          {' · '}{rs?.reviewCount ?? 0} review{(rs?.reviewCount ?? 0) !== 1 ? 's' : ''} / {rs?.bookingsGuided ?? 0} done
+                          {' · '}{rs?.reviewCount ?? 0} review{(rs?.reviewCount ?? 0) !== 1 ? 's' : ''} / {rs?.bookingsGuided ?? 0} bookings
                           {band && <span className="text-muted-foreground"> · {ADMIN_SCORE_BAND_LABELS[band]}</span>}
                         </span>
                         <ScoreInfoTooltip />
@@ -1226,11 +1241,22 @@ export default function GuideDashboard() {
                                   <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">{r.platform}</span>
                                 )}
                                 <span className="text-[11px] text-muted-foreground font-mono">{r.review_date}</span>
+                                {r.excluded_from_score && (
+                                  <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-red-600/10 text-red-700 border border-red-600/20">Excluded from score</span>
+                                )}
                               </div>
                               {r.reviewer_name && <p className="text-xs font-semibold text-foreground/80">{r.reviewer_name}</p>}
                               {r.comment && <p className="text-xs text-muted-foreground mt-0.5">{r.comment}</p>}
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={() => handleToggleReviewExcluded(r)}
+                                className={`p-2 rounded-lg transition-colors ${r.excluded_from_score ? 'text-red-600 hover:bg-red-600/10' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                                aria-label={r.excluded_from_score ? 'Re-include review in score' : 'Exclude review from score'}
+                                title={r.excluded_from_score ? 'Re-include in score' : 'Exclude from score'}
+                              >
+                                {r.excluded_from_score ? <EyeOff size={14} /> : <Eye size={14} />}
+                              </button>
                               <button onClick={() => startEditReview(r)} className="p-2 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors" aria-label="Edit review">
                                 <Pencil size={14} />
                               </button>
@@ -1329,7 +1355,7 @@ export default function GuideDashboard() {
                             <div className="text-2xl font-bold">{rs?.reviewCount ?? 0}</div>
                           </div>
                           <div>
-                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Done Tours</div>
+                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Bookings</div>
                             <div className="text-2xl font-bold">{rs?.bookingsGuided ?? 0}</div>
                           </div>
                         </div>
@@ -1337,6 +1363,12 @@ export default function GuideDashboard() {
                           <p className={`text-sm font-bold ${band === 'falling' ? 'text-red-600' : band === 'excellent' ? 'text-green-700' : 'text-foreground'}`}>
                             {ADMIN_SCORE_BAND_LABELS[band]}
                           </p>
+                        )}
+                        {/* Display-only — doesn't affect the score above yet (see PUNCTUALITY_SCORE_WEIGHT). */}
+                        {detailGuidePunctuality.countedArrivals > 0 && (
+                          <div className="pt-3 border-t border-border text-xs text-muted-foreground">
+                            Punctuality: <span className="font-bold text-foreground">On-time {detailGuidePunctuality.onTimeCount}/{detailGuidePunctuality.countedArrivals}</span>
+                          </div>
                         )}
                       </div>
                     );

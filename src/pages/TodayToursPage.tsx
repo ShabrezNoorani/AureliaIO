@@ -23,6 +23,10 @@ import { buildGuideInviteLinks, buildSharedGuideInviteLink, forceBrowserUrl, typ
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
 
+// The earliest date the past-date browser (and the guide-side History tab) will show — never
+// surfaced in either UI's own copy, just the floor on the date picker and the fetch itself.
+const HISTORY_FLOOR = '2026-10-01';
+
 interface SessionGuestRow {
   booking: any;
   displayName: string;
@@ -54,6 +58,22 @@ export default function TodayToursPage() {
   const [showConfirm, setShowConfirm] = useState<any | null>(null);
   const [balancingSessionId, setBalancingSessionId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+
+  // PAST-DATE BROWSER — read-only view of any earlier day's sessions/allocations/check-in status.
+  // Defaults to today (the normal live board below). Picking an earlier date swaps the sessions
+  // list for a separate, read-only fetch (pastViewSessions etc.) instead of touching any of the
+  // live state above — editing a past date is explicitly a later task, so nothing here ever
+  // writes. Floored at Oct 1, 2026 (HISTORY_FLOOR below) — matches the guide-side History tab's
+  // own floor, though neither UI ever shows that date to the user.
+  const [viewDate, setViewDate] = useState(localDateStr());
+  const [pastViewLoading, setPastViewLoading] = useState(false);
+  const [pastViewSessions, setPastViewSessions] = useState<any[]>([]);
+  const [pastViewSessionBookings, setPastViewSessionBookings] = useState<any[]>([]);
+  const [pastViewSessionGuides, setPastViewSessionGuides] = useState<any[]>([]);
+  const [pastViewCheckins, setPastViewCheckins] = useState<any[]>([]);
+  const [pastViewBookings, setPastViewBookings] = useState<any[]>([]);
+  const [pastViewGuides, setPastViewGuides] = useState<any[]>([]);
+  const isViewingToday = viewDate === todayStrDate;
 
   // PAST / UNRESOLVED — bookings whose tour date has already passed but were never checked in or
   // marked no-show (Today's Tours only ever shows TODAY, so nothing else would ever resurface
@@ -270,6 +290,84 @@ export default function TodayToursPage() {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Read-only fetch for the past-date browser — only runs when an earlier date is actually
+  // selected (the "today" case keeps using the live, realtime-backed state above). Guides pulled
+  // unfiltered (not .eq('status', 'active') like the live `guides` state) so a since-deactivated
+  // guide's name still resolves correctly in old allocations.
+  useEffect(() => {
+    if (!user || isViewingToday) return;
+    let active = true;
+    const loadPastView = async () => {
+      setPastViewLoading(true);
+      const [sessRes, bRes, cRes, guidesRes] = await Promise.all([
+        supabase.from('tour_sessions').select('id, label, start_time, tour_date').eq('user_id', user.id).eq('tour_date', viewDate).order('start_time', { ascending: true }),
+        supabase.from('bookings').select('booking_ref, customer_name, option_name, pax_adult, pax_youth, pax_child, pax_infant').eq('user_id', user.id).eq('travel_date', viewDate),
+        supabase.from('checkins').select('booking_ref, status, checked_in_at, display_name_override').eq('user_id', user.id).eq('travel_date', viewDate),
+        supabase.from('guides').select('id, name, guide_number').eq('user_id', user.id),
+      ]);
+      if (!active) return;
+      const sessionsData = sessRes.data || [];
+      setPastViewSessions(sessionsData);
+      setPastViewBookings(bRes.data || []);
+      setPastViewCheckins(cRes.data || []);
+      setPastViewGuides(guidesRes.data || []);
+
+      const sessionIds = sessionsData.map((s: any) => s.id);
+      if (sessionIds.length > 0) {
+        const [sbRes, sgRes] = await Promise.all([
+          supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
+          supabase.from('session_guides').select('session_id, guide_id, status').eq('user_id', user.id).in('session_id', sessionIds).eq('status', 'accepted'),
+        ]);
+        if (!active) return;
+        setPastViewSessionBookings(sbRes.data || []);
+        setPastViewSessionGuides(sgRes.data || []);
+      } else {
+        setPastViewSessionBookings([]);
+        setPastViewSessionGuides([]);
+      }
+      setPastViewLoading(false);
+    };
+    loadPastView();
+    return () => { active = false; };
+  }, [user, viewDate, isViewingToday]);
+
+  // Same shape as the live board's sessionIdToGuests/sessionIdToTeam above, just built from the
+  // past-view fetch instead of live state — grouped per session so the read-only cards below can
+  // show "who was allocated to whom, and check-in status" without re-deriving it per guide.
+  const pastViewSessionRows = useMemo(() => {
+    const bookingByRef = new Map(pastViewBookings.map((b: any) => [b.booking_ref, b]));
+    const checkinByRef = new Map(pastViewCheckins.map((c: any) => [c.booking_ref, c]));
+    const guideById2 = new Map(pastViewGuides.map((g: any) => [g.id, g]));
+    const teamBySession = new Map<string, any[]>();
+    pastViewSessionGuides.forEach((sg: any) => {
+      const guide = guideById2.get(sg.guide_id);
+      if (!guide) return;
+      const arr = teamBySession.get(sg.session_id) || [];
+      arr.push(guide);
+      teamBySession.set(sg.session_id, arr);
+    });
+    const guestsBySession = new Map<string, any[]>();
+    pastViewSessionBookings.forEach((sb: any) => {
+      const b = bookingByRef.get(sb.booking_ref);
+      if (!b) return;
+      const c = checkinByRef.get(sb.booking_ref);
+      const arr = guestsBySession.get(sb.session_id) || [];
+      arr.push({
+        bookingRef: sb.booking_ref,
+        displayName: (c?.display_name_override && String(c.display_name_override).trim()) || b.customer_name,
+        pax: paxTotal(b),
+        allottedGuideName: sb.allotted_guide_id ? (guideById2.get(sb.allotted_guide_id)?.name || 'Unknown guide') : null,
+        status: c?.status || null,
+      });
+      guestsBySession.set(sb.session_id, arr);
+    });
+    return pastViewSessions.map(s => ({
+      session: s,
+      team: teamBySession.get(s.id) || [],
+      guests: guestsBySession.get(s.id) || [],
+    }));
+  }, [pastViewSessions, pastViewSessionBookings, pastViewSessionGuides, pastViewCheckins, pastViewBookings, pastViewGuides]);
 
   const todayStr = new Date().toLocaleDateString('en-US', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
@@ -824,12 +922,31 @@ export default function TodayToursPage() {
         {/* HEADER */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-border/50">
           <div>
-            <h1 className="text-3xl font-extrabold tracking-tight mb-2">Today's Tours</h1>
+            <h1 className="text-3xl font-extrabold tracking-tight mb-2">{isViewingToday ? "Today's Tours" : 'Past Tours'}</h1>
             <div className="flex items-center gap-2 text-muted-foreground font-medium">
               <CalendarIcon size={16} className="text-gold" />
-              <span>{todayStr}</span>
+              <span>{isViewingToday ? todayStr : new Date(viewDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
             </div>
-            <div className="mt-2"><SyncStatusIndicator /></div>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="date"
+                value={viewDate}
+                min={HISTORY_FLOOR}
+                max={todayStrDate}
+                onChange={e => setViewDate(e.target.value)}
+                className="text-xs py-1.5 px-2 rounded-lg border border-border bg-background"
+                aria-label="View a past date's sessions"
+              />
+              {!isViewingToday && (
+                <button
+                  onClick={() => setViewDate(todayStrDate)}
+                  className="text-[10px] font-bold uppercase tracking-widest text-gold hover:underline"
+                >
+                  Back to Today
+                </button>
+              )}
+            </div>
+            {isViewingToday && <div className="mt-2"><SyncStatusIndicator /></div>}
           </div>
           <div className="text-right flex flex-col items-end gap-3">
             <div className="flex items-center justify-end gap-2 text-2xl font-mono font-bold text-gold drop-shadow-md mb-2">
@@ -847,6 +964,8 @@ export default function TodayToursPage() {
           </div>
         </div>
 
+        {isViewingToday ? (
+        <>
         {/* SUMMARY BAR */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="aurelia-card p-4 border-l-[3px] border-l-gold">
@@ -978,6 +1097,10 @@ export default function TodayToursPage() {
               />
             ))}
           </div>
+        )}
+        </>
+        ) : (
+          <PastDayView loading={pastViewLoading} rows={pastViewSessionRows} />
         )}
       </div>
 
@@ -1360,6 +1483,77 @@ function SessionBoard({
           />
         )}
       </div>
+    </div>
+  );
+}
+
+// ────────── PAST-DATE BROWSER (read-only) ──────────
+// Deliberately NOT SessionBoard — that component's props are almost entirely write handlers
+// (balance, lock, pay, reassign…), none of which apply to a past date yet (editing history is a
+// later task). A dedicated, read-only card keeps that boundary structural rather than relying on
+// every handler being carefully no-op'd.
+function PastDayView({ loading, rows }: {
+  loading: boolean;
+  rows: { session: { id: string; label: string | null; start_time: string | null }; team: { id: string; name: string; guide_number: string | null }[]; guests: { bookingRef: string; displayName: string; pax: number; allottedGuideName: string | null; status: string | null }[] }[];
+}) {
+  if (loading) {
+    return <div className="flex justify-center p-12"><div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin" /></div>;
+  }
+  if (rows.length === 0) {
+    return (
+      <div className="aurelia-card p-12 text-center flex flex-col items-center max-w-md mx-auto mt-12">
+        <CalendarIcon size={48} className="text-muted-foreground/30 mb-4" />
+        <h3 className="text-xl font-bold mb-2">No tour sessions on this date</h3>
+        <p className="text-muted-foreground">Pick a different date above.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-6">
+      {rows.map(({ session, team, guests }) => {
+        const checkedIn = guests.filter(g => g.status === 'checked_in').length;
+        const totalPax = guests.reduce((s, g) => s + g.pax, 0);
+        return (
+          <div key={session.id} className="aurelia-card overflow-hidden border border-border">
+            <div className="bg-muted border-b border-border px-4 md:px-5 py-4">
+              <h3 className="font-extrabold text-lg truncate">{session.label || 'Untitled Session'}</h3>
+              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5">
+                <Clock size={12} />
+                <span>{session.start_time || '—'}</span>
+                <span>&middot;</span>
+                <span>{checkedIn} / {guests.length} checked in &middot; {totalPax} pax</span>
+              </p>
+              {team.length > 0 && (
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  Guide{team.length !== 1 ? 's' : ''}: <span className="font-bold text-foreground">{team.map(g => g.name).join(', ')}</span>
+                </p>
+              )}
+            </div>
+            <div className="p-4 md:p-5 space-y-1.5">
+              {guests.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No guests in this session.</p>
+              ) : guests.map(g => (
+                <div key={g.bookingRef} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/50">
+                  <div className="min-w-0">
+                    <span className="font-bold text-sm text-foreground">{g.displayName}</span>
+                    <span className="text-xs text-muted-foreground ml-2">{g.pax} pax</span>
+                    {g.allottedGuideName && (
+                      <span className="text-xs text-muted-foreground ml-2">&middot; allotted to {g.allottedGuideName}</span>
+                    )}
+                  </div>
+                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${
+                    g.status === 'checked_in' ? 'bg-green-600/15 text-green-700'
+                    : g.status === 'no_show' ? 'bg-red-600/15 text-red-700'
+                    : 'bg-amber-600/15 text-amber-700'
+                  }`}>
+                    {g.status === 'checked_in' ? 'Checked In' : g.status === 'no_show' ? 'No Show' : 'Not Resolved'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
