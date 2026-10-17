@@ -84,8 +84,8 @@ export default function LeaderboardPage() {
   }, [reviews, bounds]);
 
   const bookingCountsForPeriod = useMemo(
-    () => computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, bounds),
-    [sessionBookings, checkins, bounds]
+    () => computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, bounds, sessionGuides),
+    [sessionBookings, checkins, bounds, sessionGuides]
   );
   const tourCountsForPeriod = useMemo(
     () => computeToursPerGuide(sessionGuides, sessions, bounds),

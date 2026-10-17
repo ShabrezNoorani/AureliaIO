@@ -89,7 +89,9 @@ export function useGuideOwnScore(
         supabase.from('guide_reviews').select('*').eq('guide_id', guideId),
         supabase.from('guide_reviews').select('id, guide_id, stars, review_date, excluded_from_score').gte('review_date', ADMIN_DEFAULT_FILTER_START),
         supabase.from('guides').select('id').eq('user_id', guideUserId),
-        supabase.from('session_bookings').select('booking_ref, allotted_guide_id').eq('user_id', guideUserId),
+        // session_id is required now — computeCheckedInBookingCountsForPeriod cross-checks it
+        // against session_guides below, so a guideless session's bookings count toward nobody.
+        supabase.from('session_bookings').select('booking_ref, allotted_guide_id, session_id').eq('user_id', guideUserId),
         // travel_date, not just status — the booking-count rule dates directly off this row, never
         // a joined session (see computeCheckedInBookingCountsForPeriod's own doc comment).
         supabase.from('checkins').select('booking_ref, status, travel_date')
@@ -139,8 +141,8 @@ export function useGuideOwnScore(
   }, [allReviewsSinceStart, bounds]);
 
   const periodBookingCounts = useMemo(
-    () => computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, bounds),
-    [sessionBookings, checkins, bounds]
+    () => computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, bounds, sessionGuides),
+    [sessionBookings, checkins, bounds, sessionGuides]
   );
   const periodTourCounts = useMemo(
     () => computeToursPerGuide(sessionGuides, sessions, bounds),

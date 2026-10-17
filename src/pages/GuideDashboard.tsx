@@ -355,8 +355,8 @@ export default function GuideDashboard() {
   // whatever adminFilter/statusFilter the rest of the page is currently showing. Dated directly
   // off each checkin row's own travel_date (see computeCheckedInBookingRecords' own doc comment).
   const checkedInBookingRecords = useMemo(
-    () => computeCheckedInBookingRecords(sessionBookingsForGuiding, checkinsForGuiding, ADMIN_DEFAULT_FILTER_START),
-    [sessionBookingsForGuiding, checkinsForGuiding]
+    () => computeCheckedInBookingRecords(sessionBookingsForGuiding, checkinsForGuiding, ADMIN_DEFAULT_FILTER_START, sessionGuidesForPay),
+    [sessionBookingsForGuiding, checkinsForGuiding, sessionGuidesForPay]
   );
   const overallBookingCounts = useMemo(() => countCheckedInBookingsByGuide(checkedInBookingRecords), [checkedInBookingRecords]);
 

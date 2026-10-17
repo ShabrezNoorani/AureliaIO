@@ -12,6 +12,7 @@ import {
   ADMIN_DEFAULT_FILTER_START,
   PUNCTUALITY_GRACE_MINUTES,
   computeToursPerGuide, computeCheckedInBookingCountsForPeriod, computeReviewPointsPerUnit,
+  buildSessionMembershipKeys,
   normalizeReviewScoreTo100, computeCombinedMetric, computeMetricValue, computeGuideLeaderboardByMetric,
   getLeaderboardPeriodBounds, getLeaderboardPeriodLabel, stepLeaderboardPeriod,
   filterReviewsByPeriod, filterArrivalsByPeriod, DEFAULT_LEADERBOARD_PERIOD,
@@ -741,58 +742,66 @@ describe('computeGuideReviewScore', () => {
 
 describe('computeCheckedInBookingRecords — the score\'s denominator: checked-in BOOKINGS, dated off the checkins row itself', () => {
   const since = '2026-10-01';
+  // g1 is an accepted member of s1; g2 of s2 — established once, reused by every test below so
+  // "the guide is actually present on the session" is never the thing under test unless a test
+  // deliberately omits it (see the guideless-session tests further down).
+  const membership = [
+    { guide_id: 'g1', session_id: 's1', status: 'accepted' },
+    { guide_id: 'g2', session_id: 's2', status: 'accepted' },
+    { guide_id: 'guideB', session_id: 's1', status: 'accepted' },
+  ];
 
   it('a booking with no checkins row at all (unresolved) is NOT counted', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
-    expect(computeCheckedInBookingRecords(sb, [], since)).toEqual([]);
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's1' }];
+    expect(computeCheckedInBookingRecords(sb, [], since, membership)).toEqual([]);
   });
 
   it('a booking marked NO-SHOW is NOT counted — only checked_in counts', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's1' }];
     const checkins = [{ booking_ref: 'B1', status: 'no_show', travel_date: '2026-10-05' }];
-    expect(computeCheckedInBookingRecords(sb, checkins, since)).toEqual([]);
+    expect(computeCheckedInBookingRecords(sb, checkins, since, membership)).toEqual([]);
   });
 
   it('a checked-in booking counts, dated and month-grouped from the CHECKIN\'s own travel_date — never a joined session', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's1' }];
     const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
-    const records = computeCheckedInBookingRecords(sb, checkins, since);
+    const records = computeCheckedInBookingRecords(sb, checkins, since, membership);
     expect(records).toEqual([{ guide_id: 'g1', booking_ref: 'B1', month: '2026-10' }]);
   });
 
   it('excludes a checked-in booking dated before the since-date floor', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's1' }];
     const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-09-30' }];
-    expect(computeCheckedInBookingRecords(sb, checkins, since)).toEqual([]);
+    expect(computeCheckedInBookingRecords(sb, checkins, since, membership)).toEqual([]);
   });
 
   it('a checkins row with no travel_date is never assumed in-range', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1' }];
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's1' }];
     const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: null }];
-    expect(computeCheckedInBookingRecords(sb, checkins, since)).toEqual([]);
+    expect(computeCheckedInBookingRecords(sb, checkins, since, membership)).toEqual([]);
   });
 
   it('attributes a reassigned, checked-in booking to whichever guide currently holds it, never both (no double-counting on transfer)', () => {
-    // Post-reassignment state: ONE session_bookings row, now allotted to guideB.
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'guideB' }];
+    // Post-reassignment state: ONE session_bookings row, now allotted to guideB (also a member of s1).
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'guideB', session_id: 's1' }];
     const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
-    const records = computeCheckedInBookingRecords(sb, checkins, since);
+    const records = computeCheckedInBookingRecords(sb, checkins, since, membership);
     expect(records).toEqual([{ guide_id: 'guideB', booking_ref: 'B1', month: '2026-10' }]);
   });
 
   it('counts DISTINCT BOOKINGS, not people/pax and not tours — a checked-in booking appearing twice in session_bookings counts once, regardless of how many guests it carries', () => {
     const sb = [
-      { booking_ref: 'B1', allotted_guide_id: 'g1' },
-      { booking_ref: 'B1', allotted_guide_id: 'g1' },
+      { booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's1' },
+      { booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's1' },
     ];
     const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
-    expect(computeCheckedInBookingRecords(sb, checkins, since)).toHaveLength(1);
+    expect(computeCheckedInBookingRecords(sb, checkins, since, membership)).toHaveLength(1);
   });
 
   it('a booking with no allotted guide is skipped even if checked in', () => {
-    const sb = [{ booking_ref: 'B1', allotted_guide_id: null }];
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: null, session_id: 's1' }];
     const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
-    expect(computeCheckedInBookingRecords(sb, checkins, since)).toEqual([]);
+    expect(computeCheckedInBookingRecords(sb, checkins, since, membership)).toEqual([]);
   });
 
   it('REGRESSION: counting off the checkin\'s own travel_date (not a joined session\'s tour_date) means a stale/mismatched session_bookings link can never under- or over-count — this is the exact "35 vs 47" bug fixed', () => {
@@ -800,12 +809,12 @@ describe('computeCheckedInBookingRecords — the score\'s denominator: checked-i
     // since-date floor — proves the count is exactly the distinct checked-in bookings on/after
     // the floor, nothing aggregated by person/pax and nothing pulled in from before it.
     const sb = [
-      { booking_ref: 'A1', allotted_guide_id: 'g1' },
-      { booking_ref: 'A2', allotted_guide_id: 'g1' },
-      { booking_ref: 'A3', allotted_guide_id: 'g1' }, // no-show — excluded
-      { booking_ref: 'A4', allotted_guide_id: 'g1' }, // unresolved — excluded
-      { booking_ref: 'A5', allotted_guide_id: 'g1' }, // checked in but BEFORE the floor — excluded
-      { booking_ref: 'B1', allotted_guide_id: 'g2' },
+      { booking_ref: 'A1', allotted_guide_id: 'g1', session_id: 's1' },
+      { booking_ref: 'A2', allotted_guide_id: 'g1', session_id: 's1' },
+      { booking_ref: 'A3', allotted_guide_id: 'g1', session_id: 's1' }, // no-show — excluded
+      { booking_ref: 'A4', allotted_guide_id: 'g1', session_id: 's1' }, // unresolved — excluded
+      { booking_ref: 'A5', allotted_guide_id: 'g1', session_id: 's1' }, // checked in but BEFORE the floor — excluded
+      { booking_ref: 'B1', allotted_guide_id: 'g2', session_id: 's2' },
     ];
     const checkins = [
       { booking_ref: 'A1', status: 'checked_in', travel_date: '2026-10-02' },
@@ -814,10 +823,45 @@ describe('computeCheckedInBookingRecords — the score\'s denominator: checked-i
       { booking_ref: 'A5', status: 'checked_in', travel_date: '2026-09-15' },
       { booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-03' },
     ];
-    const records = computeCheckedInBookingRecords(sb, checkins, since);
+    const records = computeCheckedInBookingRecords(sb, checkins, since, membership);
     const counts = countCheckedInBookingsByGuide(records);
     expect(counts.get('g1')).toBe(2); // A1, A2 only
     expect(counts.get('g2')).toBe(1); // B1
+  });
+
+  // ── GUIDELESS SESSIONS: a tour nobody was assigned to counts toward nobody's score ──────────
+  it('a checked-in booking whose session has NO guide at all (empty session_guides) is excluded, even with a stale allotted_guide_id', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-no-guide' }];
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    // No membership passed at all for s-no-guide — same as a session that never had a guide.
+    expect(computeCheckedInBookingRecords(sb, checkins, since, [])).toEqual([]);
+  });
+
+  it('is excluded even when that exact guide_id IS a member of a DIFFERENT session (membership is per-session, not global)', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-no-guide' }];
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    // g1 is a real, accepted member of s1 — just not of s-no-guide, which is what this booking is on.
+    expect(computeCheckedInBookingRecords(sb, checkins, since, membership)).toEqual([]);
+  });
+
+  it('is excluded when the only session_guides row for that session was never accepted (offered/declined)', () => {
+    const sb = [{ booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's3' }];
+    const checkins = [{ booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' }];
+    const offeredOnly = [{ guide_id: 'g1', session_id: 's3', status: 'offered' }];
+    expect(computeCheckedInBookingRecords(sb, checkins, since, offeredOnly)).toEqual([]);
+  });
+
+  it('a mix of a guideless session and a properly-staffed one only counts the staffed one', () => {
+    const sb = [
+      { booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's-no-guide' }, // guideless
+      { booking_ref: 'B2', allotted_guide_id: 'g1', session_id: 's1' }, // properly staffed
+    ];
+    const checkins = [
+      { booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' },
+      { booking_ref: 'B2', status: 'checked_in', travel_date: '2026-10-06' },
+    ];
+    const records = computeCheckedInBookingRecords(sb, checkins, since, membership);
+    expect(records).toEqual([{ guide_id: 'g1', booking_ref: 'B2', month: '2026-10' }]);
   });
 });
 
@@ -1241,25 +1285,116 @@ describe('stepLeaderboardPeriod — "view an earlier week/month"', () => {
 
 describe('computeCheckedInBookingCountsForPeriod — period-bounded booking counts for the leaderboard', () => {
   const sessionBookings: SessionBookingForGuiding[] = [
-    { booking_ref: 'B1', allotted_guide_id: 'g1' },
-    { booking_ref: 'B2', allotted_guide_id: 'g1' },
-    { booking_ref: 'B3', allotted_guide_id: 'g2' },
+    { booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's1' },
+    { booking_ref: 'B2', allotted_guide_id: 'g1', session_id: 's1' },
+    { booking_ref: 'B3', allotted_guide_id: 'g2', session_id: 's2' },
   ];
   const checkins: CheckinForGuiding[] = [
     { booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' },
     { booking_ref: 'B2', status: 'checked_in', travel_date: '2026-10-20' },
     { booking_ref: 'B3', status: 'checked_in', travel_date: '2026-10-05' },
   ];
+  const membership: SessionGuideForTourCount[] = [
+    { guide_id: 'g1', session_id: 's1', status: 'accepted' },
+    { guide_id: 'g2', session_id: 's2', status: 'accepted' },
+  ];
 
   it('counts only bookings checked in within the given bounds', () => {
-    const counts = computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, { start: '2026-10-01', end: '2026-10-10' });
+    const counts = computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, { start: '2026-10-01', end: '2026-10-10' }, membership);
     expect(counts.get('g1')).toBe(1); // only B1 (Oct 5) — B2 (Oct 20) falls outside
     expect(counts.get('g2')).toBe(1);
   });
 
   it('widening the window to cover both bookings counts both', () => {
-    const counts = computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, { start: '2026-10-01', end: '9999-12-31' });
+    const counts = computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, { start: '2026-10-01', end: '9999-12-31' }, membership);
     expect(counts.get('g1')).toBe(2);
+  });
+
+  it('a guideless session\'s checked-in booking is excluded, even widening the window to cover it', () => {
+    const guidelessBooking: SessionBookingForGuiding[] = [
+      { booking_ref: 'B4', allotted_guide_id: 'g1', session_id: 's-no-guide' },
+    ];
+    const guidelessCheckins: CheckinForGuiding[] = [
+      { booking_ref: 'B4', status: 'checked_in', travel_date: '2026-10-05' },
+    ];
+    const counts = computeCheckedInBookingCountsForPeriod(guidelessBooking, guidelessCheckins, { start: '2026-10-01', end: '9999-12-31' }, membership);
+    expect(counts.get('g1') || 0).toBe(0);
+  });
+});
+
+describe('buildSessionMembershipKeys', () => {
+  it('includes only accepted (guide, session) pairs', () => {
+    const keys = buildSessionMembershipKeys([
+      { guide_id: 'g1', session_id: 's1', status: 'accepted' },
+      { guide_id: 'g2', session_id: 's2', status: 'offered' },
+      { guide_id: 'g3', session_id: 's3', status: 'declined' },
+    ]);
+    expect(keys.has('g1:s1')).toBe(true);
+    expect(keys.has('g2:s2')).toBe(false);
+    expect(keys.has('g3:s3')).toBe(false);
+  });
+
+  it('a session with zero session_guides rows produces zero keys for it', () => {
+    const keys = buildSessionMembershipKeys([{ guide_id: 'g1', session_id: 's1', status: 'accepted' }]);
+    expect(keys.has('g1:s-no-guide')).toBe(false);
+    expect(Array.from(keys).some((k) => k.endsWith(':s-no-guide'))).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// END-TO-END: a guideless session contributes to NO guide's score, anywhere — bookings, tours,
+// punctuality, and the full leaderboard/combined pipeline, all from one shared fixture.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('a session with no guide assigned counts toward NOBODY\'s score — bookings, tours, punctuality, leaderboard', () => {
+  const bounds = { start: '2026-10-01', end: '9999-12-31' };
+
+  // g1 is a real, accepted member of s1 (a normal, properly-staffed session) and has plenty of
+  // real activity there. s-orphan is a session with ZERO session_guides rows (no guide was ever
+  // assigned) — but its booking was still checked in and, through some stale/bad data, still
+  // carries allotted_guide_id: 'g1'. None of s-orphan's activity should reach g1 (or anyone).
+  const sessionGuides: SessionGuideForTourCount[] = [
+    { guide_id: 'g1', session_id: 's1', status: 'accepted' },
+  ];
+  const sessions = [
+    { id: 's1', tour_date: '2026-10-05' },
+    { id: 's-orphan', tour_date: '2026-10-06' },
+  ];
+  const sessionBookings: SessionBookingForGuiding[] = [
+    { booking_ref: 'B1', allotted_guide_id: 'g1', session_id: 's1' }, // legit
+    { booking_ref: 'B2', allotted_guide_id: 'g1', session_id: 's-orphan' }, // guideless session, stale allotment
+  ];
+  const checkins: CheckinForGuiding[] = [
+    { booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' },
+    { booking_ref: 'B2', status: 'checked_in', travel_date: '2026-10-06' },
+  ];
+  const reviews = [review({ id: 'r1', guide_id: 'g1', stars: 5 }), review({ id: 'r2', guide_id: 'g1', stars: 5 }), review({ id: 'r3', guide_id: 'g1', stars: 5 })];
+  const reviewsByGuide = new Map([['g1', reviews]]);
+  // An arrival somehow logged against the orphan session shouldn't be possible through the real
+  // app (a guide can only tap "arrived" on a session they're actually on), but even if one
+  // existed, punctuality is computed per-guide from guide_arrivals directly (no session_guides
+  // cross-check needed there — see the module-level comment on this describe block's own
+  // reasoning) so this fixture only needs to prove the BOOKINGS/TOURS side, which is the one
+  // that previously trusted allotted_guide_id/session_guides without cross-checking each other.
+  const arrivalsByGuide = new Map<string, ArrivalForPeriod[]>();
+
+  it('bookings: the guideless session\'s checked-in booking is excluded from g1\'s count', () => {
+    const counts = computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, bounds, sessionGuides);
+    expect(counts.get('g1')).toBe(1); // B1 only — B2 (orphan session) never counts
+  });
+
+  it('tours: the orphan session never appears as a tour for anyone (it has no session_guides row)', () => {
+    const tourCounts = computeToursPerGuide(sessionGuides, sessions, bounds);
+    expect(tourCounts.get('g1')).toBe(1); // s1 only
+  });
+
+  it('leaderboard: perBooking/perTour ranking reflects only the legitimately-staffed session', () => {
+    const bookingCounts = computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, bounds, sessionGuides);
+    const tourCounts = computeToursPerGuide(sessionGuides, sessions, bounds);
+    // g1 would be BELOW the 3-booking threshold if the orphan session's booking wrongly counted
+    // toward 2 — proving it doesn't: g1 has exactly 1 real booking here, under GUIDE_SCORE_MIN_BOOKINGS,
+    // so g1 is correctly NOT ranked at all despite having 3 five-star reviews on file.
+    const leaderboard = computeGuideLeaderboardByMetric(['g1'], 'perBooking', reviewsByGuide, bookingCounts, tourCounts, arrivalsByGuide);
+    expect(leaderboard).toHaveLength(0);
   });
 });
 

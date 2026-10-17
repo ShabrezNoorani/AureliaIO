@@ -402,10 +402,13 @@ export interface CheckinForGuiding {
 export interface SessionBookingForGuiding {
   booking_ref: string;
   allotted_guide_id: string | null;
-  /** Not used by computeCheckedInBookingRecords (the date comes from the checkins row itself
-      now, never a joined session) — kept on this shared shape only because real queries already
-      select it alongside booking_ref/allotted_guide_id for other purposes. */
-  session_id?: string;
+  /** The DATE still comes from the checkins row itself, never this session (see
+      computeCheckedInBookingRecords' own doc comment for why) — but `session_id` IS required now,
+      to cross-check that `allotted_guide_id` actually has an accepted session_guides membership
+      on THIS session (see buildSessionMembershipKeys). Without that check, a stale
+      allotted_guide_id on a session that guide was later removed from — or that never had any
+      guide at all — would still count toward their score. */
+  session_id: string;
 }
 
 export interface SessionDateForGuiding {
@@ -421,17 +424,38 @@ export interface CheckedInBookingRecord {
 }
 
 /**
+ * The set of "this guide is actually present on this session" keys — an accepted session_guides
+ * row, and nothing else, is what makes a booking's allotted_guide_id (or an arrival's guide_id)
+ * TRUSTWORTHY for scoring. A session with NO accepted session_guides rows at all (no guide was
+ * ever assigned, or everyone was removed) can never produce a key here, so nothing attributed to
+ * it — any allotted_guide_id left over on its bookings, however that happened — can ever pass
+ * this check. This is the one shared gate computeCheckedInBookingRecords and
+ * computeCheckedInBookingCountsForPeriod both run every allotment through.
+ */
+export function buildSessionMembershipKeys(sessionGuides: SessionGuideForTourCount[]): Set<string> {
+  const keys = new Set<string>();
+  for (const sg of sessionGuides) {
+    if (sg.status !== 'accepted') continue;
+    keys.add(`${sg.guide_id}:${sg.session_id}`);
+  }
+  return keys;
+}
+
+/**
  * THE score's denominator, and the exact definition the spec requires: a "booking guided" is one
  * the guide was ALLOTTED (session_bookings.allotted_guide_id) that ALSO has a `checkins` row with
- * status 'checked_in' and travel_date >= sinceDate. Nothing else — no join through tour_sessions,
- * no date comparison against "today". This is deliberately simpler than an earlier version of
- * this function, which filtered by the LINKED SESSION's own tour_date instead of the checkin's
- * own travel_date — the two can diverge (a stale/mismatched session_bookings link, a travel_date
- * correction that the session link didn't follow), and that divergence is exactly what caused two
- * different surfaces to report two different counts for the same guide (e.g. "35" vs the real
- * "47") despite both claiming to count the same thing. Counting directly off the checkins row
- * removes that divergence at the source: every surface that calls this function now counts
- * literally the same set of rows, every time.
+ * status 'checked_in' and travel_date >= sinceDate, AND that guide actually has an ACCEPTED
+ * session_guides membership on the booking's own session (see buildSessionMembershipKeys) — a
+ * tour/session with no guide assigned or present counts toward NOBODY's score, regardless of what
+ * allotted_guide_id happens to say. No other join — no comparison against "today", nothing from
+ * tour_sessions itself. This is deliberately simpler than an earlier version of this function,
+ * which filtered by the LINKED SESSION's own tour_date instead of the checkin's own travel_date —
+ * the two can diverge (a stale/mismatched session_bookings link, a travel_date correction that the
+ * session link didn't follow), and that divergence is exactly what caused two different surfaces
+ * to report two different counts for the same guide (e.g. "35" vs the real "47") despite both
+ * claiming to count the same thing. Counting directly off the checkins row removes that divergence
+ * at the source: every surface that calls this function now counts literally the same set of
+ * rows, every time.
  *
  * Counts DISTINCT bookings, never pax, never tours. A booking reassigned between guides
  * (allotted_guide_id updated in place, same session_bookings row — see
@@ -441,7 +465,8 @@ export interface CheckedInBookingRecord {
 export function computeCheckedInBookingRecords(
   sessionBookings: SessionBookingForGuiding[],
   checkins: CheckinForGuiding[],
-  sinceDate: string
+  sinceDate: string,
+  sessionGuides: SessionGuideForTourCount[]
 ): CheckedInBookingRecord[] {
   // The LATEST checked-in travel_date on file per booking_ref, since a booking should only ever
   // have one terminal checkins row — but if more than one somehow exists, this is a deterministic,
@@ -453,11 +478,13 @@ export function computeCheckedInBookingRecords(
     const existing = checkedInDateByRef.get(c.booking_ref);
     if (!existing || c.travel_date > existing) checkedInDateByRef.set(c.booking_ref, c.travel_date);
   }
+  const membershipKeys = buildSessionMembershipKeys(sessionGuides);
 
   const seen = new Set<string>();
   const records: CheckedInBookingRecord[] = [];
   for (const sb of sessionBookings) {
     if (!sb.allotted_guide_id) continue;
+    if (!membershipKeys.has(`${sb.allotted_guide_id}:${sb.session_id}`)) continue; // no guide present on this session — counts for nobody
     const travelDate = checkedInDateByRef.get(sb.booking_ref);
     if (!travelDate) continue; // not checked in since sinceDate — never counted, regardless of why
     const key = `${sb.allotted_guide_id}:${sb.booking_ref}`;
@@ -622,11 +649,14 @@ export function computeToursPerGuide(
 /** The period-bounded sibling of countCheckedInBookingsByGuide/computeCheckedInBookingRecords
     above — those stay exactly as they are (still what the "real", always-since-Oct-1 score uses
     everywhere else in the app); this one additionally accepts an UPPER bound, so the leaderboard's
-    day/week/month views can count only the bookings checked in within that narrower window. */
+    day/week/month views can count only the bookings checked in within that narrower window. Same
+    session-membership gate as computeCheckedInBookingRecords (see buildSessionMembershipKeys) — a
+    guideless session's checked-in bookings count toward nobody here either. */
 export function computeCheckedInBookingCountsForPeriod(
   sessionBookings: SessionBookingForGuiding[],
   checkins: CheckinForGuiding[],
-  bounds: DateRangeBounds
+  bounds: DateRangeBounds,
+  sessionGuides: SessionGuideForTourCount[]
 ): Map<string, number> {
   const checkedInDateByRef = new Map<string, string>();
   for (const c of checkins) {
@@ -635,10 +665,12 @@ export function computeCheckedInBookingCountsForPeriod(
     const existing = checkedInDateByRef.get(c.booking_ref);
     if (!existing || c.travel_date > existing) checkedInDateByRef.set(c.booking_ref, c.travel_date);
   }
+  const membershipKeys = buildSessionMembershipKeys(sessionGuides);
   const seen = new Set<string>();
   const counts = new Map<string, number>();
   for (const sb of sessionBookings) {
     if (!sb.allotted_guide_id) continue;
+    if (!membershipKeys.has(`${sb.allotted_guide_id}:${sb.session_id}`)) continue; // no guide present on this session — counts for nobody
     if (!checkedInDateByRef.has(sb.booking_ref)) continue;
     const key = `${sb.allotted_guide_id}:${sb.booking_ref}`;
     if (seen.has(key)) continue;
