@@ -2,11 +2,12 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat, ShieldAlert } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, AlertTriangle, Pencil, Check, X, Trash2, CalendarPlus, MessageCircle, Repeat, ShieldAlert, MapPin } from 'lucide-react';
 import { buildGuideInviteLinks, buildSharedGuideInviteLink, forceBrowserUrl } from '@/lib/tourInvites';
 import { reassignSessionBookings } from '@/lib/sessionMoves';
 import { localDateStr, shortProductCode, isCancelled, checkinTime, normalizeTime } from '@/lib/utils';
 import { computeSessionCapacity } from '@/lib/staffingAlerts';
+import { fetchMeetingPoints, type MeetingPointRow } from '@/lib/meetingPoints';
 
 interface Booking {
   id: string;
@@ -33,6 +34,7 @@ interface TourSession {
   notes: string | null;
   max_pax_per_guide: number | null;
   needs_guide: boolean;
+  meeting_point_id: string | null;
 }
 
 interface SessionBookingRow {
@@ -121,7 +123,11 @@ export default function DispatchPage() {
   const [sessionBookings, setSessionBookings] = useState<SessionBookingRow[]>([]);
   const [sessionGuides, setSessionGuides] = useState<SessionGuideRow[]>([]);
   const [guides, setGuides] = useState<Guide[]>([]);
+  const [meetingPoints, setMeetingPoints] = useState<MeetingPointRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Which meeting point (if any) the next created session should start with — optional, same as
+  // every other per-session setting here.
+  const [newSessionMeetingPointId, setNewSessionMeetingPointId] = useState('');
 
   const [selectedGroupKeys, setSelectedGroupKeys] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -146,7 +152,7 @@ export default function DispatchPage() {
     if (!user) return;
     setLoading(true);
 
-    const [bRes, sRes, gRes] = await Promise.all([
+    const [bRes, sRes, gRes, mpData] = await Promise.all([
       // Cancelled bookings are fetched too (not filtered out) — Dispatch shows them, struck
       // through and unselectable, rather than making them silently disappear from the day.
       supabase.from('bookings').select('*')
@@ -157,6 +163,9 @@ export default function DispatchPage() {
         .order('start_time', { ascending: true }),
       supabase.from('guides').select('id, name, guide_number, status, whatsapp, email, base_rate')
         .eq('user_id', user.id).eq('status', 'active').order('name'),
+      // The whole meeting-point library, not date-scoped — it's a company-wide reference list,
+      // not a per-day fetch.
+      fetchMeetingPoints(supabase, user.id),
     ]);
     if (!mountedRef.current) return;
 
@@ -164,6 +173,7 @@ export default function DispatchPage() {
     const sessionsData = sRes.data || [];
     setSessions(sessionsData);
     setGuides(gRes.data || []);
+    setMeetingPoints(mpData);
 
     const sessionIds = sessionsData.map((s: TourSession) => s.id);
     if (sessionIds.length > 0) {
@@ -307,6 +317,7 @@ export default function DispatchPage() {
   }, [sessionGuides]);
 
   const guideById = useMemo(() => new Map(guides.map(g => [g.id, g])), [guides]);
+  const meetingPointById = useMemo(() => new Map(meetingPoints.map(mp => [mp.id, mp])), [meetingPoints]);
 
   const sessionIdToBookings = useMemo(() => {
     const bookingByRef = new Map(bookings.map(b => [b.booking_ref, b]));
@@ -392,7 +403,10 @@ export default function DispatchPage() {
 
       const { data: newSession, error: sessErr } = await supabase
         .from('tour_sessions')
-        .insert({ user_id: user.id, tour_date: selectedDate, label, start_time: earliestTime, max_pax_per_guide: maxPaxPerGuide })
+        .insert({
+          user_id: user.id, tour_date: selectedDate, label, start_time: earliestTime,
+          max_pax_per_guide: maxPaxPerGuide, meeting_point_id: newSessionMeetingPointId || null,
+        })
         .select()
         .single();
       if (sessErr || !newSession) throw sessErr || new Error('No session returned');
@@ -402,6 +416,7 @@ export default function DispatchPage() {
       setSelectedGroupKeys(new Set());
       setNewSessionLabel('');
       setNewSessionMaxPaxPerGuide('');
+      setNewSessionMeetingPointId('');
       toast.success(`Session "${label}" created with ${refs.length} booking${refs.length !== 1 ? 's' : ''}`);
       await loadData();
     } catch (e) {
@@ -571,6 +586,16 @@ export default function DispatchPage() {
   const handleUpdateSessionCapacity = async (sessionId: string, field: 'max_pax_per_guide' | 'needs_guide', value: number | boolean | null) => {
     if (!user) return;
     await supabase.from('tour_sessions').update({ [field]: value }).eq('id', sessionId).eq('user_id', user.id);
+    await loadData();
+  };
+
+  // Owner-only: pick (or clear) this session's meeting point anytime, not just at creation —
+  // same small-write-then-reload pattern as the capacity controls above. `null` clears it back to
+  // "no meeting point", which falls back to today's ungated arrival behavior (see
+  // GuideCheckin.tsx's handleArrive).
+  const handleUpdateSessionMeetingPoint = async (sessionId: string, meetingPointId: string | null) => {
+    if (!user) return;
+    await supabase.from('tour_sessions').update({ meeting_point_id: meetingPointId }).eq('id', sessionId).eq('user_id', user.id);
     await loadData();
   };
 
@@ -775,6 +800,15 @@ export default function DispatchPage() {
                   title="Optional — blank means no limit"
                   className="aurelia-input w-full sm:w-44"
                 />
+                <select
+                  value={newSessionMeetingPointId}
+                  onChange={e => setNewSessionMeetingPointId(e.target.value)}
+                  title="Optional — a session with no meeting point skips arrival geo-verification"
+                  className="aurelia-input w-full sm:w-52 appearance-none bg-background"
+                >
+                  <option value="">No meeting point</option>
+                  {meetingPoints.map(mp => <option key={mp.id} value={mp.id}>{mp.name}</option>)}
+                </select>
                 <button
                   onClick={handleCreateSession}
                   disabled={creating}
@@ -935,6 +969,21 @@ export default function DispatchPage() {
                             >
                               {session.needs_guide ? '✓ Needs another guide' : 'Flag: needs another guide'}
                             </button>
+                          </div>
+                          {/* Meeting point — optional, pickable anytime. Shown to the guide too
+                              (GuideCheckin.tsx/GuideHome.tsx) and used to geo-verify "I've
+                              arrived" once set; a session left on "No meeting point" keeps
+                              working exactly as before (no GPS gate). */}
+                          <div className="flex items-center gap-2 mt-1.5 text-xs" onClick={e => e.stopPropagation()}>
+                            <MapPin size={12} className="text-muted-foreground shrink-0" />
+                            <select
+                              value={session.meeting_point_id || ''}
+                              onChange={e => handleUpdateSessionMeetingPoint(session.id, e.target.value || null)}
+                              className="aurelia-input text-xs py-1 appearance-none bg-background"
+                            >
+                              <option value="">No meeting point</option>
+                              {meetingPoints.map(mp => <option key={mp.id} value={mp.id}>{mp.name}</option>)}
+                            </select>
                           </div>
                         </div>
                         <button onClick={() => handleDeleteSession(session)} className="text-muted-foreground hover:text-red-700 p-1.5 shrink-0" title="Delete session">

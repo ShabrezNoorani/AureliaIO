@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from 'sonner';
-import { Calendar as CalendarIcon, Clock, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, RefreshCw, AlertTriangle, MapPin } from 'lucide-react';
 import GuestCard from '@/components/checkin/GuestCard';
 import CheckinConfirmModal from '@/components/checkin/CheckinConfirmModal';
 import TourGroup from '@/components/checkin/TourGroup';
@@ -22,6 +22,7 @@ import {
   ARRIVAL_COLUMNS, ArrivalRow, arrivalRetryKey, buildArrivalPayload, formatArrivalStatus,
   getArrivalCoords, mergeArrivalsGuardingPending, saveArrival, sessionIdFromArrivalKey,
 } from '@/lib/guideArrivals';
+import { fetchMeetingPoints, evaluateArrivalGate, type MeetingPointRow } from '@/lib/meetingPoints';
 import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
 import TransferTourModal from '@/components/guide/TransferTourModal';
 
@@ -56,6 +57,7 @@ interface TourSession {
   label: string | null;
   start_time: string | null;
   tour_date: string;
+  meeting_point_id: string | null;
 }
 
 interface SessionBookingRow {
@@ -117,6 +119,10 @@ export default function GuideCheckin() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [checkins, setCheckins] = useState<Checkin[]>([]);
   const [arrivals, setArrivals] = useState<ArrivalRow[]>([]);
+  // The company's whole meeting-point library — RLS lets a guide read their own company's rows.
+  // Resolved per-session via session.meeting_point_id, only to geo-verify "I've arrived"
+  // (handleArrive) and to show the chosen point's name on the card.
+  const [meetingPoints, setMeetingPoints] = useState<MeetingPointRow[]>([]);
   // Sessions whose arrival tap is mid-flight (waiting on the location fix) — distinct from the
   // retry queue, which only takes over once there's a payload to write.
   const [arrivingSessionIds, setArrivingSessionIds] = useState<Set<string>>(new Set());
@@ -203,6 +209,9 @@ export default function GuideCheckin() {
     // all. A missing RPC just yields an error here (data: null), so this degrades to an empty
     // list rather than breaking the page.
     const unsessionedPromise = supabase.rpc('my_company_unsessioned_bookings', { p_date: today });
+    // The company's meeting-point library — used to geo-verify "I've arrived" and to show the
+    // chosen point's name; RLS lets a guide read their own company's rows.
+    const meetingPointsPromise = fetchMeetingPoints(supabase, guideUserId);
 
     const acceptedSessionIds = (sgRes.data || []).map(sg => sg.session_id);
     if (acceptedSessionIds.length === 0) {
@@ -214,17 +223,18 @@ export default function GuideCheckin() {
       setArrivals([]);
       setSessionsLoaded(true);
       setGuestsLoaded(true);
-      const [otherGuidesData, sessionTeamRes, unsessionedRes] = await Promise.all([otherGuidesPromise, sessionTeamPromise, unsessionedPromise]);
+      const [otherGuidesData, sessionTeamRes, unsessionedRes, meetingPointsData] = await Promise.all([otherGuidesPromise, sessionTeamPromise, unsessionedPromise, meetingPointsPromise]);
       if (!mountedRef.current) return;
       setOtherGuides(otherGuidesData);
       setSessionTeamRows(sessionTeamRes.data || []);
       setUnsessionedBookings((unsessionedRes.data as unknown as Booking[]) || []);
+      setMeetingPoints(meetingPointsData);
       return;
     }
 
     const { data: sessionsData } = await supabase
       .from('tour_sessions')
-      .select('id, label, start_time, tour_date')
+      .select('id, label, start_time, tour_date, meeting_point_id')
       .eq('user_id', guideUserId)
       .eq('tour_date', today)
       .in('id', acceptedSessionIds)
@@ -245,17 +255,18 @@ export default function GuideCheckin() {
       setCheckins([]);
       setArrivals([]);
       setGuestsLoaded(true);
-      const [otherGuidesData, sessionTeamRes, unsessionedRes] = await Promise.all([otherGuidesPromise, sessionTeamPromise, unsessionedPromise]);
+      const [otherGuidesData, sessionTeamRes, unsessionedRes, meetingPointsData] = await Promise.all([otherGuidesPromise, sessionTeamPromise, unsessionedPromise, meetingPointsPromise]);
       if (!mountedRef.current) return;
       setOtherGuides(otherGuidesData);
       setSessionTeamRows(sessionTeamRes.data || []);
       setUnsessionedBookings((unsessionedRes.data as unknown as Booking[]) || []);
+      setMeetingPoints(meetingPointsData);
       return;
     }
 
     // The three "other" queries (fired above, already in flight) are awaited HERE, alongside the
     // session-scoped ones — not before them — so they never add their own sequential stage.
-    const [sbRes, payRes, arrRes, otherGuidesData, sessionTeamRes, unsessionedRes] = await Promise.all([
+    const [sbRes, payRes, arrRes, otherGuidesData, sessionTeamRes, unsessionedRes, meetingPointsData] = await Promise.all([
       supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id')
         .eq('user_id', guideUserId).in('session_id', sessionIds),
       // This guide's OWN pay + check-in time only — RLS permits a guide to SELECT their own
@@ -271,11 +282,13 @@ export default function GuideCheckin() {
       otherGuidesPromise,
       sessionTeamPromise,
       unsessionedPromise,
+      meetingPointsPromise,
     ]);
     if (!mountedRef.current) return;
 
     setOtherGuides(otherGuidesData);
     setSessionTeamRows(sessionTeamRes.data || []);
+    setMeetingPoints(meetingPointsData);
     const unsessionedData = (unsessionedRes.data as unknown as Booking[]) || [];
     setUnsessionedBookings(unsessionedData);
 
@@ -412,7 +425,7 @@ export default function GuideCheckin() {
     }
 
     const [sessionsRes, payRes] = await Promise.all([
-      supabase.from('tour_sessions').select('id, label, start_time, tour_date')
+      supabase.from('tour_sessions').select('id, label, start_time, tour_date, meeting_point_id')
         .eq('user_id', guideUserId).eq('tour_date', today).in('id', acceptedSessionIds)
         .order('start_time', { ascending: true }),
       supabase.from('session_guides').select('session_id, base_pay, bonus, checkin_time')
@@ -692,6 +705,8 @@ export default function GuideCheckin() {
   // This guide's OWN base_pay/bonus, keyed by session — never any other guide's.
   const sessionIdToMyPay = useMemo(() => new Map(myPay.map(p => [p.session_id, p])), [myPay]);
 
+  const meetingPointById = useMemo(() => new Map(meetingPoints.map(mp => [mp.id, mp])), [meetingPoints]);
+
   const getDisplayName = (b: Booking) => {
     const cRecord = checkins.find(c => c.booking_ref === b.booking_ref);
     const override = cRecord?.display_name_override;
@@ -823,10 +838,15 @@ export default function GuideCheckin() {
     }
   };
 
-  // Records that the guide reached the meeting point, for the punctuality metric. Two rules
-  // shape this: GPS is optional (a denial/failure/slow fix records the arrival without
-  // coordinates rather than blocking it), and the arrival timestamp is the moment of the TAP —
-  // never the moment the write eventually lands, which the retry queue may defer on bad signal.
+  // Records that the guide reached the meeting point, for the punctuality metric — now
+  // geo-VERIFIED when the session has one configured. Two rules shape GPS here, and they point
+  // opposite ways on purpose: for an UNCONFIGURED session, GPS is optional (a denial/failure/slow
+  // fix still records the arrival, uncoordinated, exactly as before this feature existed — see
+  // getArrivalCoords' own "never block" rule). For a CONFIGURED session, GPS becomes REQUIRED —
+  // evaluateArrivalGate (lib/meetingPoints.ts) rejects outright on a missing fix or a fix outside
+  // radius_m, rather than silently accepting either. The arrival timestamp is still the moment of
+  // the TAP, never the moment the write eventually lands (the retry queue may defer that on bad
+  // signal) — gating happens before that timestamp is ever used, so a rejected tap never gets one.
   const handleArrive = async (session: TourSession) => {
     if (!guideUserId || !guideId) return;
     if (arrivingSessionIds.has(session.id)) return;
@@ -835,6 +855,19 @@ export default function GuideCheckin() {
     setArrivingSessionIds(prev => new Set(prev).add(session.id));
 
     const coords = await getArrivalCoords();
+
+    const meetingPoint = session.meeting_point_id ? meetingPointById.get(session.meeting_point_id) ?? null : null;
+    const gate = evaluateArrivalGate(coords, meetingPoint);
+
+    if (!gate.accepted) {
+      setArrivingSessionIds(prev => {
+        const next = new Set(prev);
+        next.delete(session.id);
+        return next;
+      });
+      toast.error(gate.message || 'Could not verify your arrival — please try again.');
+      return;
+    }
 
     // Punctuality is judged against THIS GUIDE'S OWN check-in time — an owner override
     // (session_guides.checkin_time via myPay) when set, otherwise the standard tour-minus-15
@@ -853,6 +886,7 @@ export default function GuideCheckin() {
       startTime: guideCheckinTime,
       arrivedAt,
       coords,
+      distanceM: gate.distanceM,
     });
 
     if (mountedRef.current) {
@@ -1220,6 +1254,7 @@ export default function GuideCheckin() {
                 <GuideSessionCard
                   key={session.id}
                   session={session}
+                  meetingPointName={session.meeting_point_id ? (meetingPointById.get(session.meeting_point_id)?.name ?? null) : null}
                   guideId={guideId}
                   sessionBookingsList={sessionBookingsList}
                   totalPax={totalPax}
@@ -1278,6 +1313,7 @@ export default function GuideCheckin() {
 
 function GuideSessionCard({
   session,
+  meetingPointName,
   guideId,
   sessionBookingsList,
   totalPax,
@@ -1303,6 +1339,8 @@ function GuideSessionCard({
   onUndoCheckin,
 }: {
   session: TourSession;
+  /** This session's chosen meeting point name, or null when it has none (ungated arrival). */
+  meetingPointName: string | null;
   guideId: string | null;
   sessionBookingsList: Booking[];
   totalPax: number;
@@ -1351,6 +1389,12 @@ function GuideSessionCard({
             <span className="text-muted-foreground/50">&middot;</span>
             <span>Tour {session.start_time || '—'}</span>
           </p>
+          {meetingPointName && (
+            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5">
+              <MapPin size={12} className="shrink-0 text-gold" />
+              <span>Meeting point: <span className="font-bold text-foreground">{meetingPointName}</span></span>
+            </p>
+          )}
           {myPayTotal !== null && (
             <p className="text-xs font-bold text-gold mt-0.5">Your pay: €{myPayTotal.toLocaleString()}</p>
           )}

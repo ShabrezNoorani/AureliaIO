@@ -19,6 +19,7 @@ import { filterPastUnresolvedBookings } from '@/lib/pastUnresolved';
 import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
 import { ARRIVAL_COLUMNS, ArrivalRow, formatArrivalStatus } from '@/lib/guideArrivals';
 import { buildGuideInviteLinks, buildSharedGuideInviteLink, forceBrowserUrl, type GuideInviteTarget } from '@/lib/tourInvites';
+import { fetchMeetingPoints, type MeetingPointRow } from '@/lib/meetingPoints';
 
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
@@ -50,6 +51,9 @@ export default function TodayToursPage() {
   // Read-only: every assigned guide's "I've arrived" record for today's sessions. The owner sees
   // the whole company's rows; this board never writes them.
   const [arrivals, setArrivals] = useState<ArrivalRow[]>([]);
+  // The whole meeting-point library — company-wide, not date-scoped (it's a reference list, same
+  // as guides). Used only to resolve a session's meeting_point_id to a display name here.
+  const [meetingPoints, setMeetingPoints] = useState<MeetingPointRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
 
@@ -104,15 +108,17 @@ export default function TodayToursPage() {
     const today = localDateStr();
     setTodayStrDate(today);
 
-    const [bRes, gRes, cRes, sessRes] = await Promise.all([
+    const [bRes, gRes, cRes, sessRes, mpData] = await Promise.all([
       supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', today).not('status', 'eq', 'CANCELLED').order('travel_time', { ascending: true }),
       supabase.from('guides').select('*').eq('user_id', user.id).eq('status', 'active'),
       supabase.from('checkins').select('*').eq('user_id', user.id).eq('travel_date', today),
-      supabase.from('tour_sessions').select('id, label, start_time, tour_date, notes, max_pax_per_guide, needs_guide').eq('user_id', user.id).eq('tour_date', today).order('start_time', { ascending: true }),
+      supabase.from('tour_sessions').select('id, label, start_time, tour_date, notes, max_pax_per_guide, needs_guide, meeting_point_id').eq('user_id', user.id).eq('tour_date', today).order('start_time', { ascending: true }),
+      fetchMeetingPoints(supabase, user.id),
     ]);
     if (!mountedRef.current) return;
 
     setBookings(bRes.data || []);
+    setMeetingPoints(mpData);
     setGuides(gRes.data || []);
     setCheckins(prev => mergeGuardingPending(cRes.data || [], prev, pendingBookingRefs));
 
@@ -391,6 +397,7 @@ export default function TodayToursPage() {
   // Full guide rows (incl. whatsapp) by id — the allocation board's own AllocationGuide shape
   // only carries id/name/locked, so this is looked up separately for the calendar/WhatsApp send.
   const guideById = useMemo(() => new Map(guides.map((g) => [g.id, g])), [guides]);
+  const meetingPointById = useMemo(() => new Map(meetingPoints.map((mp) => [mp.id, mp])), [meetingPoints]);
 
   // Accepted guides per session, for the allocation board — only guides actually working the
   // tour get a column.
@@ -1074,6 +1081,7 @@ export default function TodayToursPage() {
               <SessionBoard
                 key={session.id}
                 session={session}
+                meetingPointName={session.meeting_point_id ? (meetingPointById.get(session.meeting_point_id)?.name ?? null) : null}
                 guests={sessionIdToGuests.get(session.id) || []}
                 team={sessionIdToTeam.get(session.id) || []}
                 guideById={guideById}
@@ -1121,6 +1129,7 @@ export default function TodayToursPage() {
 
 function SessionBoard({
   session,
+  meetingPointName,
   guests,
   team,
   guideById,
@@ -1143,6 +1152,8 @@ function SessionBoard({
   stuckBookingRefs,
 }: {
   session: any;
+  /** The session's chosen meeting point name, or null when it has none (ungated arrival). */
+  meetingPointName: string | null;
   guests: SessionGuestRow[];
   team: AllocationGuide[];
   /** Full guide rows (incl. whatsapp) by id, for the calendar/WhatsApp send below. */
@@ -1256,6 +1267,12 @@ function SessionBoard({
               />
             </span>
           </p>
+          {meetingPointName && (
+            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5">
+              <MapPin size={12} className="shrink-0 text-gold" />
+              <span>Meeting point: <span className="font-bold text-foreground">{meetingPointName}</span></span>
+            </p>
+          )}
           {/* Staffing capacity controls — optional per-session limit (blank = no limit) plus a
               manual override for e.g. a private tour that needs its own guide regardless of pax.
               Never required. */}

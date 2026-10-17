@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Calendar as CalendarIcon, Compass, Users } from 'lucide-react';
+import { Calendar as CalendarIcon, Compass, Users, MapPin } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
 import {
   computeAssignmentStats, computeRatingStats, computePunctualityStats, computeGuideScore,
@@ -11,6 +11,7 @@ import {
   type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
 } from '@/lib/guidePerformance';
 import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
+import { fetchMeetingPoints, type MeetingPointRow } from '@/lib/meetingPoints';
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
@@ -39,6 +40,7 @@ interface TourSession {
   label: string | null;
   start_time: string | null;
   tour_date: string;
+  meeting_point_id: string | null;
 }
 
 interface SessionBookingRow {
@@ -91,6 +93,7 @@ export default function GuideHome() {
   const [sessionBookings, setSessionBookings] = useState<SessionBookingRow[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [otherGuides, setOtherGuides] = useState<CompanyGuide[]>([]);
+  const [meetingPoints, setMeetingPoints] = useState<MeetingPointRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [reassignSessionId, setReassignSessionId] = useState<string | null>(null);
@@ -157,13 +160,14 @@ export default function GuideHome() {
       return;
     }
 
-    const [sessRes, sbRes, otherGuidesData] = await Promise.all([
-      supabase.from('tour_sessions').select('id, label, start_time, tour_date')
+    const [sessRes, sbRes, otherGuidesData, meetingPointsData] = await Promise.all([
+      supabase.from('tour_sessions').select('id, label, start_time, tour_date, meeting_point_id')
         .eq('user_id', guideUserId).in('id', sessionIds).gte('tour_date', today)
         .order('tour_date', { ascending: true }).order('start_time', { ascending: true }),
       supabase.from('session_bookings').select('session_id, booking_ref')
         .eq('user_id', guideUserId).in('session_id', sessionIds),
       fetchCompanyGuides(supabase, guideId),
+      fetchMeetingPoints(supabase, guideUserId),
     ]);
     if (!mountedRef.current) return;
 
@@ -171,6 +175,7 @@ export default function GuideHome() {
     const mySessionBookings = sbRes.data || [];
     setSessionBookings(mySessionBookings);
     setOtherGuides(otherGuidesData);
+    setMeetingPoints(meetingPointsData);
 
     const refs = Array.from(new Set(mySessionBookings.map(sb => sb.booking_ref)));
     if (refs.length === 0) {
@@ -287,6 +292,7 @@ export default function GuideHome() {
   );
 
   const sessionById = useMemo(() => new Map(sessions.map(s => [s.id, s])), [sessions]);
+  const meetingPointById = useMemo(() => new Map(meetingPoints.map(mp => [mp.id, mp])), [meetingPoints]);
 
   const sessionPax = useMemo(() => {
     const bookingByRef = new Map(bookings.map(b => [b.booking_ref, b]));
@@ -432,6 +438,12 @@ export default function GuideHome() {
                           <span>&middot;</span>
                           <span className="text-gold font-bold">{sessionPax.get(sg.session_id) || 0} pax</span>
                         </div>
+                        {session.meeting_point_id && (
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
+                            <MapPin size={12} className="shrink-0 text-gold" />
+                            <span>Meeting point: <span className="font-bold text-foreground">{meetingPointById.get(session.meeting_point_id)?.name || 'Unknown'}</span></span>
+                          </div>
+                        )}
                       </div>
                       <button
                         onClick={() => openReassign(sg.session_id)}

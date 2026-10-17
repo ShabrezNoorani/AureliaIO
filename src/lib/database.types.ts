@@ -312,6 +312,7 @@ export type Database = {
         Row: {
           arrived_at: string
           created_at: string | null
+          distance_m: number | null
           guide_id: string
           id: string
           latitude: number | null
@@ -324,6 +325,7 @@ export type Database = {
         Insert: {
           arrived_at?: string
           created_at?: string | null
+          distance_m?: number | null
           guide_id: string
           id?: string
           latitude?: number | null
@@ -336,6 +338,7 @@ export type Database = {
         Update: {
           arrived_at?: string
           created_at?: string | null
+          distance_m?: number | null
           guide_id?: string
           id?: string
           latitude?: number | null
@@ -812,6 +815,36 @@ export type Database = {
         }
         Relationships: []
       }
+      meeting_points: {
+        Row: {
+          created_at: string | null
+          id: string
+          latitude: number
+          longitude: number
+          name: string
+          radius_m: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          latitude: number
+          longitude: number
+          name: string
+          radius_m?: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          latitude?: number
+          longitude?: number
+          name?: string
+          radius_m?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       options: {
         Row: {
           bokun_id: string | null
@@ -1048,6 +1081,7 @@ export type Database = {
           id: string
           label: string | null
           max_pax_per_guide: number | null
+          meeting_point_id: string | null
           needs_guide: boolean
           notes: string | null
           start_time: string | null
@@ -1059,6 +1093,7 @@ export type Database = {
           id?: string
           label?: string | null
           max_pax_per_guide?: number | null
+          meeting_point_id?: string | null
           needs_guide?: boolean
           notes?: string | null
           start_time?: string | null
@@ -1070,13 +1105,22 @@ export type Database = {
           id?: string
           label?: string | null
           max_pax_per_guide?: number | null
+          meeting_point_id?: string | null
           needs_guide?: boolean
           notes?: string | null
           start_time?: string | null
           tour_date?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "tour_sessions_meeting_point_id_fkey"
+            columns: ["meeting_point_id"]
+            isOneToOne: false
+            referencedRelation: "meeting_points"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

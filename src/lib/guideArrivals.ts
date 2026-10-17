@@ -11,9 +11,13 @@ export interface ArrivalRow {
   longitude: number | null;
   meeting_time: string | null;
   minutes_late: number | null;
+  /** Distance from the session's meeting point in meters, when one was configured — null for an
+      unconfigured session (no gate to measure against) or an arrival recorded before this field
+      existed. See lib/meetingPoints.ts's evaluateArrivalGate, the one place this gets computed. */
+  distance_m: number | null;
 }
 
-export const ARRIVAL_COLUMNS = 'session_id, guide_id, arrived_at, latitude, longitude, meeting_time, minutes_late';
+export const ARRIVAL_COLUMNS = 'session_id, guide_id, arrived_at, latitude, longitude, meeting_time, minutes_late, distance_m';
 
 /** Retry-queue key for one session's arrival. Namespaced so it can never collide with the
     booking_ref keys check-in writes use in the same queue. */
@@ -138,6 +142,9 @@ export interface BuildArrivalInput {
   /** Captured when the guide TAPPED, not when the write finally lands (it may be retried later). */
   arrivedAt: Date;
   coords: ArrivalCoords | null;
+  /** Distance from the session's meeting point, already computed by evaluateArrivalGate (lib/
+      meetingPoints.ts) before this payload is built — null when the session had no meeting point. */
+  distanceM?: number | null;
 }
 
 export interface ArrivalPayload {
@@ -149,6 +156,7 @@ export interface ArrivalPayload {
   longitude: number | null;
   meeting_time: string | null;
   minutes_late: number | null;
+  distance_m: number | null;
 }
 
 export function buildArrivalPayload(input: BuildArrivalInput): ArrivalPayload {
@@ -161,6 +169,7 @@ export function buildArrivalPayload(input: BuildArrivalInput): ArrivalPayload {
     longitude: input.coords?.longitude ?? null,
     meeting_time: input.startTime,
     minutes_late: computeMinutesLate(input.arrivedAt, input.tourDate, input.startTime),
+    distance_m: input.distanceM ?? null,
   };
 }
 

@@ -19,6 +19,7 @@ import GuideDashboard from '@/pages/GuideDashboard';
 import LeaderboardPage from '@/pages/LeaderboardPage';
 import MarketplacePage from '@/pages/MarketplacePage';
 import ChangeLogPage from '@/pages/ChangeLogPage';
+import MeetingPointsPage from '@/pages/MeetingPointsPage';
 import { useAppData } from '@/lib/useAppData';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
@@ -26,7 +27,7 @@ import { syncMasterData } from '@/lib/gsheetSync';
 import { syncFromBokun } from '@/lib/bokunSync';
 import { localDateStr } from '@/lib/utils';
 
-export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'live' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'leaderboard' | 'marketplace' | 'changelog';
+export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'live' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'leaderboard' | 'marketplace' | 'changelog' | 'meeting-points';
 
 const AppLayout = () => {
   const { user, profile } = useAuth();
@@ -87,6 +88,7 @@ const AppLayout = () => {
     else if (path.includes('/settings')) setView('settings');
     else if (path.includes('/products')) setView('products');
     else if (path.includes('/changelog')) setView('changelog');
+    else if (path.includes('/meeting-points')) setView('meeting-points');
   }, []);
 
   const [activeOptionId, setActiveOptionId] = useState<string | null>(null);
@@ -337,6 +339,7 @@ const AppLayout = () => {
         {view === 'leaderboard' && <LeaderboardPage />}
         {view === 'marketplace' && <MarketplacePage />}
         {view === 'changelog' && <ChangeLogPage />}
+        {view === 'meeting-points' && <MeetingPointsPage />}
       </main>
 
       {lastSynced && (

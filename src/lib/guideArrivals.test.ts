@@ -160,4 +160,14 @@ describe('buildArrivalPayload', () => {
     expect(payload.minutes_late).toBeNull();
     expect(payload.arrived_at).toBe(base.arrivedAt.toISOString());
   });
+
+  it('defaults distance_m to null when the caller passes nothing (unconfigured session)', () => {
+    const payload = buildArrivalPayload({ ...base, coords: null });
+    expect(payload.distance_m).toBeNull();
+  });
+
+  it('carries through the distance computed by evaluateArrivalGate when one was passed', () => {
+    const payload = buildArrivalPayload({ ...base, coords: { latitude: 48.8584, longitude: 2.2945 }, distanceM: 42.5 });
+    expect(payload.distance_m).toBe(42.5);
+  });
 });
