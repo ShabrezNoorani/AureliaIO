@@ -297,54 +297,178 @@ export default function TodayToursPage() {
     return () => clearInterval(timer);
   }, []);
 
-  // Read-only fetch for the past-date browser — only runs when an earlier date is actually
-  // selected (the "today" case keeps using the live, realtime-backed state above). Guides pulled
-  // unfiltered (not .eq('status', 'active') like the live `guides` state) so a since-deactivated
-  // guide's name still resolves correctly in old allocations.
+  // Fetch for the past-date browser — only runs when an earlier date is actually selected (the
+  // "today" case keeps using the live, realtime-backed state above). Guides pulled unfiltered
+  // (not .eq('status', 'active') like the live `guides` state) so a since-deactivated guide's
+  // name still resolves correctly in old allocations. OWNER-ONLY editing (check-in/reset/move/add
+  // booking — see the handlers below) writes against this same state and re-runs this exact
+  // fetch afterward; there's no realtime subscription on a past date (nothing else should be
+  // writing to it live), so a plain refetch is the only "stay in sync" mechanism needed here.
+  const loadPastView = async () => {
+    if (!user) return;
+    setPastViewLoading(true);
+    const [sessRes, bRes, cRes, guidesRes] = await Promise.all([
+      supabase.from('tour_sessions').select('id, label, start_time, tour_date').eq('user_id', user.id).eq('tour_date', viewDate).order('start_time', { ascending: true }),
+      // Full booking row (not a narrow column list) — GuestCard needs id/customer_phone/
+      // travel_time/product fields too, same as the live board's own `bookings` fetch. Cancelled
+      // bookings are excluded entirely, same as the live board.
+      supabase.from('bookings').select('*').eq('user_id', user.id).eq('travel_date', viewDate).not('status', 'eq', 'CANCELLED'),
+      supabase.from('checkins').select('booking_ref, status, checked_in_at, display_name_override, ticket_photo').eq('user_id', user.id).eq('travel_date', viewDate),
+      supabase.from('guides').select('id, name, guide_number').eq('user_id', user.id),
+    ]);
+    const sessionsData = sessRes.data || [];
+    setPastViewSessions(sessionsData);
+    setPastViewBookings(bRes.data || []);
+    setPastViewCheckins(cRes.data || []);
+    setPastViewGuides(guidesRes.data || []);
+
+    const sessionIds = sessionsData.map((s: any) => s.id);
+    if (sessionIds.length > 0) {
+      const [sbRes, sgRes] = await Promise.all([
+        supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
+        supabase.from('session_guides').select('session_id, guide_id, status').eq('user_id', user.id).in('session_id', sessionIds).eq('status', 'accepted'),
+      ]);
+      setPastViewSessionBookings(sbRes.data || []);
+      setPastViewSessionGuides(sgRes.data || []);
+    } else {
+      setPastViewSessionBookings([]);
+      setPastViewSessionGuides([]);
+    }
+    setPastViewLoading(false);
+  };
+
   useEffect(() => {
     if (!user || isViewingToday) return;
-    let active = true;
-    const loadPastView = async () => {
-      setPastViewLoading(true);
-      const [sessRes, bRes, cRes, guidesRes] = await Promise.all([
-        supabase.from('tour_sessions').select('id, label, start_time, tour_date').eq('user_id', user.id).eq('tour_date', viewDate).order('start_time', { ascending: true }),
-        supabase.from('bookings').select('booking_ref, customer_name, option_name, pax_adult, pax_youth, pax_child, pax_infant').eq('user_id', user.id).eq('travel_date', viewDate),
-        supabase.from('checkins').select('booking_ref, status, checked_in_at, display_name_override').eq('user_id', user.id).eq('travel_date', viewDate),
-        supabase.from('guides').select('id, name, guide_number').eq('user_id', user.id),
-      ]);
-      if (!active) return;
-      const sessionsData = sessRes.data || [];
-      setPastViewSessions(sessionsData);
-      setPastViewBookings(bRes.data || []);
-      setPastViewCheckins(cRes.data || []);
-      setPastViewGuides(guidesRes.data || []);
-
-      const sessionIds = sessionsData.map((s: any) => s.id);
-      if (sessionIds.length > 0) {
-        const [sbRes, sgRes] = await Promise.all([
-          supabase.from('session_bookings').select('session_id, booking_ref, allotted_guide_id').eq('user_id', user.id).in('session_id', sessionIds),
-          supabase.from('session_guides').select('session_id, guide_id, status').eq('user_id', user.id).in('session_id', sessionIds).eq('status', 'accepted'),
-        ]);
-        if (!active) return;
-        setPastViewSessionBookings(sbRes.data || []);
-        setPastViewSessionGuides(sgRes.data || []);
-      } else {
-        setPastViewSessionBookings([]);
-        setPastViewSessionGuides([]);
-      }
-      setPastViewLoading(false);
-    };
     loadPastView();
-    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, viewDate, isViewingToday]);
 
+  // Owner-only: check a missed guest in (or mark no-show) on THEIR OWN booking's past
+  // travel_date — never today's. Deliberately the plain, no-photo-modal flow (same convention as
+  // the existing "Past/Unresolved" backlog resolver above) since this is backlog cleanup, not a
+  // live meeting-point check-in. Only ever touches checkins + bookings.status (DONE/UPCOMING,
+  // never a money field) + change_logs — allotment is a SEPARATE action (handlePastMoveGuest
+  // below), so checking someone in here never silently assigns them to a guide.
+  const handlePastCheckIn = (b: any, status: 'checked_in' | 'no_show') => {
+    if (!user) return;
+    enqueueRetry(`past:${b.booking_ref}`, status === 'checked_in' ? 'Check-in' : 'No-show', async () => {
+      await writeCheckin({
+        userId: user.id,
+        bookingRef: b.booking_ref,
+        travelDate: b.travel_date,
+        status,
+        checkedInBy: 'Coordinator',
+        pax: paxTotal(b),
+        ticketPhoto: null,
+      });
+
+      if (status === 'checked_in') {
+        const { error } = await supabase.from('bookings').update({ status: 'DONE' }).eq('id', b.id);
+        if (error) throw error;
+        await logChange(supabase, user.id, {
+          tableName: 'bookings',
+          recordId: b.booking_ref,
+          fieldName: 'status',
+          oldValue: b.status || 'UPCOMING',
+          newValue: 'DONE',
+          description: `${b.booking_ref} checked in retroactively by owner for ${b.travel_date}`,
+        });
+      } else {
+        await logChange(supabase, user.id, {
+          tableName: 'checkins',
+          recordId: b.booking_ref,
+          description: `${b.booking_ref} marked no-show retroactively by owner for ${b.travel_date}`,
+        });
+      }
+      await loadPastView();
+    });
+  };
+
+  // Owner-only: undo a wrongly-resolved past check-in — same semantics as handleResetCheckin
+  // above (delete the checkins row, put the booking back to UPCOMING, clear its allotment), just
+  // dated by the booking's own past travel_date instead of today.
+  const handlePastReset = (b: any) => {
+    if (!user) return;
+    if (!confirm(`Reset check-in for this guest on ${b.travel_date}? They'll return to not-checked-in.`)) return;
+    enqueueRetry(`past:${b.booking_ref}`, 'Reset', async () => {
+      await deleteCheckin(user.id, b.booking_ref, b.travel_date);
+
+      const { error } = await supabase.from('bookings').update({ status: 'UPCOMING' }).eq('id', b.id);
+      if (error) throw error;
+
+      const { error: allotError } = await supabase.from('session_bookings')
+        .update({ allotted_guide_id: null })
+        .eq('user_id', user.id)
+        .eq('booking_ref', b.booking_ref);
+      if (allotError) throw allotError;
+
+      await logChange(supabase, user.id, {
+        tableName: 'bookings',
+        recordId: b.booking_ref,
+        fieldName: 'status',
+        oldValue: 'DONE',
+        newValue: 'UPCOMING',
+        description: `${b.booking_ref} check-in reset retroactively by owner for ${b.travel_date}`,
+      });
+      await loadPastView();
+    });
+  };
+
+  // Owner-only: re-attribute a past guest to a different guide on the SAME session (or clear the
+  // allotment) — allocation only, never touches pay. Restricted to guides who were actually on
+  // that session's team (see the `team` passed into GuestCard below), same as the live Allocation
+  // board. Logged explicitly (unlike the live board's own handleMoveGuest, which doesn't log —
+  // a retroactive attribution change is higher-stakes and the task calls for an audit trail here).
+  const handlePastMoveGuest = (bookingRef: string, newGuideId: string | null, guideName: string | null) => {
+    if (!user) return;
+    enqueueRetry(`past:${bookingRef}`, 'Move guide', async () => {
+      const { error } = await supabase.from('session_bookings')
+        .update({ allotted_guide_id: newGuideId })
+        .eq('user_id', user.id)
+        .eq('booking_ref', bookingRef);
+      if (error) throw error;
+      await logChange(supabase, user.id, {
+        tableName: 'session_bookings',
+        recordId: bookingRef,
+        description: newGuideId
+          ? `${bookingRef} retroactively allotted to ${guideName || 'a guide'} for ${viewDate}`
+          : `${bookingRef} allotment cleared retroactively for ${viewDate}`,
+      });
+      await loadPastView();
+    });
+  };
+
+  // Owner-only: link a booking that was never attached to any session that day — reuses the exact
+  // same session_bookings.insert() shape the live last-minute check-in flow writes
+  // (handleCheckInLastMinute above), just for a past date instead of today. Never allots a guide
+  // by itself — that's a separate handlePastMoveGuest action once the booking is on the session.
+  const handlePastAddBooking = (bookingRef: string, sessionId: string) => {
+    if (!user) return;
+    enqueueRetry(`past:${bookingRef}`, 'Link session', async () => {
+      const { error } = await supabase.from('session_bookings').insert({
+        user_id: user.id, session_id: sessionId, booking_ref: bookingRef, allotted_guide_id: null,
+      });
+      if (error && error.code !== '23505') throw error;
+      await logChange(supabase, user.id, {
+        tableName: 'session_bookings',
+        recordId: bookingRef,
+        description: `${bookingRef} added to a session retroactively for ${viewDate}`,
+      });
+      await loadPastView();
+    });
+  };
+
   // Same shape as the live board's sessionIdToGuests/sessionIdToTeam above, just built from the
-  // past-view fetch instead of live state — grouped per session so the read-only cards below can
-  // show "who was allocated to whom, and check-in status" without re-deriving it per guide.
+  // past-view fetch instead of live state — grouped per session so PastDayView can show, and now
+  // edit, "who was allocated to whom, and check-in status" without re-deriving it per guide.
+  // Carries the FULL booking row (not just displayName/pax) so its guest rows can render the
+  // shared GuestCard component — same UI/controls as the live board, not a bespoke read-only row.
   const pastViewSessionRows = useMemo(() => {
     const bookingByRef = new Map(pastViewBookings.map((b: any) => [b.booking_ref, b]));
     const checkinByRef = new Map(pastViewCheckins.map((c: any) => [c.booking_ref, c]));
     const guideById2 = new Map(pastViewGuides.map((g: any) => [g.id, g]));
+    const linkedRefs = new Set(pastViewSessionBookings.map((sb: any) => sb.booking_ref));
+
     const teamBySession = new Map<string, any[]>();
     pastViewSessionGuides.forEach((sg: any) => {
       const guide = guideById2.get(sg.guide_id);
@@ -360,18 +484,25 @@ export default function TodayToursPage() {
       const c = checkinByRef.get(sb.booking_ref);
       const arr = guestsBySession.get(sb.session_id) || [];
       arr.push({
-        bookingRef: sb.booking_ref,
+        booking: b,
         displayName: (c?.display_name_override && String(c.display_name_override).trim()) || b.customer_name,
         pax: paxTotal(b),
-        allottedGuideName: sb.allotted_guide_id ? (guideById2.get(sb.allotted_guide_id)?.name || 'Unknown guide') : null,
-        status: c?.status || null,
+        allottedGuideId: sb.allotted_guide_id || null,
+        isCheckedIn: c?.status === 'checked_in',
+        isNoShow: c?.status === 'no_show',
+        checkedInAt: c?.checked_in_at || null,
+        ticketPhoto: c?.ticket_photo || null,
       });
       guestsBySession.set(sb.session_id, arr);
     });
+    // Bookings for this date not linked to ANY session yet — candidates for "Add booking" below.
+    const unlinkedBookings = pastViewBookings.filter((b: any) => !linkedRefs.has(b.booking_ref));
+
     return pastViewSessions.map(s => ({
       session: s,
       team: teamBySession.get(s.id) || [],
       guests: guestsBySession.get(s.id) || [],
+      unlinkedBookings,
     }));
   }, [pastViewSessions, pastViewSessionBookings, pastViewSessionGuides, pastViewCheckins, pastViewBookings, pastViewGuides]);
 
@@ -1124,7 +1255,15 @@ export default function TodayToursPage() {
         )}
         </>
         ) : (
-          <PastDayView loading={pastViewLoading} rows={pastViewSessionRows} />
+          <PastDayView
+            loading={pastViewLoading}
+            rows={pastViewSessionRows}
+            onCheckIn={(b) => handlePastCheckIn(b, 'checked_in')}
+            onNoShow={(b) => handlePastCheckIn(b, 'no_show')}
+            onReset={handlePastReset}
+            onMoveGuest={handlePastMoveGuest}
+            onAddBooking={handlePastAddBooking}
+          />
         )}
       </div>
 
@@ -1526,14 +1665,30 @@ function SessionBoard({
   );
 }
 
-// ────────── PAST-DATE BROWSER (read-only) ──────────
-// Deliberately NOT SessionBoard — that component's props are almost entirely write handlers
-// (balance, lock, pay, reassign…), none of which apply to a past date yet (editing history is a
-// later task). A dedicated, read-only card keeps that boundary structural rather than relying on
-// every handler being carefully no-op'd.
-function PastDayView({ loading, rows }: {
+// ────────── PAST-DATE BROWSER (owner-only editing: allocation + check-in status) ──────────
+// Deliberately NOT SessionBoard — that component's props are almost entirely PAY/guide-roster
+// write handlers (balance, lock, base_pay/bonus, tour-time, capacity…), none of which this screen
+// should ever touch for a past date (money stays Dispatch/Ledger's job). This stays a dedicated
+// component so that boundary is structural — it physically cannot call any of SessionBoard's
+// money-touching handlers — rather than relying on every one of them being carefully left unwired.
+// Guest rows reuse the SAME shared GuestCard component the live board uses (Check In/No Show/
+// Reset/guide-select), so the owner gets one consistent UI instead of a bespoke read-only row.
+function PastDayView({ loading, rows, onCheckIn, onNoShow, onReset, onMoveGuest, onAddBooking }: {
   loading: boolean;
-  rows: { session: { id: string; label: string | null; start_time: string | null }; team: { id: string; name: string; guide_number: string | null }[]; guests: { bookingRef: string; displayName: string; pax: number; allottedGuideName: string | null; status: string | null }[] }[];
+  rows: {
+    session: { id: string; label: string | null; start_time: string | null };
+    team: { id: string; name: string; guide_number: string | null }[];
+    guests: {
+      booking: any; displayName: string; pax: number; allottedGuideId: string | null;
+      isCheckedIn: boolean; isNoShow: boolean; checkedInAt: string | null; ticketPhoto: string | null;
+    }[];
+    unlinkedBookings: any[];
+  }[];
+  onCheckIn: (b: any) => void;
+  onNoShow: (b: any) => void;
+  onReset: (b: any) => void;
+  onMoveGuest: (bookingRef: string, newGuideId: string | null, guideName: string | null) => void;
+  onAddBooking: (bookingRef: string, sessionId: string) => void;
 }) {
   if (loading) {
     return <div className="flex justify-center p-12"><div className="w-8 h-8 rounded-full border-2 border-gold border-t-transparent animate-spin" /></div>;
@@ -1549,8 +1704,8 @@ function PastDayView({ loading, rows }: {
   }
   return (
     <div className="space-y-6">
-      {rows.map(({ session, team, guests }) => {
-        const checkedIn = guests.filter(g => g.status === 'checked_in').length;
+      {rows.map(({ session, team, guests, unlinkedBookings }) => {
+        const checkedIn = guests.filter(g => g.isCheckedIn).length;
         const totalPax = guests.reduce((s, g) => s + g.pax, 0);
         return (
           <div key={session.id} className="aurelia-card overflow-hidden border border-border">
@@ -1572,27 +1727,60 @@ function PastDayView({ loading, rows }: {
               {guests.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">No guests in this session.</p>
               ) : guests.map(g => (
-                <div key={g.bookingRef} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-muted/50">
-                  <div className="min-w-0">
-                    <span className="font-bold text-sm text-foreground">{g.displayName}</span>
-                    <span className="text-xs text-muted-foreground ml-2">{g.pax} pax</span>
-                    {g.allottedGuideName && (
-                      <span className="text-xs text-muted-foreground ml-2">&middot; allotted to {g.allottedGuideName}</span>
-                    )}
-                  </div>
-                  <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${
-                    g.status === 'checked_in' ? 'bg-green-600/15 text-green-700'
-                    : g.status === 'no_show' ? 'bg-red-600/15 text-red-700'
-                    : 'bg-amber-600/15 text-amber-700'
-                  }`}>
-                    {g.status === 'checked_in' ? 'Checked In' : g.status === 'no_show' ? 'No Show' : 'Not Resolved'}
-                  </span>
-                </div>
+                <GuestCard
+                  key={g.booking.booking_ref}
+                  booking={g.booking}
+                  displayName={g.displayName}
+                  isCheckedIn={g.isCheckedIn}
+                  isNoShow={g.isNoShow}
+                  checkedInAt={g.checkedInAt}
+                  onCheckIn={() => onCheckIn(g.booking)}
+                  onNoShow={() => onNoShow(g.booking)}
+                  onReset={(g.isCheckedIn || g.isNoShow) ? () => onReset(g.booking) : undefined}
+                  isOwner
+                  ticketPhoto={g.ticketPhoto}
+                  guides={team}
+                  selectedGuideId={g.allottedGuideId || ''}
+                  onSelectGuide={(guideId) => onMoveGuest(g.booking.booking_ref, guideId || null, team.find(t => t.id === guideId)?.name || null)}
+                  allowReassignWhenLocked
+                />
               ))}
             </div>
+            {unlinkedBookings.length > 0 && (
+              <AddBookingRow bookings={unlinkedBookings} onAdd={(ref) => onAddBooking(ref, session.id)} />
+            )}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** "This booking is missing from the session" — lets the owner link one of this date's
+    not-yet-linked bookings onto the session (requirement 4). Never allots a guide by itself —
+    that's the guest's own guide-select in GuestCard above, once it's on the session. */
+function AddBookingRow({ bookings, onAdd }: { bookings: any[]; onAdd: (bookingRef: string) => void }) {
+  const [selected, setSelected] = useState('');
+  return (
+    <div className="border-t border-border p-4 md:p-5 flex flex-wrap items-center gap-2">
+      <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Add booking</span>
+      <select
+        value={selected}
+        onChange={(e) => setSelected(e.target.value)}
+        className="aurelia-input text-xs py-1.5 flex-1 min-w-[160px] appearance-none bg-background"
+      >
+        <option value="">Select a booking…</option>
+        {bookings.map((b: any) => (
+          <option key={b.booking_ref} value={b.booking_ref}>{b.customer_name} · {b.booking_ref}</option>
+        ))}
+      </select>
+      <button
+        onClick={() => { if (selected) { onAdd(selected); setSelected(''); } }}
+        disabled={!selected}
+        className="px-3 py-1.5 bg-muted border border-border rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-muted/70 transition-all disabled:opacity-50"
+      >
+        Add
+      </button>
     </div>
   );
 }

@@ -545,6 +545,328 @@ export function computeGuideLeaderboard(
   return unranked.map((e, i) => ({ ...e, rank: i + 1 }));
 }
 
+// ── LEADERBOARD METRIC + TIME-PERIOD TOGGLE ─────────────────────────────────────────────────────
+// A second, more general leaderboard system alongside computeGuideLeaderboard above (which stays
+// exactly as it was — the "Per Booking" metric is still that exact formula, just reachable through
+// this newer, metric-aware entry point too). Four metrics, one ranked list at a time, all
+// recomputed for whichever time period is selected. The 3+ BOOKINGS eligibility threshold always
+// applies regardless of which metric is being viewed — a guide who hasn't done 3 checked-in
+// bookings in the period isn't ranked on Punctuality either, even if they have plenty of arrivals.
+
+export type LeaderboardMetric = 'perBooking' | 'perTour' | 'punctuality' | 'combined';
+
+export const LEADERBOARD_METRICS: { value: LeaderboardMetric; label: string }[] = [
+  { value: 'perBooking', label: 'Per Booking' },
+  { value: 'perTour', label: 'Per Tour' },
+  { value: 'punctuality', label: 'Punctuality' },
+  { value: 'combined', label: 'Combined' },
+];
+
+export const METRIC_TOOLTIP_DESCRIPTIONS: { metric: LeaderboardMetric; label: string; note: string }[] = [
+  { metric: 'perBooking', label: 'Per Booking', note: 'Review points ÷ checked-in bookings in the selected period.' },
+  { metric: 'perTour', label: 'Per Tour', note: 'Review points ÷ distinct tours (sessions) the guide worked in the selected period.' },
+  { metric: 'punctuality', label: 'Punctuality', note: 'Of the guide’s recorded arrivals, the % that were on time (at or before their own check-in time).' },
+  { metric: 'combined', label: 'Combined', note: 'Rating (50%) + Punctuality (50%), each normalized to 0–100 and blended.' },
+];
+
+/** sum(reviewPoints, excluding excluded_from_score) ÷ denominator — the SAME arithmetic
+    computeGuideReviewScore uses for bookings, generalized so "Per Tour" (reviews ÷ distinct
+    tours) can reuse it without mislabeling its result "bookingsGuided". computeGuideReviewScore
+    itself is untouched — this is purely additive. */
+export function computeReviewPointsPerUnit(
+  reviews: GuideReviewRow[],
+  denominator: number
+): { score: number | null; reviewCount: number } {
+  const counted = reviews.filter((r) => !r.excluded_from_score);
+  const reviewCount = counted.length;
+  if (denominator <= 0) return { score: null, reviewCount };
+  const totalPoints = counted.reduce((sum, r) => sum + reviewPoints(r.stars), 0);
+  return { score: totalPoints / denominator, reviewCount };
+}
+
+export interface SessionGuideForTourCount {
+  guide_id: string;
+  session_id: string;
+  status: string | null;
+}
+
+export interface SessionDateForTourCount {
+  id: string;
+  tour_date: string;
+}
+
+/** "Tours" = distinct sessions the guide was ACCEPTED on (session_guides.status === 'accepted'),
+    deduped per (guide, session) so a guide can never be credited twice for the same session, dated
+    by the session's own tour_date within `bounds`. Any type of session counts — this is a plain
+    attendance count, not a check-in/booking concept. */
+export function computeToursPerGuide(
+  sessionGuides: SessionGuideForTourCount[],
+  sessions: SessionDateForTourCount[],
+  bounds: DateRangeBounds
+): Map<string, number> {
+  const tourDateById = new Map(sessions.map((s) => [s.id, s.tour_date]));
+  const seen = new Set<string>();
+  const counts = new Map<string, number>();
+  for (const sg of sessionGuides) {
+    if (sg.status !== 'accepted') continue;
+    const tourDate = tourDateById.get(sg.session_id);
+    if (!tourDate || tourDate < bounds.start || tourDate > bounds.end) continue;
+    const key = `${sg.guide_id}:${sg.session_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    counts.set(sg.guide_id, (counts.get(sg.guide_id) || 0) + 1);
+  }
+  return counts;
+}
+
+/** The period-bounded sibling of countCheckedInBookingsByGuide/computeCheckedInBookingRecords
+    above — those stay exactly as they are (still what the "real", always-since-Oct-1 score uses
+    everywhere else in the app); this one additionally accepts an UPPER bound, so the leaderboard's
+    day/week/month views can count only the bookings checked in within that narrower window. */
+export function computeCheckedInBookingCountsForPeriod(
+  sessionBookings: SessionBookingForGuiding[],
+  checkins: CheckinForGuiding[],
+  bounds: DateRangeBounds
+): Map<string, number> {
+  const checkedInDateByRef = new Map<string, string>();
+  for (const c of checkins) {
+    if (c.status !== 'checked_in' || !c.travel_date) continue;
+    if (c.travel_date < bounds.start || c.travel_date > bounds.end) continue;
+    const existing = checkedInDateByRef.get(c.booking_ref);
+    if (!existing || c.travel_date > existing) checkedInDateByRef.set(c.booking_ref, c.travel_date);
+  }
+  const seen = new Set<string>();
+  const counts = new Map<string, number>();
+  for (const sb of sessionBookings) {
+    if (!sb.allotted_guide_id) continue;
+    if (!checkedInDateByRef.has(sb.booking_ref)) continue;
+    const key = `${sb.allotted_guide_id}:${sb.booking_ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    counts.set(sb.allotted_guide_id, (counts.get(sb.allotted_guide_id) || 0) + 1);
+  }
+  return counts;
+}
+
+export function filterReviewsByPeriod(reviews: GuideReviewRow[], bounds: DateRangeBounds): GuideReviewRow[] {
+  return reviews.filter((r) => r.review_date >= bounds.start && r.review_date <= bounds.end);
+}
+
+export interface ArrivalForPeriod extends ArrivalPunctualityRow {
+  guide_id: string;
+  /** ISO timestamp — only the date portion (first 10 chars) is compared against `bounds`. */
+  arrived_at: string;
+}
+
+export function filterArrivalsByPeriod(arrivals: ArrivalForPeriod[], bounds: DateRangeBounds): ArrivalForPeriod[] {
+  return arrivals.filter((a) => {
+    const d = a.arrived_at.slice(0, 10);
+    return d >= bounds.start && d <= bounds.end;
+  });
+}
+
+/** Maps the per-booking review score (roughly -1..+1, see reviewPoints) onto a plain 0-100 scale:
+    -1 -> 0, 0 -> 50, +1 -> 100. Clamped first — a guide with more counted reviews than bookings
+    (e.g. more than one review per booking) can in principle push the raw score past ±1. */
+export function normalizeReviewScoreTo100(score: number | null): number | null {
+  if (score == null) return null;
+  const clamped = Math.max(-1, Math.min(1, score));
+  return ((clamped + 1) / 2) * 100;
+}
+
+export interface CombinedMetricResult {
+  /** 0-100, or null only when NEITHER rating nor punctuality has any data at all. */
+  score: number | null;
+  ratingNormalized: number | null;
+  punctualityPct: number | null;
+}
+
+/**
+ * Rating (50%) + Punctuality (50%), each already 0-100. Same fairness rule as computeGuideScore
+ * above: a missing component is dropped from both the numerator and the weight total rather than
+ * scored as 0, so a guide with reviews but no verified arrivals yet shows their rating alone
+ * (100%-weighted against the renormalized pool), not rating*0.5 + 0. This is also why the combined
+ * score "firms up" as more arrivals land — punctuality isn't contributing yet until it has data,
+ * then it gradually counts for its full, intended share.
+ */
+export function computeCombinedMetric(reviewScore: number | null, onTimePct: number | null): CombinedMetricResult {
+  const ratingNormalized = normalizeReviewScoreTo100(reviewScore);
+  const parts: { value: number; weight: number }[] = [];
+  if (ratingNormalized != null) parts.push({ value: ratingNormalized, weight: 0.5 });
+  if (onTimePct != null) parts.push({ value: onTimePct, weight: 0.5 });
+  const totalWeight = parts.reduce((sum, p) => sum + p.weight, 0);
+  const score = totalWeight > 0 ? parts.reduce((sum, p) => sum + p.value * p.weight, 0) / totalWeight : null;
+  return { score, ratingNormalized, punctualityPct: onTimePct };
+}
+
+/** One value per metric, in that metric's own native scale (points-per-unit for perBooking/
+    perTour, 0-100 for punctuality/combined) — null means "no data", never a fabricated 0. */
+export function computeMetricValue(
+  metric: LeaderboardMetric,
+  reviews: GuideReviewRow[],
+  bookingsCount: number,
+  toursCount: number,
+  arrivals: ArrivalPunctualityRow[]
+): number | null {
+  switch (metric) {
+    case 'perBooking':
+      return computeGuideReviewScore(reviews, bookingsCount).score;
+    case 'perTour':
+      return computeReviewPointsPerUnit(reviews, toursCount).score;
+    case 'punctuality':
+      return computePunctualityStats(arrivals).onTimePct;
+    case 'combined':
+      return computeCombinedMetric(
+        computeGuideReviewScore(reviews, bookingsCount).score,
+        computePunctualityStats(arrivals).onTimePct
+      ).score;
+  }
+}
+
+export interface MetricLeaderboardEntry {
+  guide_id: string;
+  rank: number;
+  /** The selected metric's own value — never null (a guide with no data for the selected metric
+      is excluded from the ranked list entirely, same as computeGuideLeaderboard's score==null
+      case above), in that metric's native scale (see computeMetricValue). */
+  value: number;
+  bookingsCount: number;
+  toursCount: number;
+  reviewCount: number;
+  onTimeCount: number;
+  countedArrivals: number;
+}
+
+/**
+ * The metric-aware counterpart to computeGuideLeaderboard above — ranks guides by whichever of
+ * the 4 metrics is selected, for one period at a time. Eligibility (GUIDE_SCORE_MIN_BOOKINGS) is
+ * ALWAYS evaluated against `periodBookingCounts` regardless of metric — a guide who hasn't done 3
+ * checked-in bookings in the period is excluded from the Punctuality/Combined boards too, not just
+ * Per Booking/Per Tour. Deliberately takes only guide IDs, never names — see
+ * computeGuideLeaderboard's own doc comment for why (a guide's own privacy-safe view calls this
+ * with no name data in reach at all).
+ */
+export function computeGuideLeaderboardByMetric(
+  guideIds: string[],
+  metric: LeaderboardMetric,
+  periodReviewsByGuide: Map<string, GuideReviewRow[]>,
+  periodBookingCounts: Map<string, number>,
+  periodTourCounts: Map<string, number>,
+  periodArrivalsByGuide: Map<string, ArrivalPunctualityRow[]>
+): MetricLeaderboardEntry[] {
+  const unranked: Omit<MetricLeaderboardEntry, 'rank'>[] = [];
+  for (const guideId of guideIds) {
+    const bookingsCount = periodBookingCounts.get(guideId) || 0;
+    if (bookingsCount < GUIDE_SCORE_MIN_BOOKINGS) continue;
+    const reviews = periodReviewsByGuide.get(guideId) || [];
+    const toursCount = periodTourCounts.get(guideId) || 0;
+    const arrivals = periodArrivalsByGuide.get(guideId) || [];
+    const value = computeMetricValue(metric, reviews, bookingsCount, toursCount, arrivals);
+    if (value == null) continue;
+    const reviewInfo = computeReviewPointsPerUnit(reviews, 1); // denominator irrelevant here, only reviewCount is read
+    const punctuality = computePunctualityStats(arrivals);
+    unranked.push({
+      guide_id: guideId, value, bookingsCount, toursCount,
+      reviewCount: reviewInfo.reviewCount, onTimeCount: punctuality.onTimeCount, countedArrivals: punctuality.countedArrivals,
+    });
+  }
+  unranked.sort((a, b) => b.value - a.value);
+  return unranked.map((e, i) => ({ ...e, rank: i + 1 }));
+}
+
+// ── TIME-PERIOD SELECTION (for the metric toggle above) ─────────────────────────────────────────
+
+export type LeaderboardPeriodMode = 'sinceStart' | 'day' | 'week' | 'month';
+
+export interface LeaderboardPeriod {
+  mode: LeaderboardPeriodMode;
+  /** YYYY-MM-DD — read only when mode === 'day'. */
+  date?: string;
+  /** YYYY-MM-DD, any date inside the target Monday-Sunday week — read only when mode === 'week'. */
+  weekOf?: string;
+  /** YYYY-MM — read only when mode === 'month'. */
+  month?: string;
+}
+
+export const DEFAULT_LEADERBOARD_PERIOD: LeaderboardPeriod = { mode: 'sinceStart' };
+
+/** Monday-Sunday bounds for the week containing `dateStr`. Date.getDay() is 0=Sun..6=Sat, so this
+    shifts back to the most recent Monday (Sunday counts as day 7 of ITS week, not day 1 of the
+    next one). */
+function getWeekBounds(dateStr: string): DateRangeBounds {
+  const d = new Date(`${dateStr}T00:00:00`);
+  const day = d.getDay();
+  const diffToMonday = day === 0 ? 6 : day - 1;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - diffToMonday);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { start: localDateStr(monday), end: localDateStr(sunday) };
+}
+
+/** Mirrors getAdminDateFilterBounds's own local-time-only arithmetic. 'sinceStart' is
+    open-ended going forward (no upper cap) — same "From Oct 1 onward" semantics as
+    ADMIN_DEFAULT_FILTER_START elsewhere, which is why it stays the default basis. */
+export function getLeaderboardPeriodBounds(period: LeaderboardPeriod, today: Date = new Date()): DateRangeBounds {
+  const todayStr = localDateStr(today);
+  switch (period.mode) {
+    case 'sinceStart':
+      return { start: ADMIN_DEFAULT_FILTER_START, end: '9999-12-31' };
+    case 'day': {
+      const d = period.date || todayStr;
+      return { start: d, end: d };
+    }
+    case 'week':
+      return getWeekBounds(period.weekOf || todayStr);
+    case 'month': {
+      const ym = period.month && /^\d{4}-\d{2}$/.test(period.month) ? period.month : todayStr.slice(0, 7);
+      const [y, m] = ym.split('-').map(Number);
+      const first = new Date(y, m - 1, 1);
+      const last = new Date(y, m, 0);
+      return { start: localDateStr(first), end: localDateStr(last) };
+    }
+  }
+}
+
+/** A short, human label for whichever period is selected — "Since Oct 1, 2026", "Mon, Oct 13,
+    2026", "Week of Oct 6 – Oct 12, 2026", "October 2026". */
+export function getLeaderboardPeriodLabel(period: LeaderboardPeriod, today: Date = new Date()): string {
+  const bounds = getLeaderboardPeriodBounds(period, today);
+  switch (period.mode) {
+    case 'sinceStart':
+      return 'Since Oct 1, 2026';
+    case 'day':
+      return new Date(`${bounds.start}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    case 'week': {
+      const startLabel = new Date(`${bounds.start}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const endLabel = new Date(`${bounds.end}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      return `Week of ${startLabel} – ${endLabel}`;
+    }
+    case 'month':
+      return new Date(`${bounds.start}T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+}
+
+/** Steps a 'week'/'month' period one unit earlier (-1) or later (+1) — how the owner/guide "view
+    an earlier week/month". 'sinceStart'/'day' aren't stepped this way (day stepping is just a
+    date-picker edit) and are returned unchanged. */
+export function stepLeaderboardPeriod(period: LeaderboardPeriod, direction: -1 | 1, today: Date = new Date()): LeaderboardPeriod {
+  const todayStr = localDateStr(today);
+  if (period.mode === 'week') {
+    const base = period.weekOf || todayStr;
+    const d = new Date(`${base}T00:00:00`);
+    d.setDate(d.getDate() + direction * 7);
+    return { mode: 'week', weekOf: localDateStr(d) };
+  }
+  if (period.mode === 'month') {
+    const ym = period.month || todayStr.slice(0, 7);
+    const [y, m] = ym.split('-').map(Number);
+    const d = new Date(y, m - 1 + direction, 1);
+    return { mode: 'month', month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` };
+  }
+  return period;
+}
+
 // ── PUNCTUALITY, BUILT NOW, ZERO WEIGHT ─────────────────────────────────────────────────────────
 // Punctuality (on-time = arrived at/before the guide's own checkin_time, via
 // computePunctualityStats/ArrivalPunctualityRow above) is DISPLAYED on both the guide's own

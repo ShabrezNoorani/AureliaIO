@@ -5,6 +5,7 @@ import { Star } from 'lucide-react';
 import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 import GuideOwnScoreCard from '@/components/guide/GuideOwnScoreCard';
 import { useGuideOwnScore } from '@/hooks/use-guide-own-score';
+import { DEFAULT_LEADERBOARD_PERIOD, type LeaderboardMetric, type LeaderboardPeriod } from '@/lib/guidePerformance';
 
 interface RatingRow {
   id: string;
@@ -54,8 +55,10 @@ export default function GuideReviews() {
 
   // Own score + anonymized rank/top-score — shared with GuideHome.tsx via useGuideOwnScore, so
   // the two can never disagree. `myReviews` here is this guide's own full review rows, for the
-  // list rendered further down.
-  const ownScore = useGuideOwnScore(guideId, guideUserId);
+  // list rendered further down. Metric/period state is independent of GuideHome.tsx's own toggle.
+  const [scoreMetric, setScoreMetric] = useState<LeaderboardMetric>('perBooking');
+  const [scorePeriod, setScorePeriod] = useState<LeaderboardPeriod>(DEFAULT_LEADERBOARD_PERIOD);
+  const ownScore = useGuideOwnScore(guideId, guideUserId, scoreMetric, scorePeriod);
   const { myReviews } = ownScore;
 
   useEffect(() => {
@@ -108,10 +111,16 @@ export default function GuideReviews() {
 
       <section className="space-y-3">
         <div className="flex items-center gap-1.5">
-          <h2 className="text-xs font-bold text-gold uppercase tracking-widest">My Score · Since Oct 1, 2026</h2>
+          <h2 className="text-xs font-bold text-gold uppercase tracking-widest">My Score</h2>
           <ScoreInfoTooltip />
         </div>
-        <GuideOwnScoreCard data={ownScore} />
+        <GuideOwnScoreCard
+          data={ownScore}
+          metric={scoreMetric}
+          onMetricChange={setScoreMetric}
+          period={scorePeriod}
+          onPeriodChange={setScorePeriod}
+        />
         {!ownScore.loading && ownScore.unlocked && myReviews.length > 0 && (
           <div className="space-y-2">
             {myReviews

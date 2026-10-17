@@ -3,6 +3,17 @@ import { CheckCircle2, XCircle, Phone, MessageCircle, Camera, Pencil, Check, X, 
 import CheckinPhotoThumb from './CheckinPhotoThumb';
 import { normalizeTime } from '@/lib/utils';
 
+/** Inline SVG WhatsApp glyph — same drop-in shape as a lucide icon (`size` prop, fills with
+    currentColor) so it sits in the Call/Message/WhatsApp row at identical weight and crispness at
+    any resolution, instead of a raster PNG that looked soft/inconsistent next to them. */
+function WhatsAppIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12.04 2c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38c1.45.79 3.08 1.21 4.78 1.21h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0012.05 2zm0 1.67c2.2 0 4.26.86 5.82 2.42a8.18 8.18 0 012.41 5.82c0 4.54-3.7 8.23-8.24 8.23a8.2 8.2 0 01-4.17-1.14l-.3-.17-3.12.82.83-3.04-.19-.31a8.18 8.18 0 01-1.26-4.38c0-4.54 3.7-8.24 8.23-8.24zm-4.57 4.71c-.17 0-.44.06-.67.31-.23.25-.88.86-.88 2.1 0 1.23.9 2.42 1.03 2.59.13.17 1.75 2.78 4.31 3.79 2.13.84 2.56.67 3.03.63.47-.04 1.5-.62 1.71-1.21.21-.6.21-1.11.15-1.21-.06-.1-.23-.17-.48-.29-.25-.13-1.5-.74-1.73-.83-.23-.08-.4-.13-.57.13-.17.25-.65.83-.8 1-.15.17-.29.19-.54.06-.25-.13-1.05-.39-2-1.24-.74-.66-1.24-1.47-1.38-1.72-.15-.25-.02-.38.11-.5.11-.11.25-.29.38-.44.13-.15.17-.25.25-.42.08-.17.04-.31-.02-.44-.06-.13-.57-1.38-.78-1.89-.21-.5-.42-.44-.57-.45-.15 0-.31-.01-.48-.01z" />
+    </svg>
+  );
+}
+
 export interface GuestCardBooking {
   id: string;
   booking_ref: string;
@@ -60,6 +71,12 @@ interface GuestCardProps {
   sessions?: SessionOption[];
   currentSessionId?: string;
   onMoveToSession?: (sessionId: string | null) => void;
+  /** Lets the guide-select (above) stay enabled even once checked-in/no-show — everywhere else,
+      a locked guest's allotment is fixed and only changes via the separate Allocation tab/board;
+      the owner's PAST-date editor is the one exception, since re-attributing an ALREADY
+      checked-in past guest to the guide who actually ran their tour is the main reason that
+      editor exists. Never affects Check In/No Show/name-edit, only this one select. */
+  allowReassignWhenLocked?: boolean;
   /** Revert a wrongly checked-in/no-show guest back to not-checked-in — omit to hide. Owner
       surfaces AND a guide's own check-in page both pass this now (see TodayToursPage.tsx/
       GuideCheckin.tsx) — whichever surface is rendering decides who gets the button; this
@@ -98,6 +115,7 @@ export default function GuestCard({
   sessions,
   currentSessionId,
   onMoveToSession,
+  allowReassignWhenLocked,
   onReset,
   onAddPhoto,
   syncStuck,
@@ -251,10 +269,10 @@ export default function GuestCard({
               href={`https://wa.me/${whatsappDigits}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="min-h-11 min-w-11 flex items-center justify-center hover:bg-muted active:scale-95 rounded-lg transition-all"
+              className="min-h-11 min-w-11 flex items-center justify-center bg-[#25D366]/10 hover:bg-[#25D366]/20 active:scale-95 rounded-lg text-[#1ea952] transition-all"
               title="WhatsApp"
             >
-              <img src="/icons/whatsapp.png" alt="WhatsApp" width={22} height={22} className="object-contain" />
+              <WhatsAppIcon size={16} />
             </a>
           </div>
         )}
@@ -265,7 +283,7 @@ export default function GuestCard({
               value={selectedGuideId || ''}
               onChange={(e) => onSelectGuide(e.target.value)}
               className="bg-background border border-border text-foreground rounded-md text-[9px] py-0.5 px-1 outline-none max-w-[84px] disabled:opacity-50"
-              disabled={locked}
+              disabled={locked && !allowReassignWhenLocked}
             >
               <option value="">No guide</option>
               {guides.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}

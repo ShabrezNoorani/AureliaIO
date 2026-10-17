@@ -11,8 +11,15 @@ import {
   computeCombinedGuideScore, PUNCTUALITY_SCORE_WEIGHT, GUIDE_SCORE_MIN_BOOKINGS,
   ADMIN_DEFAULT_FILTER_START,
   PUNCTUALITY_GRACE_MINUTES,
+  computeToursPerGuide, computeCheckedInBookingCountsForPeriod, computeReviewPointsPerUnit,
+  normalizeReviewScoreTo100, computeCombinedMetric, computeMetricValue, computeGuideLeaderboardByMetric,
+  getLeaderboardPeriodBounds, getLeaderboardPeriodLabel, stepLeaderboardPeriod,
+  filterReviewsByPeriod, filterArrivalsByPeriod, DEFAULT_LEADERBOARD_PERIOD,
   type GuideRatingRow, type GuideAssignmentRow, type GuideMonthlyRow, type GuideReviewRow,
   type SessionGuideForEarnings, type SessionForEarnings,
+  type SessionGuideForTourCount, type SessionDateForTourCount, type ArrivalForPeriod,
+  type LeaderboardPeriod, type ArrivalPunctualityRow,
+  type SessionBookingForGuiding, type CheckinForGuiding,
 } from './guidePerformance';
 
 const rating = (overrides: Partial<GuideRatingRow> = {}): GuideRatingRow => ({
@@ -971,5 +978,308 @@ describe('computeGuideOverviewRows — review score wired through (replaces avgR
     const reviews = [review({ id: 'r1', guide_id: 'g1', stars: 5 })];
     const rows = computeGuideOverviewRows(guides, [], reviews, new Map(), [], '2026-10-15');
     expect(rows.find((r) => r.id === 'g1')!.reviewScore).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// LEADERBOARD METRIC + TIME-PERIOD TOGGLE
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('computeToursPerGuide — "Per Tour" metric\'s denominator', () => {
+  const sessions: SessionDateForTourCount[] = [
+    { id: 's1', tour_date: '2026-10-05' },
+    { id: 's2', tour_date: '2026-10-10' },
+    { id: 's3', tour_date: '2026-10-20' },
+    { id: 's4', tour_date: '2026-09-15' }, // before the period
+  ];
+
+  it('counts 2 sessions as 2 tours, regardless of session type', () => {
+    const sessionGuides: SessionGuideForTourCount[] = [
+      { guide_id: 'g1', session_id: 's1', status: 'accepted' },
+      { guide_id: 'g1', session_id: 's2', status: 'accepted' },
+    ];
+    const counts = computeToursPerGuide(sessionGuides, sessions, { start: '2026-10-01', end: '9999-12-31' });
+    expect(counts.get('g1')).toBe(2);
+  });
+
+  it('never double-counts the same (guide, session) pair even if the row appears twice', () => {
+    const sessionGuides: SessionGuideForTourCount[] = [
+      { guide_id: 'g1', session_id: 's1', status: 'accepted' },
+      { guide_id: 'g1', session_id: 's1', status: 'accepted' },
+    ];
+    const counts = computeToursPerGuide(sessionGuides, sessions, { start: '2026-10-01', end: '9999-12-31' });
+    expect(counts.get('g1')).toBe(1);
+  });
+
+  it('excludes a session outside the period bounds', () => {
+    const sessionGuides: SessionGuideForTourCount[] = [
+      { guide_id: 'g1', session_id: 's4', status: 'accepted' }, // Sept — before Oct 1
+    ];
+    const counts = computeToursPerGuide(sessionGuides, sessions, { start: '2026-10-01', end: '9999-12-31' });
+    expect(counts.get('g1') || 0).toBe(0);
+  });
+
+  it('ignores a session_guides row that was never accepted (offered/declined)', () => {
+    const sessionGuides: SessionGuideForTourCount[] = [
+      { guide_id: 'g1', session_id: 's1', status: 'offered' },
+      { guide_id: 'g1', session_id: 's2', status: 'declined' },
+    ];
+    const counts = computeToursPerGuide(sessionGuides, sessions, { start: '2026-10-01', end: '9999-12-31' });
+    expect(counts.get('g1') || 0).toBe(0);
+  });
+
+  it('scopes to a narrow window — only sessions inside start/end count', () => {
+    const sessionGuides: SessionGuideForTourCount[] = [
+      { guide_id: 'g1', session_id: 's1', status: 'accepted' },
+      { guide_id: 'g1', session_id: 's3', status: 'accepted' },
+    ];
+    const counts = computeToursPerGuide(sessionGuides, sessions, { start: '2026-10-01', end: '2026-10-09' });
+    expect(counts.get('g1')).toBe(1); // only s1 (Oct 5) falls inside; s3 (Oct 20) doesn't
+  });
+});
+
+describe('computeReviewPointsPerUnit — generalized points ÷ denominator (feeds "Per Tour")', () => {
+  it('divides total review points by the given denominator, not bookingsGuided', () => {
+    const reviews = [review({ id: 'r1', stars: 5 }), review({ id: 'r2', stars: 4 })]; // 1.0 + 0.5 = 1.5
+    const result = computeReviewPointsPerUnit(reviews, 3);
+    expect(result.score).toBeCloseTo(0.5);
+    expect(result.reviewCount).toBe(2);
+  });
+
+  it('excludes excluded_from_score reviews from both the points and the count', () => {
+    const reviews = [review({ id: 'r1', stars: 5 }), review({ id: 'r2', stars: 1, excluded_from_score: true })];
+    const result = computeReviewPointsPerUnit(reviews, 2);
+    expect(result.score).toBeCloseTo(0.5);
+    expect(result.reviewCount).toBe(1);
+  });
+
+  it('returns null (never a divide-by-zero) when the denominator is 0', () => {
+    const reviews = [review({ id: 'r1', stars: 5 })];
+    expect(computeReviewPointsPerUnit(reviews, 0).score).toBeNull();
+  });
+});
+
+describe('computePunctualityStats — "Punctuality" metric (on-time %)', () => {
+  it('reports the % of counted arrivals that were on time', () => {
+    const arrivals: ArrivalPunctualityRow[] = [
+      { minutes_late: 0 }, { minutes_late: -3 }, { minutes_late: 12 }, { minutes_late: 20 },
+    ];
+    const stats = computePunctualityStats(arrivals);
+    expect(stats.countedArrivals).toBe(4);
+    expect(stats.onTimeCount).toBe(2);
+    expect(stats.onTimePct).toBe(50);
+  });
+
+  it('returns null (never a fabricated 0%) when there are no counted arrivals at all', () => {
+    expect(computePunctualityStats([]).onTimePct).toBeNull();
+    expect(computePunctualityStats([{ minutes_late: null }]).onTimePct).toBeNull();
+  });
+});
+
+describe('normalizeReviewScoreTo100', () => {
+  it('maps -1 -> 0, 0 -> 50, +1 -> 100', () => {
+    expect(normalizeReviewScoreTo100(-1)).toBe(0);
+    expect(normalizeReviewScoreTo100(0)).toBe(50);
+    expect(normalizeReviewScoreTo100(1)).toBe(100);
+  });
+
+  it('clamps a score outside ±1 instead of producing an out-of-range result', () => {
+    expect(normalizeReviewScoreTo100(2)).toBe(100);
+    expect(normalizeReviewScoreTo100(-5)).toBe(0);
+  });
+
+  it('passes null through as null', () => {
+    expect(normalizeReviewScoreTo100(null)).toBeNull();
+  });
+});
+
+describe('computeCombinedMetric — "Combined" metric: Rating 50% + Punctuality 50%', () => {
+  it('blends a perfect rating (+1 -> 100) and 80% on-time into a 50/50 average', () => {
+    const result = computeCombinedMetric(1, 80);
+    expect(result.ratingNormalized).toBe(100);
+    expect(result.punctualityPct).toBe(80);
+    expect(result.score).toBeCloseTo(90); // (100*0.5 + 80*0.5)
+  });
+
+  it('falls back to rating-only (renormalized, not rating*0.5+0) when punctuality has no data yet', () => {
+    const result = computeCombinedMetric(0.5, null); // rating normalizes to 75
+    expect(result.score).toBe(75);
+  });
+
+  it('falls back to punctuality-only when there is no review score at all', () => {
+    const result = computeCombinedMetric(null, 60);
+    expect(result.score).toBe(60);
+  });
+
+  it('is null only when BOTH rating and punctuality are missing', () => {
+    expect(computeCombinedMetric(null, null).score).toBeNull();
+  });
+});
+
+describe('computeMetricValue — one entry point for all 4 metrics', () => {
+  const reviews = [review({ id: 'r1', stars: 5 }), review({ id: 'r2', stars: 5 })]; // 2.0 points total
+  const arrivals: ArrivalPunctualityRow[] = [{ minutes_late: 0 }, { minutes_late: 30 }]; // 50% on-time
+
+  it('perBooking = reviews ÷ bookingsCount', () => {
+    expect(computeMetricValue('perBooking', reviews, 4, 10, arrivals)).toBeCloseTo(0.5);
+  });
+
+  it('perTour = reviews ÷ toursCount (ignores bookingsCount entirely)', () => {
+    expect(computeMetricValue('perTour', reviews, 4, 2, arrivals)).toBeCloseTo(1.0);
+  });
+
+  it('punctuality = on-time % (ignores reviews/bookings/tours entirely)', () => {
+    expect(computeMetricValue('punctuality', reviews, 4, 2, arrivals)).toBe(50);
+  });
+
+  it('combined blends the perBooking score and the punctuality %', () => {
+    // perBooking score here = 2.0/4 = 0.5 -> normalizes to 75; punctuality = 50 -> blend = 62.5
+    expect(computeMetricValue('combined', reviews, 4, 2, arrivals)).toBeCloseTo(62.5);
+  });
+
+  it('returns null for perTour when toursCount is 0, even if bookingsCount is healthy', () => {
+    expect(computeMetricValue('perTour', reviews, 10, 0, arrivals)).toBeNull();
+  });
+});
+
+describe('computeGuideLeaderboardByMetric — period recompute + the 3-booking gate applies to every metric', () => {
+  const reviewsByGuide = new Map<string, GuideReviewRow[]>([
+    ['g1', [review({ id: 'r1', guide_id: 'g1', stars: 5 }), review({ id: 'r2', guide_id: 'g1', stars: 5 })]],
+    ['g2', [review({ id: 'r3', guide_id: 'g2', stars: 4 })]],
+  ]);
+  const bookingCounts = new Map([['g1', 5], ['g2', 2]]); // g2 is under the 3-booking threshold
+  const tourCounts = new Map([['g1', 2], ['g2', 2]]);
+  const arrivalsByGuide = new Map<string, ArrivalPunctualityRow[]>([
+    ['g1', [{ minutes_late: 0 }, { minutes_late: 0 }]],
+  ]);
+
+  it('ranks by the selected metric and assigns rank starting at 1', () => {
+    const result = computeGuideLeaderboardByMetric(['g1', 'g2'], 'perBooking', reviewsByGuide, bookingCounts, tourCounts, arrivalsByGuide);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ guide_id: 'g1', rank: 1 });
+  });
+
+  it('excludes a guide under the 3-booking threshold from EVERY metric, not just Per Booking', () => {
+    for (const metric of ['perBooking', 'perTour', 'punctuality', 'combined'] as const) {
+      const result = computeGuideLeaderboardByMetric(['g1', 'g2'], metric, reviewsByGuide, bookingCounts, tourCounts, arrivalsByGuide);
+      expect(result.find((e) => e.guide_id === 'g2')).toBeUndefined();
+    }
+  });
+
+  it('excludes a guide with no data for the selected metric (e.g. Punctuality with zero arrivals)', () => {
+    const noArrivals = new Map<string, ArrivalPunctualityRow[]>();
+    const result = computeGuideLeaderboardByMetric(['g1'], 'punctuality', reviewsByGuide, bookingCounts, tourCounts, noArrivals);
+    expect(result).toHaveLength(0);
+  });
+
+  it('recomputes entirely when the SAME guide has different counts passed for a narrower period', () => {
+    const overall = computeGuideLeaderboardByMetric(['g1'], 'perBooking', reviewsByGuide, bookingCounts, tourCounts, arrivalsByGuide);
+    const narrowBookingCounts = new Map([['g1', 1]]); // a narrow period where g1 falls under the gate
+    const narrowed = computeGuideLeaderboardByMetric(['g1'], 'perBooking', reviewsByGuide, narrowBookingCounts, tourCounts, arrivalsByGuide);
+    expect(overall).toHaveLength(1);
+    expect(narrowed).toHaveLength(0);
+  });
+});
+
+describe('getLeaderboardPeriodBounds / getLeaderboardPeriodLabel — the time filter', () => {
+  const today = new Date(2026, 9, 15); // Thu Oct 15, 2026
+
+  it('sinceStart is open-ended from Oct 1, 2026 onward', () => {
+    const bounds = getLeaderboardPeriodBounds({ mode: 'sinceStart' }, today);
+    expect(bounds).toEqual({ start: '2026-10-01', end: '9999-12-31' });
+    expect(getLeaderboardPeriodLabel({ mode: 'sinceStart' }, today)).toBe('Since Oct 1, 2026');
+  });
+
+  it('day defaults to today when no date is given, and respects an explicit date', () => {
+    expect(getLeaderboardPeriodBounds({ mode: 'day' }, today)).toEqual({ start: '2026-10-15', end: '2026-10-15' });
+    expect(getLeaderboardPeriodBounds({ mode: 'day', date: '2026-10-07' }, today)).toEqual({ start: '2026-10-07', end: '2026-10-07' });
+  });
+
+  it('week resolves to the Monday-Sunday week containing the given/default date', () => {
+    // Oct 15, 2026 is a Thursday -> that week is Mon Oct 12 - Sun Oct 18.
+    const bounds = getLeaderboardPeriodBounds({ mode: 'week' }, today);
+    expect(bounds).toEqual({ start: '2026-10-12', end: '2026-10-18' });
+  });
+
+  it('week correctly resolves a Sunday to the week that ENDS on it, not the next week', () => {
+    const sunday = new Date(2026, 9, 18); // Sun Oct 18, 2026
+    const bounds = getLeaderboardPeriodBounds({ mode: 'week', weekOf: '2026-10-18' }, sunday);
+    expect(bounds).toEqual({ start: '2026-10-12', end: '2026-10-18' });
+  });
+
+  it('month resolves to the first/last day of the given/default month', () => {
+    expect(getLeaderboardPeriodBounds({ mode: 'month' }, today)).toEqual({ start: '2026-10-01', end: '2026-10-31' });
+    expect(getLeaderboardPeriodBounds({ mode: 'month', month: '2026-02' }, today)).toEqual({ start: '2026-02-01', end: '2026-02-28' });
+  });
+});
+
+describe('stepLeaderboardPeriod — "view an earlier week/month"', () => {
+  const today = new Date(2026, 9, 15); // Oct 15, 2026
+
+  it('steps a week period back by exactly 7 days', () => {
+    const current: LeaderboardPeriod = { mode: 'week', weekOf: '2026-10-15' };
+    const prev = stepLeaderboardPeriod(current, -1, today);
+    expect(getLeaderboardPeriodBounds(prev, today)).toEqual({ start: '2026-10-05', end: '2026-10-11' });
+  });
+
+  it('steps a month period back by exactly one calendar month, including across a year boundary', () => {
+    const jan = stepLeaderboardPeriod({ mode: 'month', month: '2026-01' }, -1, today);
+    expect(jan).toEqual({ mode: 'month', month: '2025-12' });
+  });
+
+  it('steps forward too', () => {
+    const next = stepLeaderboardPeriod({ mode: 'month', month: '2026-10' }, 1, today);
+    expect(next).toEqual({ mode: 'month', month: '2026-11' });
+  });
+
+  it('leaves sinceStart/day periods unchanged — they are not stepped this way', () => {
+    expect(stepLeaderboardPeriod(DEFAULT_LEADERBOARD_PERIOD, 1, today)).toEqual(DEFAULT_LEADERBOARD_PERIOD);
+    const day: LeaderboardPeriod = { mode: 'day', date: '2026-10-10' };
+    expect(stepLeaderboardPeriod(day, -1, today)).toEqual(day);
+  });
+});
+
+describe('computeCheckedInBookingCountsForPeriod — period-bounded booking counts for the leaderboard', () => {
+  const sessionBookings: SessionBookingForGuiding[] = [
+    { booking_ref: 'B1', allotted_guide_id: 'g1' },
+    { booking_ref: 'B2', allotted_guide_id: 'g1' },
+    { booking_ref: 'B3', allotted_guide_id: 'g2' },
+  ];
+  const checkins: CheckinForGuiding[] = [
+    { booking_ref: 'B1', status: 'checked_in', travel_date: '2026-10-05' },
+    { booking_ref: 'B2', status: 'checked_in', travel_date: '2026-10-20' },
+    { booking_ref: 'B3', status: 'checked_in', travel_date: '2026-10-05' },
+  ];
+
+  it('counts only bookings checked in within the given bounds', () => {
+    const counts = computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, { start: '2026-10-01', end: '2026-10-10' });
+    expect(counts.get('g1')).toBe(1); // only B1 (Oct 5) — B2 (Oct 20) falls outside
+    expect(counts.get('g2')).toBe(1);
+  });
+
+  it('widening the window to cover both bookings counts both', () => {
+    const counts = computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, { start: '2026-10-01', end: '9999-12-31' });
+    expect(counts.get('g1')).toBe(2);
+  });
+});
+
+describe('filterReviewsByPeriod / filterArrivalsByPeriod', () => {
+  it('filterReviewsByPeriod keeps only reviews with review_date inside bounds', () => {
+    const reviews = [
+      review({ id: 'r1', review_date: '2026-10-05' }),
+      review({ id: 'r2', review_date: '2026-10-20' }),
+    ];
+    const result = filterReviewsByPeriod(reviews, { start: '2026-10-01', end: '2026-10-10' });
+    expect(result.map((r) => r.id)).toEqual(['r1']);
+  });
+
+  it('filterArrivalsByPeriod compares only the date portion of arrived_at', () => {
+    const arrivals: ArrivalForPeriod[] = [
+      { guide_id: 'g1', arrived_at: '2026-10-05T08:58:00.000Z', minutes_late: 0 },
+      { guide_id: 'g1', arrived_at: '2026-10-20T09:03:00.000Z', minutes_late: 3 },
+    ];
+    const result = filterArrivalsByPeriod(arrivals, { start: '2026-10-01', end: '2026-10-10' });
+    expect(result).toHaveLength(1);
+    expect(result[0].arrived_at).toContain('2026-10-05');
   });
 });

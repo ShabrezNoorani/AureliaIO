@@ -2,19 +2,32 @@ import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import {
-  computeCheckedInBookingRecords, countCheckedInBookingsByGuideAndMonth, groupReviewsByMonth,
-  computeGuideLeaderboard, getScoreBand, GUIDE_SCORE_MIN_BOOKINGS, ADMIN_SCORE_BAND_LABELS,
-  ADMIN_DEFAULT_FILTER_START,
+  computeGuideLeaderboardByMetric, computeCheckedInBookingCountsForPeriod, computeToursPerGuide,
+  filterReviewsByPeriod, filterArrivalsByPeriod, getScoreBand, getLeaderboardPeriodBounds,
+  getLeaderboardPeriodLabel, GUIDE_SCORE_MIN_BOOKINGS, ADMIN_SCORE_BAND_LABELS,
+  ADMIN_DEFAULT_FILTER_START, DEFAULT_LEADERBOARD_PERIOD,
   type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding,
+  type SessionGuideForTourCount, type SessionDateForTourCount, type ArrivalForPeriod,
+  type LeaderboardMetric, type LeaderboardPeriod,
 } from '@/lib/guidePerformance';
 import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
+import LeaderboardControls from '@/components/guide/LeaderboardControls';
+
+/** perBooking/perTour are points-per-unit (roughly -1..+1) — shown with a sign, 2 decimals.
+    punctuality/combined are already 0-100 — shown as a plain rounded percentage. Same formatting
+    as GuideOwnScoreCard.tsx's own copy, kept in sync by convention (small enough that extracting
+    a shared helper would be more indirection than the one duplicated function is worth). */
+function formatMetricValue(metric: LeaderboardMetric, value: number | null): string {
+  if (value == null) return '—';
+  if (metric === 'punctuality' || metric === 'combined') return `${Math.round(value)}%`;
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
+}
 
 /**
- * Admin-only. Previously a section embedded in GuideDashboard.tsx — moved to its own tab/nav item
- * so the period/month filter has room to work properly and isn't competing with the Guide
- * Dashboard's own (unrelated) date/status filters for the same screen space. Owns its own fetch
- * (guides/reviews/checkins/session_bookings/tour_sessions) rather than sharing GuideDashboard's,
- * since the two pages are no longer rendered together.
+ * Admin-only. One ranked list at a time, by whichever metric is selected, for whichever time
+ * period is selected — not four columns at once. Owns its own fetch (guides/reviews/checkins/
+ * session_bookings/session_guides/tour_sessions/guide_arrivals) rather than sharing
+ * GuideDashboard's, since the two pages are no longer rendered together.
  */
 export default function LeaderboardPage() {
   const { user } = useAuth();
@@ -23,117 +36,107 @@ export default function LeaderboardPage() {
   const [reviews, setReviews] = useState<GuideReviewRow[]>([]);
   const [checkins, setCheckins] = useState<CheckinForGuiding[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingForGuiding[]>([]);
+  const [sessionGuides, setSessionGuides] = useState<SessionGuideForTourCount[]>([]);
+  const [sessions, setSessions] = useState<SessionDateForTourCount[]>([]);
+  const [arrivals, setArrivals] = useState<ArrivalForPeriod[]>([]);
 
-  // 'overall' = since Oct 1, 2026 (the headline window); any other value is a YYYY-MM month.
-  const [period, setPeriod] = useState<string>('overall');
+  const [metric, setMetric] = useState<LeaderboardMetric>('perBooking');
+  const [period, setPeriod] = useState<LeaderboardPeriod>(DEFAULT_LEADERBOARD_PERIOD);
 
   const fetchData = async () => {
     if (!user) return;
     setLoading(true);
-    const [guidesRes, reviewsRes, checkinsRes, sbRes] = await Promise.all([
+    const [guidesRes, reviewsRes, checkinsRes, sbRes, sessionGuidesRes, sessionsRes, arrivalsRes] = await Promise.all([
       supabase.from('guides').select('id, name, guide_number').eq('user_id', user.id).order('name'),
       supabase.from('guide_reviews').select('*').eq('user_id', user.id).gte('review_date', ADMIN_DEFAULT_FILTER_START),
-      // travel_date is the checkin's OWN date — computeCheckedInBookingRecords counts off this
-      // column directly, never a joined session's tour_date (see its own doc comment for why).
+      // travel_date is the checkin's OWN date — computeCheckedInBookingCountsForPeriod counts off
+      // this column directly, never a joined session's tour_date (see its own doc comment for why).
       supabase.from('checkins').select('booking_ref, status, travel_date').eq('user_id', user.id)
         .eq('status', 'checked_in').gte('travel_date', ADMIN_DEFAULT_FILTER_START),
       supabase.from('session_bookings').select('booking_ref, allotted_guide_id, session_id').eq('user_id', user.id),
+      supabase.from('session_guides').select('guide_id, session_id, status').eq('user_id', user.id),
+      supabase.from('tour_sessions').select('id, tour_date').eq('user_id', user.id).gte('tour_date', ADMIN_DEFAULT_FILTER_START),
+      supabase.from('guide_arrivals').select('guide_id, arrived_at, minutes_late').eq('user_id', user.id).gte('arrived_at', ADMIN_DEFAULT_FILTER_START),
     ]);
     setGuides(guidesRes.data || []);
     setReviews(reviewsRes.data || []);
     setCheckins(checkinsRes.data || []);
     setSessionBookings(sbRes.data || []);
+    setSessionGuides(sessionGuidesRes.data || []);
+    setSessions(sessionsRes.data || []);
+    setArrivals(arrivalsRes.data || []);
     setLoading(false);
   };
 
   useEffect(() => { fetchData(); }, [user]);
 
-  const checkedInBookingRecords = useMemo(
-    () => computeCheckedInBookingRecords(sessionBookings, checkins, ADMIN_DEFAULT_FILTER_START),
-    [sessionBookings, checkins]
-  );
-  const checkedInCountsByGuideAndMonth = useMemo(
-    () => countCheckedInBookingsByGuideAndMonth(checkedInBookingRecords),
-    [checkedInBookingRecords]
-  );
-  const reviewsByMonth = useMemo(() => groupReviewsByMonth(reviews), [reviews]);
+  const bounds = useMemo(() => getLeaderboardPeriodBounds(period), [period]);
 
-  // Every distinct month with either a checked-in booking or a logged review, since Oct 1. Sorted newest-first.
-  const monthOptions = useMemo(() => {
-    const months = new Set<string>();
-    checkedInBookingRecords.forEach(r => months.add(r.month));
-    reviewsByMonth.forEach((_, month) => months.add(month));
-    return Array.from(months).sort().reverse();
-  }, [checkedInBookingRecords, reviewsByMonth]);
-
-  // Recomputes EVERYTHING — reviews grouping AND checked-in-booking counts — for whichever period
-  // is selected. Selecting a specific month means the leaderboard (ranking, scores, counts,
-  // verdicts) reflects ONLY that month's checked-in bookings, never the guide's larger overall total.
-  const { reviewsByGuideForPeriod, bookingCountsForPeriod } = useMemo(() => {
-    if (period === 'overall') {
-      const out = new Map<string, GuideReviewRow[]>();
-      reviews.forEach(r => {
-        const arr = out.get(r.guide_id) || [];
-        arr.push(r);
-        out.set(r.guide_id, arr);
-      });
-      const overallCounts = new Map<string, number>();
-      checkedInBookingRecords.forEach(r => overallCounts.set(r.guide_id, (overallCounts.get(r.guide_id) || 0) + 1));
-      return { reviewsByGuideForPeriod: out, bookingCountsForPeriod: overallCounts };
-    }
+  const reviewsByGuideForPeriod = useMemo(() => {
+    const scoped = filterReviewsByPeriod(reviews, bounds);
     const out = new Map<string, GuideReviewRow[]>();
-    (reviewsByMonth.get(period) || []).forEach(r => {
+    scoped.forEach((r) => {
       const arr = out.get(r.guide_id) || [];
       arr.push(r);
       out.set(r.guide_id, arr);
     });
-    const monthCounts = new Map<string, number>();
-    checkedInCountsByGuideAndMonth.forEach((byMonth, guideId) => {
-      const count = byMonth.get(period);
-      if (count) monthCounts.set(guideId, count);
+    return out;
+  }, [reviews, bounds]);
+
+  const bookingCountsForPeriod = useMemo(
+    () => computeCheckedInBookingCountsForPeriod(sessionBookings, checkins, bounds),
+    [sessionBookings, checkins, bounds]
+  );
+  const tourCountsForPeriod = useMemo(
+    () => computeToursPerGuide(sessionGuides, sessions, bounds),
+    [sessionGuides, sessions, bounds]
+  );
+  const arrivalsByGuideForPeriod = useMemo(() => {
+    const scoped = filterArrivalsByPeriod(arrivals, bounds);
+    const out = new Map<string, ArrivalForPeriod[]>();
+    scoped.forEach((a) => {
+      const arr = out.get(a.guide_id) || [];
+      arr.push(a);
+      out.set(a.guide_id, arr);
     });
-    return { reviewsByGuideForPeriod: out, bookingCountsForPeriod: monthCounts };
-  }, [period, reviews, checkedInBookingRecords, reviewsByMonth, checkedInCountsByGuideAndMonth]);
+    return out;
+  }, [arrivals, bounds]);
 
   const leaderboard = useMemo(
-    () => computeGuideLeaderboard(guides.map(g => g.id), reviewsByGuideForPeriod, bookingCountsForPeriod),
-    [guides, reviewsByGuideForPeriod, bookingCountsForPeriod]
+    () => computeGuideLeaderboardByMetric(
+      guides.map((g) => g.id), metric, reviewsByGuideForPeriod, bookingCountsForPeriod, tourCountsForPeriod, arrivalsByGuideForPeriod
+    ),
+    [guides, metric, reviewsByGuideForPeriod, bookingCountsForPeriod, tourCountsForPeriod, arrivalsByGuideForPeriod]
   );
-  const nameById = useMemo(() => new Map(guides.map(g => [g.id, g.name])), [guides]);
-  const guideNumberById = useMemo(() => new Map(guides.map(g => [g.id, g.guide_number])), [guides]);
+  const nameById = useMemo(() => new Map(guides.map((g) => [g.id, g.name])), [guides]);
+  const guideNumberById = useMemo(() => new Map(guides.map((g) => [g.id, g.guide_number])), [guides]);
 
-  const periodLabel = period === 'overall'
-    ? 'Overall · Since Oct 1, 2026'
-    : new Date(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const periodLabel = getLeaderboardPeriodLabel(period);
+  const metricUnitLabel = metric === 'perTour' ? 'tours' : 'bookings';
 
   return (
     <div style={{ padding: '32px' }} className="animate-fade-in">
       <div className="p-8 max-w-4xl mx-auto space-y-6 animate-fade-in">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-6">
+        <div className="border-b border-border pb-6 space-y-4">
           <div>
             <h1 className="text-[28px] font-bold tracking-tight text-foreground flex items-center gap-2">
               Leaderboard <ScoreInfoTooltip />
             </h1>
-            <p className="text-muted-foreground text-sm mt-1.5">Ranked by review score. Owner-only.</p>
+            <p className="text-muted-foreground text-sm mt-1.5">Ranked by the selected metric. Owner-only.</p>
           </div>
-          <select
-            value={period}
-            onChange={e => setPeriod(e.target.value)}
-            className="aurelia-input text-xs py-2 appearance-none bg-muted"
-          >
-            <option value="overall">Overall · Since Oct 1, 2026</option>
-            {monthOptions.map(m => (
-              <option key={m} value={m}>
-                {new Date(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </option>
-            ))}
-          </select>
+          <LeaderboardControls metric={metric} onMetricChange={setMetric} period={period} onPeriodChange={setPeriod} />
         </div>
 
         <p className="text-xs text-muted-foreground">
           Showing <span className="font-bold text-foreground">{periodLabel}</span>. Guides need {GUIDE_SCORE_MIN_BOOKINGS}+ bookings
-          within this period to be ranked — the threshold and every number below recompute entirely for whichever period is selected.
+          within this period to be ranked, on every metric — recomputes entirely for whichever metric/period is selected.
         </p>
+
+        {metric === 'combined' && (
+          <p className="text-xs text-muted-foreground italic">
+            Punctuality is still building — the combined score firms up as more verified arrivals are recorded.
+          </p>
+        )}
 
         {loading ? (
           <div className="flex justify-center p-20">
@@ -145,8 +148,11 @@ export default function LeaderboardPage() {
           </div>
         ) : (
           <div className="aurelia-card border border-border divide-y divide-border overflow-hidden">
-            {leaderboard.map(entry => {
-              const band = getScoreBand(entry.score);
+            {leaderboard.map((entry) => {
+              // getScoreBand's thresholds are calibrated for the per-booking score's own range —
+              // only meaningful (and only shown) for that one metric.
+              const band = metric === 'perBooking' ? getScoreBand(entry.value) : null;
+              const unitCount = metric === 'perTour' ? entry.toursCount : entry.bookingsCount;
               return (
                 <div key={entry.guide_id} className="flex items-center gap-4 px-5 py-4 flex-wrap">
                   <div className="w-10 text-center font-mono font-bold text-lg text-muted-foreground shrink-0">#{entry.rank}</div>
@@ -156,7 +162,11 @@ export default function LeaderboardPage() {
                       <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">{guideNumberById.get(entry.guide_id)}</div>
                     )}
                   </div>
-                  <div className="text-xs text-muted-foreground shrink-0">{entry.reviewCount} review{entry.reviewCount !== 1 ? 's' : ''} / {entry.bookingsCount} bookings</div>
+                  <div className="text-xs text-muted-foreground shrink-0">
+                    {metric === 'punctuality'
+                      ? `${entry.onTimeCount}/${entry.countedArrivals} on-time`
+                      : `${entry.reviewCount} review${entry.reviewCount !== 1 ? 's' : ''} / ${unitCount} ${metricUnitLabel}`}
+                  </div>
                   {band && (
                     <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ${
                       band === 'excellent' ? 'bg-green-600/15 text-green-700'
@@ -167,8 +177,10 @@ export default function LeaderboardPage() {
                       {ADMIN_SCORE_BAND_LABELS[band]}
                     </span>
                   )}
-                  <div className={`w-20 text-right font-bold text-lg shrink-0 ${entry.score >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                    {entry.score >= 0 ? '+' : ''}{entry.score.toFixed(2)}
+                  <div className={`w-20 text-right font-bold text-lg shrink-0 ${
+                    metric === 'punctuality' || metric === 'combined' ? 'text-foreground' : (entry.value >= 0 ? 'text-green-700' : 'text-red-600')
+                  }`}>
+                    {formatMetricValue(metric, entry.value)}
                   </div>
                 </div>
               );

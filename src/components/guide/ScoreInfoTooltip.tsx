@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Info } from 'lucide-react';
-import { SCORE_BAND_TOOLTIP_ROWS, SCORE_FORMULA_TOOLTIP_TEXT } from '@/lib/guidePerformance';
+import { SCORE_BAND_TOOLTIP_ROWS, SCORE_FORMULA_TOOLTIP_TEXT, METRIC_TOOLTIP_DESCRIPTIONS } from '@/lib/guidePerformance';
 
 /**
  * The "i" info button next to a score, on BOTH the guide's own dashboard and the admin dashboard —
@@ -44,10 +44,20 @@ export default function ScoreInfoTooltip() {
         <Info size={13} />
       </button>
       <div
-        className={`absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-xl border border-border bg-card shadow-2xl p-3.5 text-left transition-opacity ${
+        className={`absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-72 max-w-[85vw] rounded-xl border border-border bg-card shadow-2xl p-3.5 text-left transition-opacity ${
           open ? 'opacity-100 visible' : 'opacity-0 invisible group-hover/scoreinfo:opacity-100 group-hover/scoreinfo:visible'
         }`}
       >
+        <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1.5">The 4 metrics</p>
+        <ul className="space-y-1.5">
+          {METRIC_TOOLTIP_DESCRIPTIONS.map(m => (
+            <li key={m.metric} className="text-[11px] leading-snug">
+              <span className="font-bold text-foreground">{m.label}</span>
+              <span className="text-muted-foreground"> — {m.note}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mt-3 mb-1.5 pt-2 border-t border-border">Per Booking verdict bands</p>
         <ul className="space-y-1">
           {SCORE_BAND_TOOLTIP_ROWS.map(row => (
             <li key={row.range} className="text-[11px] leading-snug">

@@ -7,8 +7,10 @@ import { localDateStr } from '@/lib/utils';
 import {
   computeAssignmentStats, computeRatingStats, computePunctualityStats, computeGuideScore,
   groupMonthlyEarnings, sessionGuidesToAssignmentRows, buildUnifiedMonthlyRows,
+  DEFAULT_LEADERBOARD_PERIOD,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type ArrivalPunctualityRow,
   type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
+  type LeaderboardMetric, type LeaderboardPeriod,
 } from '@/lib/guidePerformance';
 import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
 import { fetchMeetingPoints, type MeetingPointRow } from '@/lib/meetingPoints';
@@ -67,8 +69,12 @@ export default function GuideHome() {
   const navigate = useNavigate();
 
   // Leads the dashboard — this guide's own review score, verdict and anonymized rank/top-score.
-  // Shared with GuideReviews.tsx via useGuideOwnScore, so the two can never disagree.
-  const ownScore = useGuideOwnScore(guideId, guideUserId);
+  // Shared with GuideReviews.tsx via useGuideOwnScore, so the two can never disagree. Metric/
+  // period state lives HERE (not inside the shared hook/card) so this page's toggle is
+  // independent of GuideReviews.tsx's own.
+  const [scoreMetric, setScoreMetric] = useState<LeaderboardMetric>('perBooking');
+  const [scorePeriod, setScorePeriod] = useState<LeaderboardPeriod>(DEFAULT_LEADERBOARD_PERIOD);
+  const ownScore = useGuideOwnScore(guideId, guideUserId, scoreMetric, scorePeriod);
 
   // Self-heals the "Couldn't confirm your account" fail-closed state (see roleResolution.ts) —
   // retries role resolution every few seconds without a full reload, so a connection that was
@@ -372,7 +378,7 @@ export default function GuideHome() {
       <section className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5">
-            <h2 className="text-xs font-bold text-gold uppercase tracking-widest">Your Score · Since Oct 1, 2026</h2>
+            <h2 className="text-xs font-bold text-gold uppercase tracking-widest">Your Score</h2>
             <ScoreInfoTooltip />
           </div>
           <button
@@ -382,7 +388,14 @@ export default function GuideHome() {
             View Reviews
           </button>
         </div>
-        <GuideOwnScoreCard data={ownScore} prominent />
+        <GuideOwnScoreCard
+          data={ownScore}
+          metric={scoreMetric}
+          onMetricChange={setScoreMetric}
+          period={scorePeriod}
+          onPeriodChange={setScorePeriod}
+          prominent
+        />
       </section>
 
       <div>
