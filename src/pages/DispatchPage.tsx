@@ -613,6 +613,7 @@ export default function DispatchPage() {
       {
         checkinTimeOverride: sg.checkin_time,
         optionName: sessionIdToBookings.get(session.id)?.[0]?.option_name || session.label,
+        meetingPoint: session.meeting_point_id ? meetingPointById.get(session.meeting_point_id) ?? null : null,
       }
     );
 
@@ -870,7 +871,10 @@ export default function DispatchPage() {
                           const { calendarUrl, allHaveEmail } = buildSharedGuideInviteLink(
                             session,
                             acceptedRows.map(sg => guideById.get(sg.guide_id) || {}),
-                            { optionName: sessionIdToBookings.get(session.id)?.[0]?.option_name || session.label }
+                            {
+                              optionName: sessionIdToBookings.get(session.id)?.[0]?.option_name || session.label,
+                              meetingPoint: session.meeting_point_id ? meetingPointById.get(session.meeting_point_id) ?? null : null,
+                            }
                           );
                           return { calendarUrl, allHaveEmail };
                         })();

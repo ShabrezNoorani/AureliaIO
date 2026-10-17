@@ -19,8 +19,8 @@ const LandingPage = lazy(() => import("./pages/LandingPage"));
 const SignupPage = lazy(() => import("./pages/SignupPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const PricingPage = lazy(() => import("./pages/PricingPage"));
-const BlogPage = lazy(() => import("./pages/BlogPage"));
-const BlogPostPage = lazy(() => import("./pages/BlogPostPage"));
+const HowItWorksPage = lazy(() => import("./pages/HowItWorksPage"));
+const HowItWorksPostPage = lazy(() => import("./pages/HowItWorksPostPage"));
 const CheckinApp = lazy(() => import("./pages/CheckinApp"));
 const GuideClaimPage = lazy(() => import("./pages/GuideClaimPage"));
 const AppLayout = lazy(() => import("./pages/AppLayout"));
@@ -82,8 +82,8 @@ const AppContent = () => {
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/pricing" element={<PricingPage />} />
-            <Route path="/blog" element={<BlogPage />} />
-            <Route path="/blog/:slug" element={<BlogPostPage />} />
+            <Route path="/how-it-works" element={<HowItWorksPage />} />
+            <Route path="/how-it-works/:slug" element={<HowItWorksPostPage />} />
             <Route path="/checkin/:token" element={<CheckinApp />} />
             <Route path="/guide/claim/:token" element={<GuideClaimPage />} />
 

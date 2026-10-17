@@ -88,6 +88,23 @@ export function forceBrowserUrl(url: string): string {
   return `intent://${withoutScheme}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(url)};end`;
 }
 
+/** A Google Maps search link that drops a pin exactly on these coordinates — used in both the
+    calendar event's LOCATION and its DESCRIPTION whenever a session has a meeting point. */
+export function buildMeetingPointMapsUrl(latitude: number, longitude: number): string {
+  return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+}
+
+export interface InviteMeetingPoint {
+  name: string;
+  latitude: number;
+  longitude: number;
+}
+
+/** "[name] — [maps link]" — the one line format shared by the calendar event's LOCATION field
+    and its own description line, so the two can never read differently for the same point. */
+const formatMeetingPointLine = (mp: InviteMeetingPoint): string =>
+  `${mp.name} — ${buildMeetingPointMapsUrl(mp.latitude, mp.longitude)}`;
+
 export function buildWhatsAppUrl(phone: string | null | undefined, message: string): string | null {
   if (!phone) return null;
   const digits = phone.replace(/\D/g, '');
@@ -133,6 +150,11 @@ export interface GuideInviteOptions {
   /** The linked booking's own option name, when known (e.g. "Guided Tour & Cathedral Visit") —
    *  falls back to the session label when omitted. */
   optionName?: string | null;
+  /** The session's chosen meeting point, when it has one — folded into both the calendar event's
+   *  LOCATION field and a "Meeting point: …" description line. Omitted/null leaves the calendar
+   *  link unchanged (LOCATION falls back to the plain session label, same as before this field
+   *  existed). */
+  meetingPoint?: InviteMeetingPoint | null;
 }
 
 /**
@@ -173,18 +195,27 @@ export function buildGuideInviteLinks(
   const longDate = new Date(`${session.tour_date}T00:00:00`)
     .toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
+  // LOCATION + a "Meeting point: …" description line both come from the SAME formatted string
+  // (formatMeetingPointLine) — never two independently-built versions that could drift apart.
+  // No meeting point at all: LOCATION falls back to the plain session label, exactly as before
+  // this field existed.
+  const meetingPoint = options?.meetingPoint;
+  const meetingPointLine = meetingPoint ? `Meeting point: ${formatMeetingPointLine(meetingPoint)}` : null;
+  const location = meetingPoint ? formatMeetingPointLine(meetingPoint) : sessionLabel;
+
   const details = [
     optionName,
     longDate,
     checkin ? `Check-in ${checkin}` : null,
     payLine,
+    meetingPointLine,
     session.notes,
   ].filter(Boolean).join('\n');
 
   const calendarUrl = buildGoogleCalendarUrl({
     title,
     details,
-    location: sessionLabel,
+    location,
     tourDate: session.tour_date,
     startTime: session.start_time,
     guestEmail: guide?.email,
@@ -227,7 +258,7 @@ export interface SharedInviteLink {
 export function buildSharedGuideInviteLink(
   session: GuideInviteSession,
   guides: SharedInviteGuide[],
-  options?: { optionName?: string | null }
+  options?: { optionName?: string | null; meetingPoint?: InviteMeetingPoint | null }
 ): SharedInviteLink {
   const sessionLabel = session.label || 'your tour';
   const timeLabel = session.start_time || 'time TBD';
@@ -238,11 +269,19 @@ export function buildSharedGuideInviteLink(
   const guideNames = guides.map((g) => g.name).filter(Boolean).join(', ');
   const longDate = new Date(`${session.tour_date}T00:00:00`)
     .toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+  // Same LOCATION/description-line formatting as buildGuideInviteLinks (see its own comment) —
+  // no meeting point leaves LOCATION on the plain session label, unchanged from before.
+  const meetingPoint = options?.meetingPoint;
+  const meetingPointLine = meetingPoint ? `Meeting point: ${formatMeetingPointLine(meetingPoint)}` : null;
+  const location = meetingPoint ? formatMeetingPointLine(meetingPoint) : sessionLabel;
+
   const details = [
     optionName,
     longDate,
     checkin ? `Check-in ${checkin}` : null,
     guideNames ? `Guides: ${guideNames}` : null,
+    meetingPointLine,
     session.notes,
   ].filter(Boolean).join('\n');
 
@@ -251,7 +290,7 @@ export function buildSharedGuideInviteLink(
   const calendarUrl = buildGoogleCalendarUrl({
     title,
     details,
-    location: sessionLabel,
+    location,
     tourDate: session.tour_date,
     startTime: session.start_time,
     guestEmails,

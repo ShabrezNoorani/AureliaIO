@@ -1081,7 +1081,7 @@ export default function TodayToursPage() {
               <SessionBoard
                 key={session.id}
                 session={session}
-                meetingPointName={session.meeting_point_id ? (meetingPointById.get(session.meeting_point_id)?.name ?? null) : null}
+                meetingPoint={session.meeting_point_id ? (meetingPointById.get(session.meeting_point_id) ?? null) : null}
                 guests={sessionIdToGuests.get(session.id) || []}
                 team={sessionIdToTeam.get(session.id) || []}
                 guideById={guideById}
@@ -1129,7 +1129,7 @@ export default function TodayToursPage() {
 
 function SessionBoard({
   session,
-  meetingPointName,
+  meetingPoint,
   guests,
   team,
   guideById,
@@ -1152,8 +1152,10 @@ function SessionBoard({
   stuckBookingRefs,
 }: {
   session: any;
-  /** The session's chosen meeting point name, or null when it has none (ungated arrival). */
-  meetingPointName: string | null;
+  /** The session's chosen meeting point (name + coordinates), or null when it has none —
+      threaded into the calendar invite's LOCATION/description below, and into the on-screen
+      "Meeting point: …" line. Ungated arrival when null. */
+  meetingPoint: { name: string; latitude: number; longitude: number } | null;
   guests: SessionGuestRow[];
   team: AllocationGuide[];
   /** Full guide rows (incl. whatsapp) by id, for the calendar/WhatsApp send below. */
@@ -1217,7 +1219,7 @@ function SessionBoard({
             { ...guideById.get(g.id), base_pay: pay.base_pay, bonus: pay.bonus },
             sessionPax,
             companyName,
-            { checkinTimeOverride: pay.checkin_time, optionName: guests[0]?.booking?.option_name || session.label }
+            { checkinTimeOverride: pay.checkin_time, optionName: guests[0]?.booking?.option_name || session.label, meetingPoint }
           );
           return { calendarUrl, allHaveEmail: hasGuestEmail };
         })()
@@ -1225,7 +1227,7 @@ function SessionBoard({
           const { calendarUrl, allHaveEmail } = buildSharedGuideInviteLink(
             session,
             team.map(g => guideById.get(g.id) || {}),
-            { optionName: guests[0]?.booking?.option_name || session.label }
+            { optionName: guests[0]?.booking?.option_name || session.label, meetingPoint }
           );
           return { calendarUrl, allHaveEmail };
         })();
@@ -1267,10 +1269,10 @@ function SessionBoard({
               />
             </span>
           </p>
-          {meetingPointName && (
+          {meetingPoint && (
             <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1.5">
               <MapPin size={12} className="shrink-0 text-gold" />
-              <span>Meeting point: <span className="font-bold text-foreground">{meetingPointName}</span></span>
+              <span>Meeting point: <span className="font-bold text-foreground">{meetingPoint.name}</span></span>
             </p>
           )}
           {/* Staffing capacity controls — optional per-session limit (blank = no limit) plus a
@@ -1321,6 +1323,7 @@ function SessionBoard({
                   {
                     checkinTimeOverride: pay.checkin_time,
                     optionName: guests[0]?.booking?.option_name || session.label,
+                    meetingPoint,
                   }
                 );
                 return (

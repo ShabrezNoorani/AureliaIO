@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArrowRight, BookOpen, RefreshCw, Camera, Users, BarChart3, UserCircle2,
-  CheckCircle2, TrendingUp, ArrowLeftRight,
+  ArrowRight, Camera, Users, BarChart3, Wallet, Star, MapPin, Quote,
 } from 'lucide-react';
 import Logo from '@/components/Logo';
 
@@ -123,15 +122,23 @@ export default function LandingPage() {
           <Link to="/">
             <Logo size="md" showSubtitle={false} wordmarkClassName="text-[#B45309]" />
           </Link>
-          <Link
-            to="/login"
-            className="text-sm font-bold px-5 py-2.5 rounded-xl text-white transition-colors shadow-sm"
-            style={{ background: GOLD }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = GOLD_SOFT)}
-            onMouseLeave={(e) => (e.currentTarget.style.background = GOLD)}
-          >
-            Log in
-          </Link>
+          <div className="flex items-center gap-5">
+            <Link to="/how-it-works" className="hidden sm:inline text-sm font-semibold transition-colors hover:opacity-70" style={{ color: INK_SOFT }}>
+              How it works
+            </Link>
+            <Link to="/login" className="text-sm font-semibold transition-colors hover:opacity-70" style={{ color: INK_SOFT }}>
+              Log in
+            </Link>
+            <Link
+              to="/signup"
+              className="text-sm font-bold px-5 py-2.5 rounded-xl text-white transition-colors shadow-sm"
+              style={{ background: GOLD }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = GOLD_SOFT)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = GOLD)}
+            >
+              Start free trial
+            </Link>
+          </div>
         </div>
       </nav>
 
@@ -155,34 +162,34 @@ export default function LandingPage() {
               className="mb-7 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold tracking-widest uppercase"
               style={{ border: `1px solid ${GOLD}40`, background: `${GOLD}14`, color: GOLD_SOFT }}
             >
-              Operations &amp; pricing, in one place
+              The operations platform for tour operators
             </div>
 
             <h1 className="font-serif text-[2.75rem] leading-[1.08] md:text-6xl md:leading-[1.06] font-semibold tracking-tight mb-6" style={{ color: INK }}>
-              The calm way to run<br />
-              a tour company<span style={{ color: GOLD }}>.</span>
+              Run your whole<br />
+              tour operation<span style={{ color: GOLD }}>,</span> calmly.
             </h1>
 
             <p className="text-lg leading-relaxed max-w-lg mb-10" style={{ color: INK_SOFT }}>
-              AURELIA is the operations and pricing platform built for tour operators — bookings, guides
-              and real profit, all in one calm, live view.
+              AURELIA is the all-in-one platform for tour operators — bookings, check-in, guides,
+              payments and insights, in one live view.
             </p>
 
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <Link
-                to="/login"
+                to="/signup"
                 className="text-base font-bold px-7 py-3.5 rounded-xl text-white inline-flex items-center gap-2 shadow-lg transition-transform hover:-translate-y-0.5"
                 style={{ background: GOLD, boxShadow: `0 12px 30px -8px ${GOLD}55` }}
               >
-                Log in <ArrowRight size={18} />
+                Start free trial <ArrowRight size={18} />
               </Link>
-              <Link
-                to="/login"
+              <a
+                href="mailto:shabirshabrez1998@gmail.com"
                 className="text-base font-semibold px-7 py-3.5 rounded-xl inline-flex items-center gap-2 transition-colors"
                 style={{ border: `1px solid ${HAIRLINE}`, color: INK_SOFT }}
               >
-                For guides — use your invite link
-              </Link>
+                Get in touch
+              </a>
             </div>
           </div>
 
@@ -192,10 +199,8 @@ export default function LandingPage() {
               <MockCard>
                 <WindowChrome />
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Today's Ledger</span>
-                  <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: '#15803d' }}>
-                    <TrendingUp size={13} /> +18%
-                  </span>
+                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Today's Operations</span>
+                  <span className="inline-flex items-center gap-1 text-xs font-bold" style={{ color: '#15803d' }}>Live</span>
                 </div>
                 <div className="mt-4 space-y-3">
                   {[
@@ -222,70 +227,13 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ─── FEATURE SECTIONS ─── */}
+      {/* ─── FEATURE SECTIONS — the 6 strongest capabilities, not an exhaustive list ─── */}
       <div className="max-w-6xl mx-auto px-6 py-4 md:py-8 space-y-28 md:space-y-40">
 
         <FeatureSection
-          index="01 — LEDGER"
-          title="Know your real profit, not just revenue."
-          copy="Every booking tracked automatically. Commission, ticket costs, guide fees and overhead are all netted out — so the number on screen is the number that actually matters."
-          visual={
-            <MockCard>
-              <div className="flex items-center gap-2 mb-5">
-                <BookOpen size={16} style={{ color: GOLD }} />
-                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Financial Ledger</span>
-              </div>
-              <div className="space-y-2.5">
-                {[
-                  { label: 'Revenue', val: '€6,140', tone: INK },
-                  { label: 'Commission & costs', val: '−€2,310', tone: INK_MUTED },
-                  { label: 'Guide fees', val: '−€890', tone: INK_MUTED },
-                ].map((r) => (
-                  <div key={r.label} className="flex items-center justify-between text-sm">
-                    <span style={{ color: INK_SOFT }}>{r.label}</span>
-                    <span className="font-bold tabular-nums" style={{ color: r.tone }}>{r.val}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-5 pt-4 flex items-center justify-between" style={{ borderTop: `1px solid ${HAIRLINE}` }}>
-                <span className="text-sm font-bold" style={{ color: INK }}>True Net Profit</span>
-                <span className="text-xl font-black tabular-nums" style={{ color: '#15803d' }}>€2,940</span>
-              </div>
-            </MockCard>
-          }
-        />
-
-        <FeatureSection
-          index="02 — SYNC"
-          title="Keep your spreadsheet. We'll do the rest."
-          reverse
-          copy="Point AURELIA at your existing Google Sheet and bookings flow in automatically — no re-entry, no exports, always up to date."
-          visual={
-            <MockCard>
-              <div className="flex items-center justify-center gap-6 py-6">
-                <div className="flex flex-col items-center gap-2">
-                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: '#E8F3E8' }}>
-                    <span className="text-2xl">📄</span>
-                  </div>
-                  <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Sheets</span>
-                </div>
-                <ArrowLeftRight size={22} className="motion-reduce:animate-none animate-pulse" style={{ color: GOLD }} />
-                <div className="flex flex-col items-center gap-2">
-                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: `${GOLD}14` }}>
-                    <RefreshCw size={22} style={{ color: GOLD }} />
-                  </div>
-                  <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Aurelia</span>
-                </div>
-              </div>
-              <p className="text-center text-sm font-semibold mt-2" style={{ color: INK_SOFT }}>Synced 4 minutes ago · 214 bookings</p>
-            </MockCard>
-          }
-        />
-
-        <FeatureSection
-          index="03 — CHECK-IN"
-          title="Check guests in from a phone, in seconds."
-          copy="Guides tap through arrivals on the day of the tour, snap a ticket photo when needed, and every check-in lands straight in your ledger — live."
+          index="01 — CHECK-IN"
+          title="Live guest check-in, from any phone."
+          copy="Guides tap through arrivals the moment guests show up — fast, works on any phone, with a ticket photo on file when you need proof. Every check-in lands straight in your records, live."
           visual={
             <MockCard className="max-w-xs mx-auto md:mx-0">
               <WindowChrome />
@@ -295,12 +243,11 @@ export default function LandingPage() {
                 { name: 'Yuki Tanaka', pax: '2A', done: false },
               ].map((g) => (
                 <div key={g.name} className="flex items-center gap-3 py-2.5 border-b last:border-0" style={{ borderColor: HAIRLINE }}>
-                  <CheckCircle2 size={16} style={{ color: g.done ? '#15803d' : HAIRLINE }} />
+                  <Camera size={16} style={{ color: g.done ? '#15803d' : HAIRLINE }} />
                   <div className="flex-1 min-w-0">
                     <p className={`text-sm font-bold truncate ${g.done ? 'line-through' : ''}`} style={{ color: g.done ? INK_MUTED : INK }}>{g.name}</p>
                     <p className="text-xs" style={{ color: INK_MUTED }}>{g.pax}</p>
                   </div>
-                  {!g.done && <Camera size={15} style={{ color: GOLD }} />}
                 </div>
               ))}
             </MockCard>
@@ -308,10 +255,10 @@ export default function LandingPage() {
         />
 
         <FeatureSection
-          index="04 — DISPATCH"
-          title="Build the day, then let it balance itself."
+          index="02 — ALLOCATION"
+          title="Smart guide balancing, on the day."
           reverse
-          copy="Turn today's bookings into tour sessions, assign guides, and auto-balance guests across them as check-ins come in — nobody overloaded, nobody idle."
+          copy="As check-ins come in, guests are spread evenly across the guides working that tour — nobody overloaded, nobody idle. Built for the moment things change on the ground, not just at the plan."
           visual={
             <MockCard>
               <div className="flex items-center gap-2 mb-5">
@@ -336,14 +283,89 @@ export default function LandingPage() {
         />
 
         <FeatureSection
-          index="05 — ANALYTICS"
-          title="See tomorrow's numbers as clearly as today's."
-          copy="Board-ready analytics, broken down day by day, by channel, by product — spot trends and cancellations before they become a problem."
+          index="03 — BOOKINGS"
+          title="Every OTA, one inbox."
+          copy="Bookings from Viator, GetYourGuide and your other channels flow in automatically and land in one place — no re-entry, no exports, always up to date."
+          visual={
+            <MockCard>
+              <div className="flex items-center justify-center gap-5 py-6">
+                {['Viator', 'GetYourGuide', 'Direct'].map((ch) => (
+                  <div key={ch} className="flex flex-col items-center gap-2">
+                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: `${GOLD}14` }}>
+                      <ArrowRight size={18} style={{ color: GOLD }} />
+                    </div>
+                    <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>{ch}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-center text-sm font-semibold mt-2" style={{ color: INK_SOFT }}>Synced 4 minutes ago · 214 bookings</p>
+            </MockCard>
+          }
+        />
+
+        <FeatureSection
+          index="04 — PAYMENTS"
+          title="Guide pay, earnings and invoices — automatic."
+          reverse
+          copy="Every tour a guide works rolls straight into their earnings. Pay, bonuses and monthly invoices are tracked for you, so payday is never a manual spreadsheet exercise again."
+          visual={
+            <MockCard>
+              <div className="flex items-center gap-2 mb-5">
+                <Wallet size={16} style={{ color: GOLD }} />
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Guide Earnings</span>
+              </div>
+              <div className="space-y-2.5">
+                {[
+                  { label: 'Base pay (14 tours)', val: '€840', tone: INK },
+                  { label: 'Bonuses', val: '€60', tone: INK },
+                  { label: 'Paid out', val: '−€600', tone: INK_MUTED },
+                ].map((r) => (
+                  <div key={r.label} className="flex items-center justify-between text-sm">
+                    <span style={{ color: INK_SOFT }}>{r.label}</span>
+                    <span className="font-bold tabular-nums" style={{ color: r.tone }}>{r.val}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5 pt-4 flex items-center justify-between" style={{ borderTop: `1px solid ${HAIRLINE}` }}>
+                <span className="text-sm font-bold" style={{ color: INK }}>Pending this month</span>
+                <span className="text-xl font-black tabular-nums" style={{ color: GOLD_SOFT }}>€300</span>
+              </div>
+            </MockCard>
+          }
+        />
+
+        <FeatureSection
+          index="05 — PERFORMANCE"
+          title="Fair guide scoring, built on real signal."
+          copy="Guest reviews and verified on-time arrivals — checked against the actual meeting point, not just a tap — combine into one consistent score per guide. Transparent for you, and for them."
+          visual={
+            <MockCard>
+              <div className="flex items-center gap-2 mb-5">
+                <Star size={16} style={{ color: GOLD }} />
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Guide Score</span>
+              </div>
+              <div className="flex items-baseline gap-2 mb-4">
+                <span className="text-3xl font-black" style={{ color: '#15803d' }}>+0.84</span>
+                <span className="text-xs font-bold" style={{ color: INK_MUTED }}>12 reviews / 47 bookings</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: INK_SOFT }}>
+                <MapPin size={13} style={{ color: GOLD }} />
+                On-time 44/47 · verified at the meeting point
+              </div>
+            </MockCard>
+          }
+        />
+
+        <FeatureSection
+          index="06 — ANALYTICS"
+          title="A live operations board, for the whole business."
+          reverse
+          copy="Revenue, true profit and today's tours, all in one board — board-ready and broken down by day, channel and product, so you spot trends before they become a problem."
           visual={
             <MockCard>
               <div className="flex items-center gap-2 mb-6">
                 <BarChart3 size={16} style={{ color: GOLD }} />
-                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Day-by-Day P&amp;L</span>
+                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Revenue &amp; Profit</span>
               </div>
               <div className="flex items-end gap-2.5 h-28">
                 {[38, 52, 44, 61, 49, 72, 58].map((h, i) => (
@@ -357,34 +379,38 @@ export default function LandingPage() {
           }
         />
 
-        <FeatureSection
-          index="06 — TEAM"
-          title="Every guide, their own view."
-          reverse
-          copy="Each guide sees only their tours, their guests, their pay — while you keep a complete, company-wide picture across the whole team."
-          visual={
-            <MockCard>
-              <div className="flex items-center gap-2 mb-5">
-                <UserCircle2 size={16} style={{ color: GOLD }} />
-                <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>Your Team</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {['EL', 'MC', 'AF', 'YT', 'DR', '+8'].map((initials) => (
-                  <div
-                    key={initials}
-                    className="w-11 h-11 rounded-full flex items-center justify-center text-xs font-black"
-                    style={{ background: initials === '+8' ? PAPER : `${GOLD}18`, color: initials === '+8' ? INK_MUTED : GOLD_SOFT, border: `1px solid ${HAIRLINE}` }}
-                  >
-                    {initials}
-                  </div>
-                ))}
-              </div>
-              <p className="text-sm mt-5" style={{ color: INK_SOFT }}>13 guides active this month, each with a private dashboard.</p>
-            </MockCard>
-          }
-        />
-
       </div>
+
+      {/* ─── CASE STUDY — anonymized, outcomes only, no real figures ─── */}
+      <Reveal className="px-6 pb-28 md:pb-40">
+        <div className="max-w-4xl mx-auto rounded-3xl p-8 md:p-14" style={{ background: 'white', border: `1px solid ${HAIRLINE}` }}>
+          <Quote size={32} style={{ color: `${GOLD}66` }} />
+          <p className="font-serif text-xl md:text-2xl leading-relaxed mt-5 mb-8" style={{ color: INK }}>
+            "Check-in used to be chaos on paper, guide pay was a monthly spreadsheet headache, and
+            nobody had a clear view of who was actually performing well. Moving onto one system
+            fixed all three — everyone now works from the same source of truth, on the day and at
+            month-end."
+          </p>
+          <div className="flex items-center gap-4">
+            <div className="w-11 h-11 rounded-full flex items-center justify-center font-bold" style={{ background: `${GOLD}18`, color: GOLD_SOFT }}>
+              TO
+            </div>
+            <div>
+              <p className="text-sm font-bold" style={{ color: INK }}>A Paris-based tour operator</p>
+              <p className="text-xs font-semibold" style={{ color: INK_MUTED }}>Running around 30 guides across daily city tours</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-10 pt-8" style={{ borderTop: `1px solid ${HAIRLINE}` }}>
+            {[
+              'Check-in chaos replaced with one live board, every guide on the same phone flow',
+              'Guide payments no longer a manual month-end spreadsheet exercise',
+              'Guide performance finally visible — fair, consistent, and the same number everyone sees',
+            ].map((outcome) => (
+              <p key={outcome} className="text-sm leading-relaxed" style={{ color: INK_SOFT }}>{outcome}</p>
+            ))}
+          </div>
+        </div>
+      </Reveal>
 
       {/* ─── CLOSING CTA ─── */}
       <Reveal className="px-6 py-28 md:py-36">
@@ -393,23 +419,23 @@ export default function LandingPage() {
             Run your tours with clarity.
           </h2>
           <p className="text-lg mb-10" style={{ color: INK_SOFT }}>
-            Log in to see where your business really stands, today.
+            Start a free trial, or get in touch and we'll walk you through it.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
-              to="/login"
+              to="/signup"
               className="text-base font-bold px-8 py-4 rounded-xl text-white inline-flex items-center gap-2 shadow-lg transition-transform hover:-translate-y-0.5"
               style={{ background: GOLD, boxShadow: `0 12px 30px -8px ${GOLD}55` }}
             >
-              Log in <ArrowRight size={18} />
+              Start free trial <ArrowRight size={18} />
             </Link>
-            <Link
-              to="/login"
+            <a
+              href="mailto:shabirshabrez1998@gmail.com"
               className="text-base font-semibold px-8 py-4 rounded-xl transition-colors"
               style={{ border: `1px solid ${HAIRLINE}`, color: INK_SOFT }}
             >
-              For guides — use your invite link
-            </Link>
+              Get in touch
+            </a>
           </div>
         </div>
       </Reveal>
@@ -420,9 +446,10 @@ export default function LandingPage() {
           <Logo size="sm" showSubtitle={false} wordmarkClassName="text-[#B45309]" />
 
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-semibold" style={{ color: INK_SOFT }}>
-            <Link to="/blog" className="transition-colors hover:opacity-70">Blog</Link>
+            <Link to="/how-it-works" className="transition-colors hover:opacity-70">How it works</Link>
             <Link to="/pricing" className="transition-colors hover:opacity-70">Pricing</Link>
-            <a href="mailto:hello@aureliaio.com" className="transition-colors hover:opacity-70">Contact</a>
+            <a href="mailto:shabirshabrez1998@gmail.com" className="transition-colors hover:opacity-70">Contact</a>
+            <a href="tel:+33755091524" className="transition-colors hover:opacity-70">+33 7 55 09 15 24</a>
           </div>
 
           <p className="text-xs font-medium" style={{ color: INK_MUTED }}>© 2026 AURELIA</p>

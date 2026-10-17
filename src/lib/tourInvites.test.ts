@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { buildGuideInviteLinks, buildGoogleCalendarUrl, buildWhatsAppUrl, buildSharedGuideInviteLink, forceBrowserUrl } from './tourInvites';
+import {
+  buildGuideInviteLinks, buildGoogleCalendarUrl, buildWhatsAppUrl, buildSharedGuideInviteLink,
+  forceBrowserUrl, buildMeetingPointMapsUrl,
+} from './tourInvites';
 
 describe('buildGuideInviteLinks', () => {
   const session = { label: 'Old Town Walk', start_time: '09:00', tour_date: '2026-06-15' };
@@ -126,6 +129,49 @@ describe('buildGuideInviteLinks', () => {
     expect(details).toContain('Guide: Solo Guide · €40 base');
     expect(details).not.toContain('Guide: Kamini');
   });
+
+  describe('meeting point', () => {
+    const meetingPoint = { name: 'Notre-Dame — Statue of Charlemagne', latitude: 48.8530, longitude: 2.3499 };
+
+    it('leaves LOCATION on the plain session label when the session has no meeting point', () => {
+      const { calendarUrl } = buildGuideInviteLinks(session, { name: 'Maria', whatsapp: null }, 4, 'AURELIA Tours');
+      expect(new URL(calendarUrl).searchParams.get('location')).toBe('Old Town Walk');
+    });
+
+    it('omits any "Meeting point:" line from the description when the session has no meeting point', () => {
+      const { calendarUrl } = buildGuideInviteLinks(session, { name: 'Maria', whatsapp: null }, 4, 'AURELIA Tours');
+      const details = new URL(calendarUrl).searchParams.get('details');
+      expect(details).not.toContain('Meeting point');
+    });
+
+    it('sets LOCATION to the meeting point name + its Google Maps link when one is set', () => {
+      const { calendarUrl } = buildGuideInviteLinks(session, { name: 'Maria', whatsapp: null }, 4, 'AURELIA Tours', { meetingPoint });
+      const location = new URL(calendarUrl).searchParams.get('location');
+      expect(location).toBe(`Notre-Dame — Statue of Charlemagne — ${buildMeetingPointMapsUrl(48.8530, 2.3499)}`);
+    });
+
+    it('adds a "Meeting point: [name] — [maps link]" line to the description when one is set', () => {
+      const { calendarUrl } = buildGuideInviteLinks(session, { name: 'Maria', whatsapp: null }, 4, 'AURELIA Tours', { meetingPoint });
+      const details = new URL(calendarUrl).searchParams.get('details');
+      expect(details).toContain(`Meeting point: Notre-Dame — Statue of Charlemagne — ${buildMeetingPointMapsUrl(48.8530, 2.3499)}`);
+    });
+
+    it('keeps title/time/pay rules unchanged alongside a meeting point', () => {
+      const { calendarUrl } = buildGuideInviteLinks(
+        session, { name: 'Kamini', whatsapp: null, base_pay: 60, bonus: 10 }, 4, 'AURELIA Tours', { meetingPoint }
+      );
+      const text = new URL(calendarUrl).searchParams.get('text');
+      const details = new URL(calendarUrl).searchParams.get('details');
+      expect(text).toBe('Old Town Walk · Check-in 08:45 (Tour 09:00)');
+      expect(details).toContain('Guide: Kamini · €60 base + €10 bonus = €70');
+    });
+  });
+});
+
+describe('buildMeetingPointMapsUrl', () => {
+  it('builds a Google Maps search link that pins the exact coordinates', () => {
+    expect(buildMeetingPointMapsUrl(48.8530, 2.3499)).toBe('https://www.google.com/maps/search/?api=1&query=48.853,2.3499');
+  });
 });
 
 describe('buildWhatsAppUrl', () => {
@@ -211,6 +257,22 @@ describe('buildSharedGuideInviteLink', () => {
     expect(details).not.toContain('bonus');
   });
 
+  it('includes the meeting point in LOCATION and the description when one is passed', () => {
+    const meetingPoint = { name: 'Notre-Dame — Statue of Charlemagne', latitude: 48.8530, longitude: 2.3499 };
+    const { calendarUrl } = buildSharedGuideInviteLink(
+      session,
+      [{ name: 'Maria', email: 'maria@example.com' }, { name: 'Kamini', email: 'kamini@example.com' }],
+      { meetingPoint }
+    );
+    const url = new URL(calendarUrl);
+    expect(url.searchParams.get('location')).toBe(`Notre-Dame — Statue of Charlemagne — ${buildMeetingPointMapsUrl(48.8530, 2.3499)}`);
+    expect(url.searchParams.get('details')).toContain(`Meeting point: Notre-Dame — Statue of Charlemagne — ${buildMeetingPointMapsUrl(48.8530, 2.3499)}`);
+  });
+
+  it('leaves LOCATION on the plain session label when no meeting point is passed', () => {
+    const { calendarUrl } = buildSharedGuideInviteLink(session, [{ name: 'Maria', email: 'maria@example.com' }]);
+    expect(new URL(calendarUrl).searchParams.get('location')).toBe('Old Town Walk');
+  });
 });
 
 describe('forceBrowserUrl', () => {
