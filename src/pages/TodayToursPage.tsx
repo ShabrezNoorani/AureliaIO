@@ -16,7 +16,7 @@ import SyncStatusIndicator from '@/components/checkin/SyncStatusIndicator';
 import { enqueueRetry, useRetryQueueItems } from '@/lib/retryQueue';
 import { findCheckinRow, writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
 import { filterPastUnresolvedBookings } from '@/lib/pastUnresolved';
-import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
+import { compressCheckinPhoto, uploadCheckinPhoto } from '@/lib/checkinPhotos';
 import { ARRIVAL_COLUMNS, ArrivalRow, formatArrivalStatus } from '@/lib/guideArrivals';
 import { buildGuideInviteLinks, buildSharedGuideInviteLink, forceBrowserUrl, type GuideInviteTarget } from '@/lib/tourInvites';
 import { fetchMeetingPoints, type MeetingPointRow } from '@/lib/meetingPoints';
@@ -771,6 +771,20 @@ export default function TodayToursPage() {
     });
   };
 
+  // Backup action for a forgotten photo — deliberately separate from recordCheckin's own
+  // photo step above (same compress → upload → attach pipeline, just triggered independently of
+  // check-in itself, any time after the fact). Retry-queued under the same booking_ref key as
+  // every other write for this guest, so it's never bundled ahead of a still-pending check-in.
+  const handleAddPhoto = (b: any, file: File) => {
+    if (!user) return;
+    enqueueRetry(b.booking_ref, 'Ticket photo', async () => {
+      const compressed = await compressCheckinPhoto(file);
+      const path = await uploadCheckinPhoto({ userId: user.id, travelDate: todayStrDate, bookingRef: b.booking_ref, photo: compressed });
+      await attachCheckinPhoto(user.id, b.booking_ref, todayStrDate, path);
+      await refreshCheckinsRef.current();
+    });
+  };
+
   // Owner-only: move a single checked-in guest to a different guide (or unassign to holding).
   const handleMoveGuest = (bookingRef: string, newGuideId: string | null) => {
     if (!user) return;
@@ -1058,6 +1072,7 @@ export default function TodayToursPage() {
                     isOwner
                     onSaveName={(newName) => handleSaveNameOverride(b, newName)}
                     onReset={isDone ? () => handleResetCheckin(b) : undefined}
+                    onAddPhoto={(file) => handleAddPhoto(b, file)}
                     syncStuck={stuckBookingRefs.has(b.booking_ref)}
                     ticketPhoto={cRecord?.ticket_photo}
                   />
@@ -1093,6 +1108,7 @@ export default function TodayToursPage() {
                 onNoShow={(b: any) => recordCheckin(b, 'no_show')}
                 onSaveName={handleSaveNameOverride}
                 onResetCheckin={handleResetCheckin}
+                onAddPhoto={handleAddPhoto}
                 onMoveGuest={handleMoveGuest}
                 onToggleLock={handleToggleLock}
                 onUpdateGuidePay={handleUpdateGuidePay}
@@ -1141,6 +1157,7 @@ function SessionBoard({
   onNoShow,
   onSaveName,
   onResetCheckin,
+  onAddPhoto,
   onMoveGuest,
   onToggleLock,
   onUpdateGuidePay,
@@ -1172,6 +1189,7 @@ function SessionBoard({
   onNoShow: (b: any) => void;
   onSaveName: (b: any, newName: string) => void;
   onResetCheckin: (b: any) => void;
+  onAddPhoto: (b: any, file: File) => void;
   onMoveGuest: (bookingRef: string, newGuideId: string | null) => void;
   onToggleLock: (sessionId: string, guideId: string, locked: boolean) => void;
   onUpdateGuidePay: (sessionId: string, guideId: string, field: 'base_pay' | 'bonus', value: number | null) => void;
@@ -1484,6 +1502,7 @@ function SessionBoard({
                     isOwner
                     onSaveName={(newName) => onSaveName(g.booking, newName)}
                     onReset={g.isCheckedIn ? () => onResetCheckin(g.booking) : undefined}
+                    onAddPhoto={(file) => onAddPhoto(g.booking, file)}
                     syncStuck={stuckBookingRefs.has(g.booking.booking_ref)}
                     ticketPhoto={g.ticketPhoto}
                   />

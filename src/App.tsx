@@ -18,6 +18,7 @@ import { useEffect, lazy, Suspense } from "react";
 const LandingPage = lazy(() => import("./pages/LandingPage"));
 const SignupPage = lazy(() => import("./pages/SignupPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
 const PricingPage = lazy(() => import("./pages/PricingPage"));
 const HowItWorksPage = lazy(() => import("./pages/HowItWorksPage"));
 const HowItWorksPostPage = lazy(() => import("./pages/HowItWorksPostPage"));
@@ -81,6 +82,7 @@ const AppContent = () => {
             <Route path="/" element={<RootRoute />} />
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/pricing" element={<PricingPage />} />
             <Route path="/how-it-works" element={<HowItWorksPage />} />
             <Route path="/how-it-works/:slug" element={<HowItWorksPostPage />} />

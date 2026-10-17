@@ -8,7 +8,7 @@ import TourGroup from '@/components/checkin/TourGroup';
 import { localDateStr, shortProductCode } from '@/lib/utils';
 import { enqueueRetry } from '@/lib/retryQueue';
 import { attachCheckinPhoto } from '@/lib/checkinWrites';
-import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
+import { compressCheckinPhoto, uploadCheckinPhoto } from '@/lib/checkinPhotos';
 
 interface Guide {
   id: string;
@@ -193,6 +193,20 @@ export default function CheckinApp() {
     fetchData();
   };
 
+  // Backup action for a forgotten photo — same compress → upload → attach pipeline as
+  // confirmCheckIn's own photo step, just triggered independently of check-in itself, any time
+  // after the fact.
+  const handleAddPhoto = (booking: Booking, file: File) => {
+    if (!companyUserId) return;
+    const userId = companyUserId;
+    enqueueRetry(booking.booking_ref, 'Ticket photo', async () => {
+      const compressed = await compressCheckinPhoto(file);
+      const path = await uploadCheckinPhoto({ userId, travelDate: booking.travel_date, bookingRef: booking.booking_ref, photo: compressed });
+      await attachCheckinPhoto(userId, booking.booking_ref, booking.travel_date, path);
+      await fetchData();
+    });
+  };
+
   const handleAssignGuide = async (booking: Booking, targetGuideId: string) => {
     if (!companyUserId) return;
 
@@ -364,6 +378,7 @@ export default function CheckinApp() {
                       guides={guides}
                       selectedGuideId={assignment?.guide_id || ''}
                       onSelectGuide={(guideId) => handleAssignGuide(b, guideId)}
+                      onAddPhoto={(file) => handleAddPhoto(b, file)}
                       ticketPhoto={cRecord?.ticket_photo}
                     />
                   );

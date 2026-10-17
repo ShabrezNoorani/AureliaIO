@@ -24,35 +24,19 @@ export default function Logo({ size = 'md', showSubtitle = true, className = '',
 
   return (
     <div className={`flex items-center ${s.gap} ${className}`}>
-      {/* Hexagon icon */}
-      <svg width={s.icon} height={s.icon} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-        {/* Outer hexagon */}
-        <path
-          d="M20 2L36.66 11V29L20 38L3.34 29V11L20 2Z"
-          stroke="#f5a623"
-          strokeWidth="2"
-          fill="#f5a623"
-          fillOpacity="0.1"
-        />
-        {/* Inner upward trending line */}
-        <path 
-          d="M12 26L18 19L23 23L29 14" 
-          stroke="#0a0a0f" 
-          strokeWidth="2.5" 
-          strokeLinecap="round" 
-          strokeLinejoin="round" 
-        />
-        {/* Highlight over the trend line to make it pop inside the semi-transparent dark */}
-        <path 
-          d="M12 26L18 19L23 23L29 14" 
-          stroke="#f5a623" 
-          strokeWidth="1.5" 
-          strokeLinecap="round" 
-          strokeLinejoin="round" 
-        />
-        {/* Sparkle node at the end of the trend line */}
-        <circle cx="29" cy="14" r="2.5" fill="#f5a623" />
-      </svg>
+      {/* Brand mark (public/aurelia-logo.png — the "A" with the rising gold graph line),
+          replacing the old inline hexagon SVG. Fixed-color raster asset (navy + gold baked in),
+          so unlike the old SVG it isn't recolored by `light`/currentColor — only the wordmark
+          text next to it still responds to that. Source is 512x512, comfortably sharp up to 3x
+          pixel density at every size this component actually renders. */}
+      <img
+        src="/aurelia-logo.png"
+        alt="AURELIA"
+        width={s.icon}
+        height={s.icon}
+        className="shrink-0 object-contain"
+        style={{ width: s.icon, height: s.icon }}
+      />
       {/* Text */}
       {!iconOnly && (
         <div className="flex flex-col justify-center">

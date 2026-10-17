@@ -26,6 +26,17 @@ export default function CheckinConfirmModal({ customerName, pax, onConfirm, onCa
   // object URLs are per-Blob and must be revoked once superseded/unmounted, or they leak.
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
+  // CAMERA-FIRST: this modal mounts the instant "Check In" is tapped, so firing the hidden file
+  // input's own click() right on mount opens the device camera immediately as step one — no extra
+  // tap on the dashed box needed first. Still fires inside the same gesture-driven render/effect
+  // pass as the tap itself (React flushes this effect before yielding back to the browser), which
+  // is what lets a programmatic file-input click still work on mobile Safari/Chrome. If the guide
+  // backs out of the camera without picking a file, onChange simply never fires — photo stays
+  // null and "Confirm Check-in" below is never disabled by that, so check-in is never blocked.
+  useEffect(() => {
+    fileInputRef.current?.click();
+  }, []);
+
   const handleCapturePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // lets picking the same file twice in a row still fire onChange

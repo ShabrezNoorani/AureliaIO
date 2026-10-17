@@ -17,7 +17,7 @@ import { matchBookingsToSessions, autoPopulateSessionBookings, pickBestSessionFo
 import { enqueueRetry, useRetryQueueItems, type QueueItem } from '@/lib/retryQueue';
 import { writeCheckin, attachCheckinPhoto, deleteCheckin, mergeGuardingPending } from '@/lib/checkinWrites';
 import { filterPastUnresolvedBookings } from '@/lib/pastUnresolved';
-import { uploadCheckinPhoto } from '@/lib/checkinPhotos';
+import { compressCheckinPhoto, uploadCheckinPhoto } from '@/lib/checkinPhotos';
 import {
   ARRIVAL_COLUMNS, ArrivalRow, arrivalRetryKey, buildArrivalPayload, formatArrivalStatus,
   getArrivalCoords, mergeArrivalsGuardingPending, saveArrival, sessionIdFromArrivalKey,
@@ -999,6 +999,20 @@ export default function GuideCheckin() {
     });
   };
 
+  // Backup action for a forgotten photo — same compress → upload → attach pipeline as the
+  // check-in flow's own photo step, just triggered independently of check-in itself, any time
+  // after the fact. Retry-queued under the same booking_ref key as every other write for this
+  // guest, so it's never bundled ahead of a still-pending check-in.
+  const handleAddPhoto = (b: Booking, file: File) => {
+    if (!guideUserId) return;
+    enqueueRetry(b.booking_ref, 'Ticket photo', async () => {
+      const compressed = await compressCheckinPhoto(file);
+      const path = await uploadCheckinPhoto({ userId: guideUserId, travelDate: today, bookingRef: b.booking_ref, photo: compressed });
+      await attachCheckinPhoto(guideUserId, b.booking_ref, today, path);
+      await refreshCheckinsRef.current();
+    });
+  };
+
   // Allocation tab's "send back" control — same revert as the Check-in tab's Reset button, just
   // resolved from a bookingRef (all the Allocation view carries) back to the full Booking object
   // handleResetCheckin needs.
@@ -1219,6 +1233,7 @@ export default function GuideCheckin() {
                     onCheckIn={() => setShowConfirm(b)}
                     onNoShow={() => recordCheckin(b, 'no_show')}
                     onReset={isDone ? () => handleResetCheckin(b) : undefined}
+                    onAddPhoto={(file) => handleAddPhoto(b, file)}
                     syncStuck={stuckBookingRefs.has(b.booking_ref)}
                     isCancelled={isCancelled(b.status)}
                     ticketPhoto={cRecord?.ticket_photo}
@@ -1273,6 +1288,7 @@ export default function GuideCheckin() {
                   onCheckInClick={(b) => setShowConfirm(b)}
                   onNoShow={(b) => recordCheckin(b, 'no_show')}
                   onReset={(b) => handleResetCheckin(b)}
+                  onAddPhoto={(b, file) => handleAddPhoto(b, file)}
                   balancing={balancingSessionId === session.id}
                   onMoveGuest={handleMoveGuest}
                   onToggleLock={(gId, locked) => handleToggleLock(session.id, gId, locked)}
@@ -1332,6 +1348,7 @@ function GuideSessionCard({
   onCheckInClick,
   onNoShow,
   onReset,
+  onAddPhoto,
   balancing,
   onMoveGuest,
   onToggleLock,
@@ -1364,6 +1381,7 @@ function GuideSessionCard({
   onCheckInClick: (b: Booking) => void;
   onNoShow: (b: Booking) => void;
   onReset: (b: Booking) => void;
+  onAddPhoto: (b: Booking, file: File) => void;
   balancing: boolean;
   onMoveGuest: (bookingRef: string, newGuideId: string | null) => void;
   onToggleLock: (guideId: string, locked: boolean) => void;
@@ -1462,6 +1480,7 @@ function GuideSessionCard({
                   onCheckIn={() => onCheckInClick(b)}
                   onNoShow={() => onNoShow(b)}
                   onReset={isDone ? () => onReset(b) : undefined}
+                  onAddPhoto={(file) => onAddPhoto(b, file)}
                   syncStuck={stuckBookingRefs.has(b.booking_ref)}
                   isCancelled={isCancelled(b.status)}
                   ticketPhoto={cRecord?.ticket_photo}

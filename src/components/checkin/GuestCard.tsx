@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { CheckCircle2, XCircle, Phone, MessageCircle, Pencil, Check, X, CloudAlert } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { CheckCircle2, XCircle, Phone, MessageCircle, Camera, Pencil, Check, X, CloudAlert } from 'lucide-react';
 import CheckinPhotoThumb from './CheckinPhotoThumb';
 import { normalizeTime } from '@/lib/utils';
 
@@ -60,8 +60,17 @@ interface GuestCardProps {
   sessions?: SessionOption[];
   currentSessionId?: string;
   onMoveToSession?: (sessionId: string | null) => void;
-  /** Owner-only: revert a wrongly checked-in/no-show guest back to not-checked-in — omit to hide. */
+  /** Revert a wrongly checked-in/no-show guest back to not-checked-in — omit to hide. Owner
+      surfaces AND a guide's own check-in page both pass this now (see TodayToursPage.tsx/
+      GuideCheckin.tsx) — whichever surface is rendering decides who gets the button; this
+      component itself gates nothing by role. */
   onReset?: () => void;
+  /** Add/replace the ticket photo after the fact — a backup for a forgotten photo, never required
+      to check someone in. Only meaningful once a checkins row exists (i.e. the guest is already
+      checked in), so the caller should omit this for a not-yet-checked-in guest. Receives the
+      raw picked file; the caller owns compressing/uploading/attaching it (see recordAddPhoto-style
+      handlers in TodayToursPage.tsx/GuideCheckin.tsx/CheckinApp.tsx). */
+  onAddPhoto?: (file: File) => void;
   /** A write for this guest has been retrying in the background for several minutes without
       confirming — flags the card so it's never silently stuck out of sight. */
   syncStuck?: boolean;
@@ -90,6 +99,7 @@ export default function GuestCard({
   currentSessionId,
   onMoveToSession,
   onReset,
+  onAddPhoto,
   syncStuck,
   isCancelled,
   ticketPhoto,
@@ -97,6 +107,7 @@ export default function GuestCard({
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [savingName, setSavingName] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   const name = displayName && displayName.trim() ? displayName : booking.customer_name;
   const locked = isCheckedIn || isNoShow || !!isCancelled;
@@ -104,6 +115,15 @@ export default function GuestCard({
   // another guest's, since one session card can merge guests booked for different times.
   const time = normalizeTime(booking.travel_time) || booking.travel_time || null;
   const canEditName = !!(editableName && isOwner) && !isCancelled;
+  // wa.me needs digits only (no "+", spaces or punctuation) — a bare international-format number
+  // still works without the leading "+".
+  const whatsappDigits = booking.customer_phone ? booking.customer_phone.replace(/\D/g, '') : '';
+
+  const handlePhotoPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // lets picking the same file twice in a row still fire onChange
+    if (file && onAddPhoto) onAddPhoto(file);
+  };
 
   const startEditing = () => {
     setNameDraft(name);
@@ -208,26 +228,38 @@ export default function GuestCard({
           on it (or vice versa). Tapping the card/name above never checks anyone in — only this
           explicit button does. */}
       <div className="pl-[19px] space-y-1.5">
-        <div className="flex flex-wrap items-center gap-1">
-          {booking.customer_phone && (
-            <>
-              <a
-                href={`tel:${booking.customer_phone}`}
-                className="p-1 bg-green-600/10 hover:bg-green-600/20 active:scale-95 rounded-md text-green-700 transition-all"
-                title="Call"
-              >
-                <Phone size={12} />
-              </a>
-              <a
-                href={`sms:${booking.customer_phone}`}
-                className="p-1 bg-blue-600/10 hover:bg-blue-600/20 active:scale-95 rounded-md text-blue-700 transition-all"
-                title="Message"
-              >
-                <MessageCircle size={12} />
-              </a>
-            </>
-          )}
+        {/* CONTACT QUICK ACTIONS — min 44px tap targets (phone-first), their own flex-wrap group
+            so they wrap onto their own line on a narrow phone instead of overflowing or getting
+            squeezed by the guide/session selects below. */}
+        {booking.customer_phone && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <a
+              href={`tel:${booking.customer_phone}`}
+              className="min-h-11 min-w-11 flex items-center justify-center bg-green-600/10 hover:bg-green-600/20 active:scale-95 rounded-lg text-green-700 transition-all"
+              title="Call"
+            >
+              <Phone size={16} />
+            </a>
+            <a
+              href={`sms:${booking.customer_phone}`}
+              className="min-h-11 min-w-11 flex items-center justify-center bg-blue-600/10 hover:bg-blue-600/20 active:scale-95 rounded-lg text-blue-700 transition-all"
+              title="Message"
+            >
+              <MessageCircle size={16} />
+            </a>
+            <a
+              href={`https://wa.me/${whatsappDigits}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="min-h-11 min-w-11 flex items-center justify-center hover:bg-muted active:scale-95 rounded-lg transition-all"
+              title="WhatsApp"
+            >
+              <img src="/icons/whatsapp.png" alt="WhatsApp" width={22} height={22} className="object-contain" />
+            </a>
+          </div>
+        )}
 
+        <div className="flex flex-wrap items-center gap-1">
           {guides && onSelectGuide && (
             <select
               value={selectedGuideId || ''}
@@ -277,6 +309,27 @@ export default function GuestCard({
               {isCancelled ? 'Cancelled' : isCheckedIn ? 'Checked in' : 'No show'}
               {!isCancelled && checkedInAt ? ` · ${new Date(checkedInAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
             </span>
+            {/* Backup photo action — only once checked in (there's a checkins row to attach to),
+                and deliberately separate from the Check In flow itself (see CheckinConfirmModal's
+                own camera-first step for the normal path). */}
+            {onAddPhoto && isCheckedIn && (
+              <>
+                <button
+                  onClick={() => photoInputRef.current?.click()}
+                  className="min-h-11 min-w-11 flex items-center justify-center bg-gold/10 hover:bg-gold/20 active:scale-95 rounded-lg text-gold transition-all"
+                  title="Add ticket photo"
+                >
+                  <Camera size={16} />
+                </button>
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={photoInputRef}
+                  className="hidden"
+                  onChange={handlePhotoPicked}
+                />
+              </>
+            )}
             {onReset && !isCancelled && (
               <button
                 onClick={onReset}
