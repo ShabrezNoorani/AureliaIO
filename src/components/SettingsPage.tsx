@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw, Key, Database, Percent, Globe, Trash2, User, X, Eye, EyeOff, Share2, Copy, AlertTriangle, Check, Radio } from 'lucide-react';
+import { Settings, ShieldAlert, Palette, Building2, Save, RefreshCw, Key, Database, Percent, Globe, User, X, Eye, EyeOff, Share2, Copy, AlertTriangle, Check, Radio } from 'lucide-react';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -67,9 +67,6 @@ export default function SettingsPage() {
   const [showRegenConfirm, setShowRegenConfirm] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [copiedLink, setCopiedLink] = useState<'base' | 'today' | null>(null);
-
-  // Danger Zone
-  const [isResetting, setIsResetting] = useState(false);
 
   useEffect(() => {
     if (profile) {
@@ -282,27 +279,16 @@ export default function SettingsPage() {
     setTimeout(() => setCopiedLink(null), 2000);
   };
 
-  const baseUrl = `${window.location.origin}/checkin/${checkinToken}`;
+  // Always built from the real production domain, never window.location.origin — a guide must
+  // get the same working link regardless of whether the owner happens to be viewing this page
+  // from a Netlify preview URL, localhost, or the production domain itself.
+  const CHECKIN_LINK_BASE = 'https://aureliaio.com';
+  const baseUrl = `${CHECKIN_LINK_BASE}/checkin/${checkinToken}`;
   const todayUrl = `${baseUrl}?date=${localDateStr()}`;
 
   const handleThemeChange = (theme: ThemeName) => {
     applyTheme(theme);
     setCurrentTheme(theme);
-  };
-
-  const handleResetData = async () => {
-    if (!user) return;
-    if (!window.confirm("CRITICAL: Delete all operational data?")) return;
-    if (window.prompt("Type 'PURGE' to confirm deletion") !== 'PURGE') return;
-    setIsResetting(true);
-    try {
-      await supabase.from('products').delete().eq('user_id', user.id);
-      await supabase.from('bookings').delete().eq('user_id', user.id);
-      await supabase.from('admin_costs').delete().eq('user_id', user.id);
-      await supabase.from('guides').delete().eq('user_id', user.id);
-      alert("All data cleared.");
-      window.location.reload();
-    } catch (e) { alert("Reset failed."); } finally { setIsResetting(false); }
   };
 
   return (
@@ -662,30 +648,6 @@ export default function SettingsPage() {
 
             <button onClick={handleSaveDefaults} className="w-full h-12 rounded-2xl bg-fuchsia-500 hover:bg-fuchsia-400 text-black font-black uppercase tracking-widest text-[11px] transition-all shadow-lg shadow-fuchsia-500/10 active:scale-[0.98]">
               {defaultsSaved ? 'Defaults Applied ✅' : 'Save Operational Defaults'}
-            </button>
-          </div>
-
-          {/* DANGER ZONE */}
-          <div className="aurelia-card p-8 border-t-[4px] border-t-red-600 space-y-6 bg-red-600/[0.02]">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-600/10 flex items-center justify-center text-red-700">
-                <ShieldAlert size={20} />
-              </div>
-              <div>
-                <h2 className="text-lg font-extrabold uppercase tracking-tight text-red-800">Danger Zone</h2>
-                <p className="text-[10px] text-red-700/60 uppercase tracking-widest font-black italic">Irreversible Actions</p>
-              </div>
-            </div>
-
-            <div className="p-4 border border-red-600/20 bg-red-600/5 rounded-2xl">
-               <p className="text-[11px] text-red-700/60 leading-relaxed font-medium">
-                  Deleting operational data will remove all bookings, products, and cost history.
-                  This cannot be undone.
-               </p>
-            </div>
-
-            <button onClick={handleResetData} disabled={isResetting} className="w-full h-12 border border-red-600/30 hover:bg-red-600/10 text-red-700 rounded-2xl font-black uppercase tracking-widest text-[10px] transition-all flex items-center justify-center gap-2">
-               <Trash2 size={16} /> {isResetting ? 'Purging Platform...' : 'Reset All Operational Data'}
             </button>
           </div>
 
