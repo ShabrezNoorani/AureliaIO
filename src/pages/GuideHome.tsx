@@ -5,10 +5,10 @@ import { useNavigate } from 'react-router-dom';
 import { Calendar as CalendarIcon, Compass, Users, MapPin } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
 import {
-  computeAssignmentStats, computeRatingStats, computePunctualityStats, computeGuideScore,
+  computeAssignmentStats,
   groupMonthlyEarnings, sessionGuidesToAssignmentRows, buildUnifiedMonthlyRows,
   DEFAULT_LEADERBOARD_PERIOD,
-  type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type ArrivalPunctualityRow,
+  type GuideAssignmentRow, type GuideMonthlyRow,
   type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
   type LeaderboardMetric, type LeaderboardPeriod,
 } from '@/lib/guidePerformance';
@@ -17,7 +17,6 @@ import { fetchMeetingPoints, type MeetingPointRow } from '@/lib/meetingPoints';
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
-import GuideScoreCard from '@/components/guide/GuideScoreCard';
 import GuideOwnScoreCard from '@/components/guide/GuideOwnScoreCard';
 import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 import TransferTourModal from '@/components/guide/TransferTourModal';
@@ -116,7 +115,6 @@ export default function GuideHome() {
   // other.
   const [assignments, setAssignments] = useState<GuideAssignmentRow[]>([]);
   const [monthlyRows, setMonthlyRows] = useState<GuideMonthlyRow[]>([]);
-  const [ratings, setRatings] = useState<GuideRatingRow[]>([]);
   // NEW per-session pay (session_guides.base_pay/bonus) — this guide's own rows only, ALL dates
   // (unlike the "My Tours" sessionGuides/sessions state above, which is future/today-scoped and
   // carries no pay fields). Converted to GuideAssignmentRow shape below and folded into every
@@ -124,9 +122,6 @@ export default function GuideHome() {
   // lib/guidePerformance.ts's "SESSION-BASED PAY UNIFICATION" section.
   const [perfSessionGuides, setPerfSessionGuides] = useState<SessionGuideForEarnings[]>([]);
   const [perfSessions, setPerfSessions] = useState<SessionForEarnings[]>([]);
-  // All-time, not scoped to any date range — the score reflects the guide's whole track record,
-  // same as ratings/assignments above.
-  const [arrivals, setArrivals] = useState<ArrivalPunctualityRow[]>([]);
   const [perfLoading, setPerfLoading] = useState(true);
 
   const today = localDateStr();
@@ -231,23 +226,19 @@ export default function GuideHome() {
     const loadPerformance = async () => {
       if (!guideId || !guideUserId) { setPerfLoading(false); return; }
       setPerfLoading(true);
-      const [aRes, mRes, rRes, arrRes, sgRes] = await Promise.all([
+      const [aRes, mRes, sgRes] = await Promise.all([
         supabase.from('guide_assignments')
           .select('id, guide_id, travel_date, travel_time, tour_name, tour_type, language, calculated_pay, rate_override, bonus, total_pay, is_paid, paid_date, product_code, option_name, booking_ref, clients, notes, pax_count')
           .eq('guide_id', guideId),
         supabase.from('guide_monthly')
           .select('id, guide_id, guide_name, month, tours_completed, amount_owed, invoice_received, invoice_amount, tva, difference, payment_sent, payment_date')
           .eq('guide_id', guideId),
-        supabase.from('guide_ratings').select('*').eq('guide_id', guideId),
-        supabase.from('guide_arrivals').select('minutes_late').eq('guide_id', guideId),
         // NEW per-session pay — this guide's own rows, ALL dates (past + future), unlike the "My
         // Tours" sessionGuides state above.
         supabase.from('session_guides').select('session_id, guide_id, status, base_pay, bonus').eq('guide_id', guideId),
       ]);
       setAssignments(aRes.data || []);
       setMonthlyRows(mRes.data || []);
-      setRatings(rRes.data || []);
-      setArrivals(arrRes.data || []);
       const mySessionGuides = sgRes.data || [];
       setPerfSessionGuides(mySessionGuides);
       const perfSessionIds = Array.from(new Set(mySessionGuides.map(sg => sg.session_id)));
@@ -287,15 +278,6 @@ export default function GuideHome() {
 
   const assignmentStats = useMemo(() => computeAssignmentStats(allAssignments, today), [allAssignments, today]);
   const monthlyEarnings = useMemo(() => groupMonthlyEarnings(allAssignments), [allAssignments]);
-  const ratingStats = useMemo(
-    () => computeRatingStats(ratings, assignmentStats.toursDone),
-    [ratings, assignmentStats.toursDone]
-  );
-  const punctualityStats = useMemo(() => computePunctualityStats(arrivals), [arrivals]);
-  const guideScore = useMemo(
-    () => computeGuideScore(ratingStats, punctualityStats, assignmentStats.toursDone),
-    [ratingStats, punctualityStats, assignmentStats.toursDone]
-  );
 
   const sessionById = useMemo(() => new Map(sessions.map(s => [s.id, s])), [sessions]);
   const meetingPointById = useMemo(() => new Map(meetingPoints.map(mp => [mp.id, mp])), [meetingPoints]);
@@ -492,11 +474,6 @@ export default function GuideHome() {
           <section className="space-y-4">
             <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Invoices</h2>
             <MonthlyInvoiceList rows={unifiedMonthlyRows} />
-          </section>
-
-          <section className="space-y-4">
-            <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Performance</h2>
-            <GuideScoreCard score={guideScore} />
           </section>
         </>
       )}

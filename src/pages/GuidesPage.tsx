@@ -4,10 +4,8 @@ import { useAuth } from '@/context/AuthContext';
 import { logChange } from '@/lib/changeLog';
 import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight, ChevronUp, ChevronDown, Search, Upload, Copy, RefreshCw, Link as LinkIcon, Star } from 'lucide-react';
 import { toast } from 'sonner';
-import { computeRatingStats, type GuideRatingRow } from '@/lib/guidePerformance';
-import { verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, type RatingEditPayload } from '@/lib/guideRatingActions';
+import { ADMIN_DEFAULT_FILTER_START, type GuideReviewRow } from '@/lib/guidePerformance';
 import { updateGuideDetails, type GuideEditableDetails } from '@/lib/guideActions';
-import GuideRatingsPanel from '@/components/guide/GuideRatingsPanel';
 
 interface GuideOptionRate {
   id?: string;
@@ -15,8 +13,6 @@ interface GuideOptionRate {
   option_name: string;
   rate: number;
 }
-
-type RatingRow = GuideRatingRow;
 
 interface Guide {
   id: string;
@@ -53,8 +49,7 @@ export default function GuidesPage() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [editingGuide, setEditingGuide] = useState<Guide | null>(null);
   const [existingOptions, setExistingOptions] = useState<string[]>([]);
-  const [ratings, setRatings] = useState<RatingRow[]>([]);
-  const [reviewsGuide, setReviewsGuide] = useState<Guide | null>(null);
+  const [reviews, setReviews] = useState<GuideReviewRow[]>([]);
   // Sortable columns — defaults to guide number ascending. `localeCompare(..., { numeric: true })`
   // sorts "SZT-2026-2" before "SZT-2026-10" correctly (numeric chunks compared as numbers), not
   // "10" before "2" the way plain string comparison would if numbers aren't all zero-padded the
@@ -116,15 +111,15 @@ export default function GuidesPage() {
     setLoading(false);
   };
 
-  const fetchRatings = async () => {
+  const fetchReviews = async () => {
     if (!user) return;
     const { data, error } = await supabase
-      .from('guide_ratings')
+      .from('guide_reviews')
       .select('*')
       .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+      .gte('review_date', ADMIN_DEFAULT_FILTER_START);
     if (error) console.error(error);
-    setRatings(data || []);
+    setReviews(data || []);
   };
 
   const loadExistingOptions = async () => {
@@ -144,71 +139,20 @@ export default function GuidesPage() {
     if (!user) return;
     fetchGuides();
     loadExistingOptions();
-    fetchRatings();
+    fetchReviews();
   }, [user]);
 
-  // Weighted average per guide = sum(stars*quantity)/sum(quantity), over verified rows only.
-  const ratingSummaryByGuide = useMemo(() => {
-    const byGuide = new Map<string, RatingRow[]>();
-    ratings.forEach(r => {
-      const arr = byGuide.get(r.guide_id) || [];
-      arr.push(r);
-      byGuide.set(r.guide_id, arr);
+  // Real review count per guide (excluding any row marked excluded_from_score), since Oct 1 2026
+  // — same guide_reviews system/scope as the admin detail popup and Leaderboard, so this count can
+  // never contradict what those pages show for the same guide.
+  const reviewCountByGuide = useMemo(() => {
+    const counts = new Map<string, number>();
+    reviews.forEach(r => {
+      if (r.excluded_from_score) return;
+      counts.set(r.guide_id, (counts.get(r.guide_id) || 0) + 1);
     });
-    const summary = new Map<string, { avg: number; count: number }>();
-    byGuide.forEach((rows, guideId) => {
-      const { avgRating, verifiedReviewCount } = computeRatingStats(rows, 0);
-      summary.set(guideId, { avg: avgRating ?? 0, count: verifiedReviewCount });
-    });
-    return summary;
-  }, [ratings]);
-
-  // Every write below goes through the shared guideRatingActions helpers, which log a
-  // change_logs row for each one — nothing here can mutate a rating silently.
-  const handleVerifyRating = async (rating: RatingRow) => {
-    if (!user || !reviewsGuide) return;
-    const { error } = await verifyGuideRating(supabase, user.id, rating, reviewsGuide.name);
-    if (error) {
-      console.error(error);
-      toast.error('Failed to verify rating');
-      return;
-    }
-    fetchRatings();
-  };
-
-  const handleDeleteRating = async (rating: RatingRow) => {
-    if (!user || !reviewsGuide) return;
-    if (!confirm('Delete this rating?')) return;
-    const { error } = await deleteGuideRating(supabase, user.id, rating, reviewsGuide.name);
-    if (error) {
-      console.error(error);
-      toast.error('Failed to delete rating');
-      return;
-    }
-    fetchRatings();
-  };
-
-  const handleEditRating = async (rating: RatingRow, next: RatingEditPayload) => {
-    if (!user || !reviewsGuide) return;
-    const { error } = await updateGuideRating(supabase, user.id, rating, next, reviewsGuide.name);
-    if (error) {
-      console.error(error);
-      toast.error('Failed to update rating');
-      return;
-    }
-    fetchRatings();
-  };
-
-  const handleAddRating = async (payload: RatingEditPayload) => {
-    if (!user || !reviewsGuide) return;
-    const { error } = await addGuideRating(supabase, user.id, reviewsGuide.id, reviewsGuide.name, payload);
-    if (error) {
-      console.error(error);
-      toast.error('Failed to add rating');
-      return;
-    }
-    fetchRatings();
-  };
+    return counts;
+  }, [reviews]);
 
   const parseCsv = (text: string): string[][] => {
     const result: string[][] = [];
@@ -703,15 +647,8 @@ export default function GuidesPage() {
                         <div className="flex items-center gap-2 mt-1">
                           <span className="flex items-center gap-1 text-[10px] font-bold text-gold">
                             <Star size={10} className="fill-gold" />
-                            {(ratingSummaryByGuide.get(g.id)?.count || 0) > 0 ? ratingSummaryByGuide.get(g.id)!.avg.toFixed(1) : '—'}
-                            <span className="text-muted-foreground font-normal">({ratingSummaryByGuide.get(g.id)?.count || 0})</span>
+                            <span className="text-muted-foreground font-normal">({reviewCountByGuide.get(g.id) || 0}) Reviews</span>
                           </span>
-                          <button
-                            onClick={() => setReviewsGuide(g)}
-                            className="text-[10px] font-bold text-muted-foreground hover:text-gold underline-offset-2 hover:underline"
-                          >
-                            Reviews
-                          </button>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-muted-foreground">
@@ -1099,18 +1036,6 @@ export default function GuidesPage() {
           </>
         )}
 
-        {reviewsGuide && (
-          <GuideRatingsPanel
-            guideName={reviewsGuide.name}
-            ratings={ratings.filter(r => r.guide_id === reviewsGuide.id)}
-            isOwner
-            onClose={() => setReviewsGuide(null)}
-            onVerify={handleVerifyRating}
-            onDelete={handleDeleteRating}
-            onEdit={handleEditRating}
-            onAdd={handleAddRating}
-          />
-        )}
     </div>
   );
 }

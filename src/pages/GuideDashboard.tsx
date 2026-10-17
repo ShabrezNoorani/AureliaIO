@@ -5,8 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { Activity, Euro, BarChart2, Calendar, FileText, X, Star, Info, CheckCircle2, CalendarRange, Plus, Pencil, Trash2, EyeOff, Eye } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
 import {
-  computeGuideOverviewRows, computeAssignmentStats, computeRatingStats, computePunctualityStats,
-  computeGuideScore, groupMonthlyEarnings, groupOrphanedMonthlyByName,
+  computeGuideOverviewRows, computeAssignmentStats, computePunctualityStats,
+  groupMonthlyEarnings, groupOrphanedMonthlyByName,
   filterAssignmentsByDateRange, assignmentEarned, sessionGuidesToAssignmentRows, buildUnifiedMonthlyRows,
   getAdminDateFilterBounds, computeGuidePaymentSummary, ADMIN_DATE_FILTER_PRESETS, ADMIN_DEFAULT_FILTER_START,
   filterMonthlyRowsByDateRange, matchesAdminStatusFilter, ADMIN_STATUS_FILTER_OPTIONS,
@@ -14,21 +14,16 @@ import {
   computeGuideReviewScore, REVIEW_PLATFORMS,
   computeCheckedInBookingRecords, countCheckedInBookingsByGuide, getScoreBand,
   ADMIN_SCORE_BAND_LABELS,
-  type GuideAssignmentRow, type GuideMonthlyRow, type GuideRatingRow, type GuideReviewRow,
+  type GuideAssignmentRow, type GuideMonthlyRow, type GuideReviewRow,
   type AdminDateFilter, type GuidePaymentSummary, type AdminStatusFilter, type GuideReviewScore,
   type ArrivalPunctualityRow, type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
   type CheckinForGuiding, type SessionBookingForGuiding,
 } from '@/lib/guidePerformance';
-import {
-  verifyGuideRating, deleteGuideRating, updateGuideRating, addGuideRating, updateGuideMonthlyPayment,
-  insertGuideMonthlyPayment,
-} from '@/lib/guideRatingActions';
+import { updateGuideMonthlyPayment, insertGuideMonthlyPayment } from '@/lib/guideRatingActions';
 import { addGuideReview, updateGuideReview, deleteGuideReview, setReviewExcluded, type ReviewPayload } from '@/lib/guideReviewActions';
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
-import GuideRatingsPanel from '@/components/guide/GuideRatingsPanel';
-import GuideScoreCard from '@/components/guide/GuideScoreCard';
 import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 
 // recharts (pulled in by GuideEarningsChart) is a large charting library — lazy-loaded here too
@@ -46,10 +41,9 @@ export default function GuideDashboard() {
   const [guides, setGuides] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<GuideAssignmentRow[]>([]);
   const [optionRates, setOptionRates] = useState<any[]>([]);
-  const [ratings, setRatings] = useState<GuideRatingRow[]>([]);
   const [monthlyRows, setMonthlyRows] = useState<GuideMonthlyRow[]>([]);
   // All-time, company-wide arrivals — the owner sees every guide's punctuality history, same
-  // scope as ratings/assignments above. Score computation is per-guide (see detailGuideScore).
+  // scope as assignments above. Display-only (see detailGuidePunctuality below).
   const [arrivals, setArrivals] = useState<GuideArrivalRow[]>([]);
   // NEW per-session pay (session_guides.base_pay/bonus) — company-wide, all dates. Converted to
   // GuideAssignmentRow shape below (sessionAssignmentRows) and folded into every stats/chart/list
@@ -57,9 +51,8 @@ export default function GuideDashboard() {
   // PAY UNIFICATION" section for the full rationale.
   const [sessionGuidesForPay, setSessionGuidesForPay] = useState<SessionGuideForEarnings[]>([]);
   const [sessionsForPay, setSessionsForPay] = useState<SessionForEarnings[]>([]);
-  // Individual admin-entered reviews (guide_reviews) — drives the per-guide review SCORE. A
-  // completely separate table from guide_ratings/GuideRatingsPanel above (the guide's own
-  // self-reported, owner-verified log) — see guidePerformance.ts's own section header comment.
+  // Individual admin-entered reviews (guide_reviews) — drives the per-guide review SCORE. The
+  // ONE review/score system in this app — see guidePerformance.ts's own section header comment.
   const [reviews, setReviews] = useState<GuideReviewRow[]>([]);
   // The score's denominator: checked-in bookings since Oct 1 2026, joined against session_bookings'
   // allotted_guide_id — see computeGuidedBookingCounts's own doc comment.
@@ -245,7 +238,7 @@ export default function GuideDashboard() {
     if (!user) return;
     setLoading(true);
 
-    const [gRes, aRes, rRes, ratingsRes, monthlyRes, arrivalsRes, sgRes, sessRes, reviewsRes, checkinsRes, sessionBookingsRes] = await Promise.all([
+    const [gRes, aRes, rRes, monthlyRes, arrivalsRes, sgRes, sessRes, reviewsRes, checkinsRes, sessionBookingsRes] = await Promise.all([
       supabase.from('guides').select('*').eq('user_id', user.id).order('name'),
       // Previously filtered to `sync_source in (gsheet_assignments, manual, null)`, which silently
       // excluded every row tagged `sync_source = 'import'` — that batch holds 96 of the 97 rows
@@ -260,7 +253,6 @@ export default function GuideDashboard() {
         .select('*')
         .eq('user_id', user.id),
       supabase.from('guide_product_rates').select('*').eq('user_id', user.id),
-      supabase.from('guide_ratings').select('*').eq('user_id', user.id),
       supabase.from('guide_monthly').select('*').eq('user_id', user.id),
       supabase.from('guide_arrivals').select('guide_id, minutes_late').eq('user_id', user.id),
       supabase.from('session_guides').select('session_id, guide_id, status, base_pay, bonus, checkin_time').eq('user_id', user.id),
@@ -278,7 +270,6 @@ export default function GuideDashboard() {
     if (gRes.data) setGuides(gRes.data);
     if (aRes.data) setAssignments(aRes.data);
     if (rRes.data) setOptionRates(rRes.data);
-    setRatings(ratingsRes.data || []);
     setMonthlyRows(monthlyRes.data || []);
     setArrivals(arrivalsRes.data || []);
     setSessionGuidesForPay(sgRes.data || []);
@@ -428,10 +419,6 @@ export default function GuideDashboard() {
   const detailGuidePaymentSummary = detailGuideId
     ? (paymentSummaryByGuide.get(detailGuideId) || { paidThroughMonth: null, lastPaymentDate: null })
     : { paidThroughMonth: null, lastPaymentDate: null };
-  const detailGuideRatings = useMemo(
-    () => detailGuideId ? ratings.filter(r => r.guide_id === detailGuideId) : [],
-    [ratings, detailGuideId]
-  );
   // Unified per-month view — real (imported) guide_monthly rows plus a synthetic row for any
   // month whose ONLY earnings are session-based (no guide_monthly row yet) — see
   // buildUnifiedMonthlyRows in lib/guidePerformance.ts.
@@ -452,11 +439,6 @@ export default function GuideDashboard() {
     () => detailGuideId ? arrivals.filter(a => a.guide_id === detailGuideId) : [],
     [arrivals, detailGuideId]
   );
-  const detailGuideScore = useMemo(() => {
-    const ratingStats = computeRatingStats(detailGuideRatings, detailGuideStats.toursDone);
-    const punctualityStats = computePunctualityStats(detailGuideArrivals);
-    return computeGuideScore(ratingStats, punctualityStats, detailGuideStats.toursDone);
-  }, [detailGuideRatings, detailGuideArrivals, detailGuideStats.toursDone]);
   // Display-only "On-time X/Y" next to the review score below — zero-weight in the real score
   // today (see PUNCTUALITY_SCORE_WEIGHT in guidePerformance.ts), shown here as the same raw
   // arrival-vs-checkin_time count the guide's own dashboard shows (GuideOwnScoreCard).
@@ -470,14 +452,10 @@ export default function GuideDashboard() {
 
   const closeDetail = () => { setDetailGuideId(null); setDetailVirtualName(null); };
 
-  const refreshRatingsAndMonthly = async () => {
+  const refreshMonthly = async () => {
     if (!user) return;
-    const [ratingsRes, monthlyRes] = await Promise.all([
-      supabase.from('guide_ratings').select('*').eq('user_id', user.id),
-      supabase.from('guide_monthly').select('*').eq('user_id', user.id),
-    ]);
-    setRatings(ratingsRes.data || []);
-    setMonthlyRows(monthlyRes.data || []);
+    const { data } = await supabase.from('guide_monthly').select('*').eq('user_id', user.id);
+    setMonthlyRows(data || []);
   };
 
   // Session-based pay is stored on session_guides, never guide_monthly, so "Mark Paid" on a
@@ -486,35 +464,6 @@ export default function GuideDashboard() {
   // buildUnifiedMonthlyRows) — detected here purely from the id string so MonthlyInvoiceList
   // itself never needs to know about the real/virtual distinction.
   const isVirtualMonthlyId = (id: string) => id.startsWith('virtual-month:');
-
-  const handleVerifyRating = async (rating: GuideRatingRow) => {
-    if (!user || !detailGuide) return;
-    const { error } = await verifyGuideRating(supabase, user.id, rating, detailGuide.name);
-    if (error) { alert(`Failed to verify rating: ${error}`); return; }
-    await refreshRatingsAndMonthly();
-  };
-
-  const handleDeleteRating = async (rating: GuideRatingRow) => {
-    if (!user || !detailGuide) return;
-    if (!confirm('Delete this rating?')) return;
-    const { error } = await deleteGuideRating(supabase, user.id, rating, detailGuide.name);
-    if (error) { alert(`Failed to delete rating: ${error}`); return; }
-    await refreshRatingsAndMonthly();
-  };
-
-  const handleEditRating = async (rating: GuideRatingRow, next: { stars: number; quantity: number; source: string | null; note: string | null }) => {
-    if (!user || !detailGuide) return;
-    const { error } = await updateGuideRating(supabase, user.id, rating, next, detailGuide.name);
-    if (error) { alert(`Failed to update rating: ${error}`); return; }
-    await refreshRatingsAndMonthly();
-  };
-
-  const handleAddRating = async (payload: { stars: number; quantity: number; source: string | null; note: string | null }) => {
-    if (!user || !detailGuide) return;
-    const { error } = await addGuideRating(supabase, user.id, detailGuide.id, detailGuide.name, payload);
-    if (error) { alert(`Failed to add rating: ${error}`); return; }
-    await refreshRatingsAndMonthly();
-  };
 
   const handleUpdatePayment = async (row: GuideMonthlyRow, next: { payment_sent: boolean; payment_date: string | null }) => {
     if (!user) return;
@@ -527,7 +476,7 @@ export default function GuideDashboard() {
         next
       );
       if (error) { alert(`Failed to save payment status: ${error}`); return; }
-      await refreshRatingsAndMonthly();
+      await refreshMonthly();
       return;
     }
 
@@ -536,7 +485,7 @@ export default function GuideDashboard() {
       { payment_sent: !!row.payment_sent, payment_date: row.payment_date }, next
     );
     if (error) { alert(`Failed to update payment status: ${error}`); return; }
-    await refreshRatingsAndMonthly();
+    await refreshMonthly();
   };
 
   // computeAssignmentStats — the SAME function the guide's own dashboard and the "All Guides"
@@ -1293,11 +1242,6 @@ export default function GuideDashboard() {
 
               <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-8 aurelia-scrollbar">
                 <section className="space-y-4">
-                  <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Score</h3>
-                  <GuideScoreCard score={detailGuideScore} compact />
-                </section>
-
-                <section className="space-y-4 pt-6 border-t border-border">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Tours &amp; Pay · {adminFilterLabel}{statusFilter !== 'all' ? ` · ${statusFilterLabel}` : ''}</h3>
                     <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -1373,21 +1317,6 @@ export default function GuideDashboard() {
                       </div>
                     );
                   })()}
-                </section>
-
-                <section className="space-y-4 pt-6 border-t border-border">
-                  <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Ratings</h3>
-                  <GuideRatingsPanel
-                    guideName={detailGuide.name}
-                    ratings={detailGuideRatings}
-                    toursDoneCount={detailGuideStats.toursDone}
-                    isOwner
-                    embedded
-                    onVerify={handleVerifyRating}
-                    onDelete={handleDeleteRating}
-                    onEdit={handleEditRating}
-                    onAdd={handleAddRating}
-                  />
                 </section>
               </div>
             </div>
