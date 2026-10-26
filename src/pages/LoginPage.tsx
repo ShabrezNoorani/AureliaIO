@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Mail, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -20,11 +20,18 @@ const sharedInputStyle = { background: PAPER, border: `1px solid ${HAIRLINE}`, c
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { session, loading: authLoading, role, signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  // GuideLayout signs a guide straight back out and lands here with this flag once their account
+  // has been inactive past the 60-day window (see lib/guideAccountStatus.ts).
+  const [error, setError] = useState(() =>
+    (location.state as { accountClosed?: boolean } | null)?.accountClosed
+      ? 'This guide account has been closed. Please contact your tour company if you think this is a mistake.'
+      : ''
+  );
 
   // Toggles the card's content between the login form and the "forgot password" request-email
   // form — no separate route needed for this half of the flow (only the recovery-link landing

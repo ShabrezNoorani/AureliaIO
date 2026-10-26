@@ -25,6 +25,7 @@ import {
 import { fetchMeetingPoints, evaluateArrivalGate, type MeetingPointRow } from '@/lib/meetingPoints';
 import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
 import TransferTourModal from '@/components/guide/TransferTourModal';
+import { subscribeLockSync, broadcastLockChange } from '@/lib/lockSync';
 
 interface Booking {
   id: string;
@@ -531,6 +532,8 @@ export default function GuideCheckin() {
   refreshArrivalsRef.current = refreshArrivals;
   const refreshSessionsAndTeamRef = useRef(refreshSessionsAndTeam);
   refreshSessionsAndTeamRef.current = refreshSessionsAndTeam;
+  const refreshSessionTeamRef = useRef(refreshSessionTeam);
+  refreshSessionTeamRef.current = refreshSessionTeam;
   const refreshBookingsAndUnsessionedRef = useRef(refreshBookingsAndUnsessioned);
   refreshBookingsAndUnsessionedRef.current = refreshBookingsAndUnsessioned;
 
@@ -663,6 +666,20 @@ export default function GuideCheckin() {
       supabase.removeChannel(channel);
     };
   }, [guideUserId, guideId]);
+
+  // Lock toggles from ANY teammate or the owner — see lib/lockSync.ts for why the session_guides
+  // listener above can't deliver these (RLS hides co-guides' rows from this guide). Kept in a ref
+  // so handleToggleLock can ping everyone else on the same channel after its own write lands.
+  const lockSyncChannelRef = useRef<ReturnType<typeof subscribeLockSync> | null>(null);
+  useEffect(() => {
+    if (!guideUserId) return;
+    const channel = subscribeLockSync(supabase, guideUserId, () => { refreshSessionTeamRef.current(); });
+    lockSyncChannelRef.current = channel;
+    return () => {
+      lockSyncChannelRef.current = null;
+      supabase.removeChannel(channel);
+    };
+  }, [guideUserId]);
 
   // booking_ref -> Booking, reused below both to build sessionBookingsMap and to resolve a full
   // Booking for the Allocation tab's "send back" control (which needs booking.id/status, not just
@@ -1051,19 +1068,35 @@ export default function GuideCheckin() {
   // (not just `error`) matters here: an RLS rejection reports no error at all, just zero rows
   // affected — without this check a blocked write would look identical to a successful one until
   // the next refresh quietly showed the old state again.
+  //
+  // Goes through set_session_guide_lock() first: a guide's SELECT on session_guides only covers
+  // their own row, and a direct UPDATE can only touch rows the caller can SELECT, so a guide
+  // locking a TEAMMATE's column matched zero rows. The RPC checks the caller is an accepted guide
+  // on that session and flips only shuffle_locked. If it isn't deployed yet (PGRST202 = function
+  // not found), fall back to the original direct update, which still works for the guide's own row.
   const handleToggleLock = async (sessionId: string, guideId: string, locked: boolean) => {
     if (!guideUserId) return;
-    const { data, error } = await supabase.from('session_guides')
-      .update({ shuffle_locked: locked })
-      .eq('user_id', guideUserId)
-      .eq('session_id', sessionId)
-      .eq('guide_id', guideId)
-      .select();
-    if (error || !data || data.length === 0) {
-      console.error('Failed to toggle lock:', error || 'no rows updated');
+    const rpcRes = await supabase.rpc('set_session_guide_lock', {
+      p_session_id: sessionId, p_guide_id: guideId, p_locked: locked,
+    });
+    let ok = !rpcRes.error && rpcRes.data === true;
+    let failure: unknown = rpcRes.error || (rpcRes.data === true ? null : 'not permitted');
+    if (rpcRes.error?.code === 'PGRST202') {
+      const { data, error } = await supabase.from('session_guides')
+        .update({ shuffle_locked: locked })
+        .eq('user_id', guideUserId)
+        .eq('session_id', sessionId)
+        .eq('guide_id', guideId)
+        .select();
+      ok = !error && !!data && data.length > 0;
+      failure = error || 'no rows updated';
+    }
+    if (!ok) {
+      console.error('Failed to toggle lock:', failure);
       toast.error('Could not update lock — please try again.');
       return;
     }
+    broadcastLockChange(lockSyncChannelRef.current);
     await refreshSessionTeam();
   };
 

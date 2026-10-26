@@ -711,6 +711,7 @@ export type Database = {
           guide_number: string | null
           iban: string | null
           id: string
+          inactivated_at: string | null
           languages: string | null
           licensed: boolean | null
           name: string
@@ -739,6 +740,7 @@ export type Database = {
           guide_number?: string | null
           iban?: string | null
           id?: string
+          inactivated_at?: string | null
           languages?: string | null
           licensed?: boolean | null
           name: string
@@ -767,6 +769,7 @@ export type Database = {
           guide_number?: string | null
           iban?: string | null
           id?: string
+          inactivated_at?: string | null
           languages?: string | null
           licensed?: boolean | null
           name?: string
@@ -1206,6 +1209,14 @@ export type Database = {
           session_id: string
           shuffle_locked: boolean
         }[]
+      }
+      set_guide_active: {
+        Args: { p_guide_id: string; p_active: boolean }
+        Returns: boolean
+      }
+      set_session_guide_lock: {
+        Args: { p_session_id: string; p_guide_id: string; p_locked: boolean }
+        Returns: boolean
       }
       reassign_my_slot: {
         Args: { p_session_id: string; p_to_guide: string }

@@ -6,6 +6,7 @@ import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight
 import { toast } from 'sonner';
 import { ADMIN_DEFAULT_FILTER_START, type GuideReviewRow } from '@/lib/guidePerformance';
 import { updateGuideDetails, type GuideEditableDetails } from '@/lib/guideActions';
+import { resolveGuideAccess, isInactiveStatus } from '@/lib/guideAccountStatus';
 
 interface GuideOptionRate {
   id?: string;
@@ -38,6 +39,7 @@ interface Guide {
   auth_user_id?: string | null;
   claim_token?: string | null;
   claimed_at?: string | null;
+  inactivated_at?: string | null;
   option_rates?: GuideOptionRate[];
 }
 
@@ -522,6 +524,33 @@ export default function GuidesPage() {
     fetchGuides();
   };
 
+  // Owner-only: deactivate / reactivate a guide's login. status is DB-locked against plain
+  // updates (guides_field_guard_trg), so this goes through set_guide_active(), which checks the
+  // caller owns the guide and sets status + inactivated_at together (reactivating clears the
+  // date, which resets the 60-day countdown — see lib/guideAccountStatus.ts).
+  const handleSetActive = async (g: Guide, active: boolean) => {
+    if (!user) return;
+    if (!active && !confirm(`Mark ${g.name} inactive? They'll only see their earnings, and their login closes after 60 days unless you reactivate them.`)) return;
+    const { data, error } = await supabase.rpc('set_guide_active', { p_guide_id: g.id, p_active: active });
+    if (error || data !== true) {
+      console.error('Failed to change guide status:', error || 'not permitted');
+      toast.error(error?.code === 'PGRST202'
+        ? 'Status change needs a database update (set_guide_active) — not applied yet.'
+        : 'Could not change status — please try again.');
+      return;
+    }
+    await logChange(supabase, user.id, {
+      tableName: 'guides',
+      recordId: g.id,
+      fieldName: 'status',
+      oldValue: g.status,
+      newValue: active ? 'active' : 'inactive',
+      description: `${g.name} marked ${active ? 'active' : 'inactive'}`,
+    });
+    toast.success(active ? `${g.name} reactivated` : `${g.name} marked inactive`);
+    fetchGuides();
+  };
+
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this guide?')) return;
     const { error } = await supabase
@@ -662,6 +691,20 @@ export default function GuidesPage() {
                         }`}>
                           {g.status}
                         </span>
+                        {isInactiveStatus(g.status) && (() => {
+                          const access = resolveGuideAccess(g.status, g.inactivated_at);
+                          return (
+                            <div className="text-[10px] text-muted-foreground mt-1">
+                              {access.kind === 'limited' ? `Closes in ${access.daysLeft}d` : 'Login closed'}
+                            </div>
+                          );
+                        })()}
+                        <button
+                          onClick={() => handleSetActive(g, isInactiveStatus(g.status))}
+                          className="block mt-1.5 text-[10px] font-bold px-2 py-1 rounded border border-border text-foreground/80 hover:bg-muted"
+                        >
+                          {isInactiveStatus(g.status) ? 'Reactivate' : 'Mark inactive'}
+                        </button>
                       </td>
                       <td className="px-6 py-4">
                         {g.claimed_at ? (

@@ -20,6 +20,7 @@ import { compressCheckinPhoto, uploadCheckinPhoto } from '@/lib/checkinPhotos';
 import { ARRIVAL_COLUMNS, ArrivalRow, formatArrivalStatus } from '@/lib/guideArrivals';
 import { buildGuideInviteLinks, buildSharedGuideInviteLink, forceBrowserUrl, type GuideInviteTarget } from '@/lib/tourInvites';
 import { fetchMeetingPoints, type MeetingPointRow } from '@/lib/meetingPoints';
+import { subscribeLockSync, broadcastLockChange } from '@/lib/lockSync';
 
 const paxTotal = (b: any) =>
   (Number(b?.pax_adult) || 0) + (Number(b?.pax_youth) || 0) + (Number(b?.pax_child) || 0) + (Number(b?.pax_infant) || 0);
@@ -287,6 +288,21 @@ export default function TodayToursPage() {
       .subscribe();
 
     return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
+
+  // A guide's lock toggle already reaches the session_guides listener above (the owner can SELECT
+  // every row), but co-guides can't see each other's rows — so every lock write, here or on a
+  // guide's board, also pings this shared channel (see lib/lockSync.ts). Listening here too keeps
+  // the owner in sync even if a postgres_changes event is ever dropped.
+  const lockSyncChannelRef = useRef<ReturnType<typeof subscribeLockSync> | null>(null);
+  useEffect(() => {
+    if (!user) return;
+    const channel = subscribeLockSync(supabase, user.id, () => { refreshSessionGuidesRef.current(); });
+    lockSyncChannelRef.current = channel;
+    return () => {
+      lockSyncChannelRef.current = null;
       supabase.removeChannel(channel);
     };
   }, [user]);
@@ -952,6 +968,7 @@ export default function TodayToursPage() {
       toast.error('Could not update lock — please try again.');
       return;
     }
+    broadcastLockChange(lockSyncChannelRef.current);
     await refreshSessionGuides();
   };
 
