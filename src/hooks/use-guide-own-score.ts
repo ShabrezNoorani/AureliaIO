@@ -8,7 +8,27 @@ import {
   type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding,
   type SessionGuideForTourCount, type SessionDateForTourCount, type ArrivalForPeriod,
   type ScoreBand, type LeaderboardMetric, type LeaderboardPeriod,
+  isApprovedReview, reviewCountsTowardScore,
 } from '@/lib/guidePerformance';
+
+type ScoringReviewRow = {
+  id: string; guide_id: string; stars: number; review_date: string;
+  excluded_from_score: boolean | null; approval_status?: string | null;
+};
+
+// Company-wide review rows for the score/leaderboard, guide_id + stars only (see privacy note
+// below). Asks for approval_status so PENDING guide-submitted reviews can be dropped before any
+// arithmetic; if that column isn't migrated yet the first select errors, and the original select
+// runs instead (no pending reviews can exist without the column, so nothing changes).
+async function fetchScoringReviews(): Promise<ScoringReviewRow[]> {
+  const cols = 'id, guide_id, stars, review_date, excluded_from_score';
+  const withApproval = await supabase.from('guide_reviews')
+    .select(`${cols}, approval_status`).gte('review_date', ADMIN_DEFAULT_FILTER_START);
+  if (!withApproval.error) return (withApproval.data || []) as ScoringReviewRow[];
+  const fallback = await supabase.from('guide_reviews')
+    .select(cols).gte('review_date', ADMIN_DEFAULT_FILTER_START);
+  return (fallback.data || []) as ScoringReviewRow[];
+}
 
 export interface GuideOwnScore {
   loading: boolean;
@@ -42,6 +62,8 @@ export interface GuideOwnScore {
       for rendering their own review list. Never another guide's rows, never period-filtered (the
       list is a separate concern from the period-scoped score above). */
   myReviews: GuideReviewRow[];
+  /** Re-fetches everything (e.g. right after this guide submits a review). */
+  reload: () => void;
 }
 
 /**
@@ -66,6 +88,7 @@ export function useGuideOwnScore(
 ): GuideOwnScore {
   const [loading, setLoading] = useState(true);
   const [myReviews, setMyReviews] = useState<GuideReviewRow[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
   const [allGuideIds, setAllGuideIds] = useState<string[]>([]);
   const [allReviewsSinceStart, setAllReviewsSinceStart] = useState<GuideReviewRow[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingForGuiding[]>([]);
@@ -87,7 +110,7 @@ export function useGuideOwnScore(
         myReviewsRes, allReviewsRes, guidesRes, sbRes, checkinsRes, sessionGuidesRes, sessionsRes, arrivalsRes,
       ] = await Promise.all([
         supabase.from('guide_reviews').select('*').eq('guide_id', guideId),
-        supabase.from('guide_reviews').select('id, guide_id, stars, review_date, excluded_from_score').gte('review_date', ADMIN_DEFAULT_FILTER_START),
+        fetchScoringReviews(),
         supabase.from('guides').select('id').eq('user_id', guideUserId),
         // session_id is required now — computeCheckedInBookingCountsForPeriod cross-checks it
         // against session_guides below, so a guideless session's bookings count toward nobody.
@@ -109,9 +132,9 @@ export function useGuideOwnScore(
       // Pads the never-fetched text fields back in (always null) purely to satisfy GuideReviewRow's
       // shape — scoring only ever reads `.stars`/`.excluded_from_score`/`.review_date`, so this is
       // inert, not a leak.
-      setAllReviewsSinceStart((allReviewsRes.data || []).map((r: {
-        id: string; guide_id: string; stars: number; review_date: string; excluded_from_score: boolean | null;
-      }) => ({
+      // Pending (guide-submitted, not yet owner-approved) reviews are dropped here, before any
+      // score/rank arithmetic — they never count for anyone until approved.
+      setAllReviewsSinceStart(allReviewsRes.filter(isApprovedReview).map((r) => ({
         ...r, reviewer_name: null, comment: null, platform: null,
       })));
       setSessionBookings(sbRes.data || []);
@@ -125,7 +148,7 @@ export function useGuideOwnScore(
 
     load();
     return () => { mounted = false; };
-  }, [guideId, guideUserId]);
+  }, [guideId, guideUserId, reloadKey]);
 
   const bounds = useMemo(() => getLeaderboardPeriodBounds(period), [period]);
 
@@ -171,7 +194,7 @@ export function useGuideOwnScore(
   );
   const punctuality = useMemo(() => computePunctualityStats(myPeriodArrivals), [myPeriodArrivals]);
   const reviewCount = useMemo(
-    () => myPeriodReviews.filter((r) => !r.excluded_from_score).length,
+    () => myPeriodReviews.filter(reviewCountsTowardScore).length,
     [myPeriodReviews]
   );
 
@@ -200,5 +223,6 @@ export function useGuideOwnScore(
     rank: myRankEntry?.rank ?? null,
     totalRanked: leaderboard.length,
     myReviews,
+    reload: () => setReloadKey((k) => k + 1),
   };
 }

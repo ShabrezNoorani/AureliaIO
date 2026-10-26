@@ -11,7 +11,7 @@ import {
   getAdminDateFilterBounds, computeGuidePaymentSummary, ADMIN_DATE_FILTER_PRESETS, ADMIN_DEFAULT_FILTER_START,
   filterMonthlyRowsByDateRange, matchesAdminStatusFilter, ADMIN_STATUS_FILTER_OPTIONS,
   filterAssignmentsByStatus, filterMonthlyRowsByStatus, dedupeAssignmentsAcrossSources,
-  computeGuideReviewScore, REVIEW_PLATFORMS,
+  computeGuideReviewScore, REVIEW_PLATFORMS, isApprovedReview,
   computeCheckedInBookingRecords, countCheckedInBookingsByGuide, getScoreBand,
   ADMIN_SCORE_BAND_LABELS,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideReviewRow,
@@ -20,7 +20,8 @@ import {
   type CheckinForGuiding, type SessionBookingForGuiding,
 } from '@/lib/guidePerformance';
 import { updateGuideMonthlyPayment, insertGuideMonthlyPayment } from '@/lib/guideRatingActions';
-import { addGuideReview, updateGuideReview, deleteGuideReview, setReviewExcluded, type ReviewPayload } from '@/lib/guideReviewActions';
+import { addGuideReview, updateGuideReview, deleteGuideReview, setReviewExcluded, approveGuideReview, rejectGuideReview, type ReviewPayload } from '@/lib/guideReviewActions';
+import PendingReviewsQueue from '@/components/guide/PendingReviewsQueue';
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
@@ -53,7 +54,15 @@ export default function GuideDashboard() {
   const [sessionsForPay, setSessionsForPay] = useState<SessionForEarnings[]>([]);
   // Individual admin-entered reviews (guide_reviews) — drives the per-guide review SCORE. The
   // ONE review/score system in this app — see guidePerformance.ts's own section header comment.
+  // APPROVED reviews only — everything below (score, list, counts) reads this, exactly as before.
+  // Guide-submitted reviews still awaiting approval live separately in pendingReviews and never
+  // touch the score until approved (see PendingReviewsQueue).
   const [reviews, setReviews] = useState<GuideReviewRow[]>([]);
+  const [pendingReviews, setPendingReviews] = useState<GuideReviewRow[]>([]);
+  const applyReviewRows = (rows: GuideReviewRow[]) => {
+    setReviews(rows.filter(isApprovedReview));
+    setPendingReviews(rows.filter(r => !isApprovedReview(r)));
+  };
   // The score's denominator: checked-in bookings since Oct 1 2026, joined against session_bookings'
   // allotted_guide_id — see computeGuidedBookingCounts's own doc comment.
   const [checkinsForGuiding, setCheckinsForGuiding] = useState<CheckinForGuiding[]>([]);
@@ -173,7 +182,7 @@ export default function GuideDashboard() {
   const refreshReviews = async () => {
     if (!user) return;
     const { data } = await supabase.from('guide_reviews').select('*').eq('user_id', user.id);
-    setReviews(data || []);
+    applyReviewRows(data || []);
   };
 
   const handleSaveReview = async () => {
@@ -215,6 +224,23 @@ export default function GuideDashboard() {
     const guideName = guides.find(g => g.id === r.guide_id)?.name || 'Guide';
     const { error } = await deleteGuideReview(supabase, user.id, r, guideName);
     if (error) { alert(`Failed to delete review: ${error}`); return; }
+    await refreshReviews();
+  };
+
+  const handleApproveReview = async (r: GuideReviewRow) => {
+    if (!user) return;
+    const guideName = guides.find(g => g.id === r.guide_id)?.name || 'Guide';
+    const { error } = await approveGuideReview(supabase, user.id, r, guideName);
+    if (error) { alert(`Failed to approve review: ${error}`); return; }
+    await refreshReviews();
+  };
+
+  const handleRejectReview = async (r: GuideReviewRow) => {
+    if (!user) return;
+    if (!confirm('Reject and discard this review?')) return;
+    const guideName = guides.find(g => g.id === r.guide_id)?.name || 'Guide';
+    const { error } = await rejectGuideReview(supabase, user.id, r, guideName);
+    if (error) { alert(`Failed to reject review: ${error}`); return; }
     await refreshReviews();
   };
 
@@ -274,7 +300,7 @@ export default function GuideDashboard() {
     setArrivals(arrivalsRes.data || []);
     setSessionGuidesForPay(sgRes.data || []);
     setSessionsForPay(sessRes.data || []);
-    setReviews(reviewsRes.data || []);
+    applyReviewRows(reviewsRes.data || []);
     setCheckinsForGuiding(checkinsRes.data || []);
     setSessionBookingsForGuiding(sessionBookingsRes.data || []);
     setLoading(false);
@@ -682,6 +708,13 @@ export default function GuideDashboard() {
             </div>
           </div>
         </div>
+
+        <PendingReviewsQueue
+          reviews={pendingReviews}
+          guides={guides}
+          onApprove={handleApproveReview}
+          onReject={handleRejectReview}
+        />
 
         {loading ? (
           <div className="flex justify-center p-20">

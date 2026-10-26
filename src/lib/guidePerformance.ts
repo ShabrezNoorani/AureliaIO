@@ -346,6 +346,23 @@ export interface GuideReviewRow {
       points are left out of the score. `null`/`undefined` (the column may not exist yet, or a
       caller didn't select it) is treated the same as `false` — included by default. */
   excluded_from_score?: boolean | null;
+  /** 'approved' | 'pending'. Owner-entered reviews are 'approved' (column default); a review a
+      guide submits from their own side starts 'pending' and never counts anywhere until the owner
+      approves it. `null`/`undefined` (column not migrated yet, or not selected) = 'approved', so
+      every pre-existing review keeps counting exactly as before. */
+  approval_status?: string | null;
+  /** true when a guide submitted this review themselves (shown to the owner in the approval queue). */
+  submitted_by_guide?: boolean | null;
+}
+
+/** Only 'pending' is held back — anything else (incl. missing) is an approved review. */
+export function isApprovedReview(r: Pick<GuideReviewRow, 'approval_status'>): boolean {
+  return (r.approval_status ?? 'approved') !== 'pending';
+}
+
+/** The single rule for "does this review's points count": approved AND not excluded_from_score. */
+export function reviewCountsTowardScore(r: Pick<GuideReviewRow, 'approval_status' | 'excluded_from_score'>): boolean {
+  return isApprovedReview(r) && !r.excluded_from_score;
 }
 
 /** The fixed points-per-star scale the score is built from: 5★ rewards, 4★ mildly rewards, 3★
@@ -384,7 +401,7 @@ export interface GuideReviewScore {
     ADMIN_DEFAULT_FILTER_START) before calling this — this function itself is date-agnostic, just
     the arithmetic. */
 export function computeGuideReviewScore(reviews: GuideReviewRow[], bookingsGuided: number): GuideReviewScore {
-  const counted = reviews.filter((r) => !r.excluded_from_score);
+  const counted = reviews.filter(reviewCountsTowardScore);
   const reviewCount = counted.length;
   if (bookingsGuided <= 0) return { score: null, reviewCount, bookingsGuided };
   const totalPoints = counted.reduce((sum, r) => sum + reviewPoints(r.stars), 0);
@@ -604,7 +621,7 @@ export function computeReviewPointsPerUnit(
   reviews: GuideReviewRow[],
   denominator: number
 ): { score: number | null; reviewCount: number } {
-  const counted = reviews.filter((r) => !r.excluded_from_score);
+  const counted = reviews.filter(reviewCountsTowardScore);
   const reviewCount = counted.length;
   if (denominator <= 0) return { score: null, reviewCount };
   const totalPoints = counted.reduce((sum, r) => sum + reviewPoints(r.stars), 0);

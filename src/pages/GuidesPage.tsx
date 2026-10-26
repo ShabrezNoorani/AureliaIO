@@ -4,7 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { logChange } from '@/lib/changeLog';
 import { Plus, X, PenSquare, Trash2, CheckCircle2, Euro, Info, Tag, ChevronRight, ChevronUp, ChevronDown, Search, Upload, Copy, RefreshCw, Link as LinkIcon, Star } from 'lucide-react';
 import { toast } from 'sonner';
-import { ADMIN_DEFAULT_FILTER_START, type GuideReviewRow } from '@/lib/guidePerformance';
+import { ADMIN_DEFAULT_FILTER_START, reviewCountsTowardScore, type GuideReviewRow } from '@/lib/guidePerformance';
 import { updateGuideDetails, type GuideEditableDetails } from '@/lib/guideActions';
 import { resolveGuideAccess, isInactiveStatus } from '@/lib/guideAccountStatus';
 
@@ -144,13 +144,13 @@ export default function GuidesPage() {
     fetchReviews();
   }, [user]);
 
-  // Real review count per guide (excluding any row marked excluded_from_score), since Oct 1 2026
+  // Real review count per guide (only approved, non-excluded reviews), since Oct 1 2026
   // — same guide_reviews system/scope as the admin detail popup and Leaderboard, so this count can
   // never contradict what those pages show for the same guide.
   const reviewCountByGuide = useMemo(() => {
     const counts = new Map<string, number>();
     reviews.forEach(r => {
-      if (r.excluded_from_score) return;
+      if (!reviewCountsTowardScore(r)) return;
       counts.set(r.guide_id, (counts.get(r.guide_id) || 0) + 1);
     });
     return counts;

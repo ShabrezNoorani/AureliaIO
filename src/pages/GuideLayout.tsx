@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, CalendarCheck, User, Star, History, LogOut, Menu, X, Wallet, AlertTriangle } from 'lucide-react';
+import { Home, CalendarCheck, CalendarClock, User, Star, History, LogOut, Menu, X, Wallet, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Logo from '@/components/Logo';
 import PullToRefreshChrome from '@/components/PullToRefreshChrome';
@@ -10,9 +10,10 @@ import GuideProfile from './GuideProfile';
 import GuideReviews from './GuideReviews';
 import GuideHistory from './GuideHistory';
 import GuideEarningsOnly from './GuideEarningsOnly';
+import GuideFutureTours from './GuideFutureTours';
 import { useGuideAccess } from '@/hooks/use-guide-access';
 
-type GuideView = 'dashboard' | 'checkin' | 'profile' | 'reviews' | 'history';
+type GuideView = 'dashboard' | 'checkin' | 'upcoming' | 'profile' | 'reviews' | 'history';
 
 interface NavItemProps {
   icon: React.ElementType;
@@ -61,6 +62,7 @@ export default function GuideLayout() {
   useEffect(() => {
     const path = window.location.pathname;
     if (path.includes('/guide/checkin')) setView('checkin');
+    else if (path.includes('/guide/upcoming')) setView('upcoming');
     else if (path.includes('/guide/profile')) setView('profile');
     else if (path.includes('/guide/reviews')) setView('reviews');
     else if (path.includes('/guide/history')) setView('history');
@@ -130,6 +132,7 @@ export default function GuideLayout() {
             <>
               <NavItem icon={Home} label="Dashboard" active={view === 'dashboard'} onClick={() => handleNavigate('dashboard', '/guide')} />
               <NavItem icon={CalendarCheck} label="Today's Check-in" active={view === 'checkin'} onClick={() => handleNavigate('checkin', '/guide/checkin')} />
+              <NavItem icon={CalendarClock} label="Future Tours" active={view === 'upcoming'} onClick={() => handleNavigate('upcoming', '/guide/upcoming')} />
               <NavItem icon={User} label="My Profile" active={view === 'profile'} onClick={() => handleNavigate('profile', '/guide/profile')} />
               <NavItem icon={Star} label="My Reviews" active={view === 'reviews'} onClick={() => handleNavigate('reviews', '/guide/reviews')} />
               <NavItem icon={History} label="History" active={view === 'history'} onClick={() => handleNavigate('history', '/guide/history')} />
@@ -175,6 +178,7 @@ export default function GuideLayout() {
           <>
             {view === 'dashboard' && <GuideHome />}
             {view === 'checkin' && <GuideCheckin />}
+            {view === 'upcoming' && <GuideFutureTours />}
             {view === 'profile' && <GuideProfile />}
             {view === 'reviews' && <GuideReviews />}
             {view === 'history' && <GuideHistory />}

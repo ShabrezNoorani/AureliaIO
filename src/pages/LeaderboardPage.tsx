@@ -5,7 +5,7 @@ import {
   computeGuideLeaderboardByMetric, computeCheckedInBookingCountsForPeriod, computeToursPerGuide,
   filterReviewsByPeriod, filterArrivalsByPeriod, getScoreBand, getLeaderboardPeriodBounds,
   getLeaderboardPeriodLabel, GUIDE_SCORE_MIN_BOOKINGS, ADMIN_SCORE_BAND_LABELS,
-  ADMIN_DEFAULT_FILTER_START, DEFAULT_LEADERBOARD_PERIOD,
+  ADMIN_DEFAULT_FILTER_START, DEFAULT_LEADERBOARD_PERIOD, isApprovedReview,
   type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding,
   type SessionGuideForTourCount, type SessionDateForTourCount, type ArrivalForPeriod,
   type LeaderboardMetric, type LeaderboardPeriod,
@@ -59,7 +59,8 @@ export default function LeaderboardPage() {
       supabase.from('guide_arrivals').select('guide_id, arrived_at, minutes_late').eq('user_id', user.id).gte('arrived_at', ADMIN_DEFAULT_FILTER_START),
     ]);
     setGuides(guidesRes.data || []);
-    setReviews(reviewsRes.data || []);
+    // Pending guide-submitted reviews never reach the leaderboard until the owner approves them.
+    setReviews((reviewsRes.data || []).filter(isApprovedReview));
     setCheckins(checkinsRes.data || []);
     setSessionBookings(sbRes.data || []);
     setSessionGuides(sessionGuidesRes.data || []);

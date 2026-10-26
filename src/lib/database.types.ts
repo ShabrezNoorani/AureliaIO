@@ -653,6 +653,7 @@ export type Database = {
       }
       guide_reviews: {
         Row: {
+          approval_status: string
           comment: string | null
           excluded_from_score: boolean | null
           guide_id: string
@@ -661,9 +662,11 @@ export type Database = {
           review_date: string
           reviewer_name: string | null
           stars: number
+          submitted_by_guide: boolean
           user_id: string
         }
         Insert: {
+          approval_status?: string
           comment?: string | null
           excluded_from_score?: boolean | null
           guide_id: string
@@ -672,9 +675,11 @@ export type Database = {
           review_date: string
           reviewer_name?: string | null
           stars: number
+          submitted_by_guide?: boolean
           user_id: string
         }
         Update: {
+          approval_status?: string
           comment?: string | null
           excluded_from_score?: boolean | null
           guide_id?: string
@@ -683,6 +688,7 @@ export type Database = {
           review_date?: string
           reviewer_name?: string | null
           stars?: number
+          submitted_by_guide?: boolean
           user_id?: string
         }
         Relationships: [
@@ -1209,6 +1215,16 @@ export type Database = {
           session_id: string
           shuffle_locked: boolean
         }[]
+      }
+      submit_guide_review: {
+        Args: {
+          p_stars: number
+          p_reviewer_name: string | null
+          p_comment: string | null
+          p_platform: string | null
+          p_review_date: string
+        }
+        Returns: string
       }
       set_guide_active: {
         Args: { p_guide_id: string; p_active: boolean }
