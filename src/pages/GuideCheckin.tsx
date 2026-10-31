@@ -25,6 +25,8 @@ import {
 import { fetchMeetingPoints, evaluateArrivalGate, type MeetingPointRow } from '@/lib/meetingPoints';
 import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
 import TransferTourModal from '@/components/guide/TransferTourModal';
+import CheckinReminderBanner from '@/components/guide/CheckinReminderBanner';
+import { computeCheckinReminder } from '@/lib/checkinReminder';
 import { subscribeLockSync, broadcastLockChange } from '@/lib/lockSync';
 
 interface Booking {
@@ -1177,6 +1179,13 @@ export default function GuideCheckin() {
   const sessionsToShow = guestsLoaded ? sessionsWithBookings : sessions;
   const sessionById = useMemo(() => new Map(sessions.map(s => [s.id, s])), [sessions]);
 
+  // In-app "don't forget to check in" nudge — only this guide's own sessions today (the same
+  // sessions shown below), and only once guest data has settled so it never flashes a wrong count.
+  const checkinReminder = useMemo(
+    () => guestsLoaded ? computeCheckinReminder(sessionsWithBookings.map(s => sessionBookingsMap.get(s.id) || []), checkins) : null,
+    [guestsLoaded, sessionsWithBookings, sessionBookingsMap, checkins]
+  );
+
   const arrivalStatusBySession = useMemo(() => {
     const m = new Map<string, string>();
     arrivals.forEach(a => m.set(a.session_id, formatArrivalStatus(a.arrived_at, a.minutes_late)));
@@ -1204,6 +1213,8 @@ export default function GuideCheckin() {
             <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
           </button>
         </div>
+
+        <CheckinReminderBanner reminder={checkinReminder} />
 
         {/* PAST / UNRESOLVED: a booking on one of this guide's own past tours that was never
             checked in or marked no-show — this page only ever shows TODAY, so without this it

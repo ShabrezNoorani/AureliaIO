@@ -20,6 +20,7 @@ import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
 import GuideOwnScoreCard from '@/components/guide/GuideOwnScoreCard';
 import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 import TransferTourModal from '@/components/guide/TransferTourModal';
+import GuideTipsCard from '@/components/guide/GuideTipsCard';
 import { useGuideOwnScore } from '@/hooks/use-guide-own-score';
 
 // recharts (pulled in by GuideEarningsChart) is a large charting library shared with the owner's
@@ -379,6 +380,8 @@ export default function GuideHome() {
           prominent
         />
       </section>
+
+      <GuideTipsCard data={ownScore} />
 
       <div>
         <h1 className="text-3xl font-extrabold tracking-tight mb-2">Welcome back, {guideName || 'Guide'} 👋</h1>
