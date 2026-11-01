@@ -112,6 +112,11 @@ export interface GuideMonthlyRow {
   difference: number | null;
   payment_sent: boolean | null;
   payment_date: string | null;
+  /** Month-end lump-sum bonus (guide_monthly.bonus) — optional because callers that haven't
+      selected it (or a DB where the column isn't migrated yet) simply don't carry it. Never a tour;
+      see lib/guideBonus.ts. */
+  bonus?: number | null;
+  bonus_note?: string | null;
 }
 
 /**

@@ -267,6 +267,32 @@ export interface PnlSessionPayInputs {
   sessionBookings: PnlSessionBookingLink[];
   sessionGuides: PnlSessionGuidePay[];
   sessions: PnlSession[];
+  /** Optional month-end bonuses (guide_monthly.month + bonus) — a GUIDE-PAY cost for the month
+      they belong to, never a tour/booking. Travel-date grouping only (same reasoning as session
+      pay), added once per guide_monthly row (see monthEndBonusCostsByPeriod). */
+  monthEndBonuses?: PnlMonthEndBonus[];
+}
+
+export interface PnlMonthEndBonus {
+  /** YYYY-MM */
+  month: string | null;
+  bonus?: number | null;
+}
+
+/**
+ * Month-end bonuses per day/week/month period key. A bonus has no day of its own, so it's
+ * allocated exactly like an undated admin cost (computeAdminCostsByPeriod): in full to its month,
+ * or split evenly across that month's days/weeks — the month's total is always preserved.
+ */
+export function monthEndBonusCostsByPeriod(bonuses: PnlMonthEndBonus[], granularity: PnlGranularity): Map<string, number> {
+  const asCosts: PnlAdminCost[] = [];
+  for (const b of bonuses) {
+    const amount = Number(b.bonus) || 0;
+    const m = /^(\d{4})-(\d{2})$/.exec(b.month || '');
+    if (!amount || !m) continue;
+    asCosts.push({ amount, year: Number(m[1]), month: Number(m[2]), expense_date: null });
+  }
+  return computeAdminCostsByPeriod(asCosts, granularity);
 }
 
 /**
@@ -324,6 +350,17 @@ export function groupBookingsByPeriod(
       row.tourCost += amount;
       row.tourProfit -= amount;
     });
+
+    // Month-end bonuses — guide pay for the month, added on top of (never instead of) session pay;
+    // the two come from different tables, so nothing is counted twice.
+    if (sessionPay.monthEndBonuses?.length) {
+      monthEndBonusCostsByPeriod(sessionPay.monthEndBonuses, granularity).forEach((amount, key) => {
+        const row = map.get(key);
+        if (!row) return;
+        row.tourCost += amount;
+        row.tourProfit -= amount;
+      });
+    }
   }
 
   return Array.from(map.entries())

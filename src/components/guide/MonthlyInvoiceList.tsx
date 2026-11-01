@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { FileText, CheckCircle2 } from 'lucide-react';
+import { FileText, CheckCircle2, Gift, Download } from 'lucide-react';
 import type { GuideMonthlyRow } from '@/lib/guidePerformance';
 import { localDateStr } from '@/lib/utils';
 
@@ -17,9 +17,11 @@ interface MonthlyInvoiceListProps {
   /** Owner-only "mark paid" / payment-date controls — never shown on the guide's own statement view. */
   isOwner?: boolean;
   onUpdatePayment?: (row: GuideMonthlyRow, next: { payment_sent: boolean; payment_date: string | null }) => void | Promise<void>;
+  /** Optional "Download Invoice (PDF)" for one month — shown only when the caller passes it. */
+  onDownloadInvoice?: (row: GuideMonthlyRow) => void | Promise<void>;
 }
 
-export default function MonthlyInvoiceList({ rows, isOwner, onUpdatePayment }: MonthlyInvoiceListProps) {
+export default function MonthlyInvoiceList({ rows, isOwner, onUpdatePayment, onDownloadInvoice }: MonthlyInvoiceListProps) {
   const sorted = useMemo(
     () => [...rows].sort((a, b) => (b.month || '').localeCompare(a.month || '')),
     [rows]
@@ -32,7 +34,7 @@ export default function MonthlyInvoiceList({ rows, isOwner, onUpdatePayment }: M
   return (
     <div className="space-y-2 max-h-[480px] overflow-y-auto aurelia-scrollbar pr-1">
       {sorted.map((r) => (
-        <MonthlyInvoiceRow key={r.id} row={r} isOwner={!!isOwner} onUpdatePayment={onUpdatePayment} />
+        <MonthlyInvoiceRow key={r.id} row={r} isOwner={!!isOwner} onUpdatePayment={onUpdatePayment} onDownloadInvoice={onDownloadInvoice} />
       ))}
     </div>
   );
@@ -42,11 +44,14 @@ function MonthlyInvoiceRow({
   row,
   isOwner,
   onUpdatePayment,
+  onDownloadInvoice,
 }: {
   row: GuideMonthlyRow;
   isOwner: boolean;
   onUpdatePayment?: MonthlyInvoiceListProps['onUpdatePayment'];
+  onDownloadInvoice?: MonthlyInvoiceListProps['onDownloadInvoice'];
 }) {
+  const bonus = Number(row.bonus) || 0;
   const [saving, setSaving] = useState(false);
   const [dateDraft, setDateDraft] = useState(row.payment_date || '');
 
@@ -131,6 +136,27 @@ function MonthlyInvoiceRow({
           )}
         </div>
       </div>
+
+      {/* Month-end bonus — read-only everywhere this list renders (set by the owner on the guide
+          detail page); paid together with the month. */}
+      {bonus > 0 && (
+        <div className="mt-2.5 pt-2.5 border-t border-border/60 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+          <Gift size={12} className="text-gold shrink-0" />
+          <span className="font-semibold text-foreground">Month-end bonus {fmtEuro(bonus)}</span>
+          {row.bonus_note && <span className="text-muted-foreground">· {row.bonus_note}</span>}
+        </div>
+      )}
+
+      {onDownloadInvoice && (
+        <div className="mt-2.5 pt-2.5 border-t border-border/60">
+          <button
+            onClick={() => onDownloadInvoice(row)}
+            className="text-[10px] font-bold uppercase tracking-widest text-gold hover:underline flex items-center gap-1"
+          >
+            <Download size={11} /> Download Invoice (PDF)
+          </button>
+        </div>
+      )}
     </div>
   );
 }

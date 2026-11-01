@@ -30,6 +30,9 @@ export default function ExecutiveDashboard() {
   
   const [bookings, setBookings] = useState<any[]>([]);
   const [adminCosts, setAdminCosts] = useState<any[]>([]);
+  // Month-end guide bonuses (guide_monthly.bonus) — guide-pay cost for their month. Empty until
+  // the bonus migration is run.
+  const [monthEndBonuses, setMonthEndBonuses] = useState<{ month: string | null; bonus: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filters
@@ -45,10 +48,12 @@ export default function ExecutiveDashboard() {
     if (!user) return;
     Promise.all([
       supabase.from('bookings').select('*').eq('user_id', user.id),
-      supabase.from('admin_costs').select('*').eq('user_id', user.id)
-    ]).then(([resB, resC]) => {
+      supabase.from('admin_costs').select('*').eq('user_id', user.id),
+      supabase.from('guide_monthly').select('month, bonus').eq('user_id', user.id).not('bonus', 'is', null),
+    ]).then(([resB, resC, resBonus]) => {
       setBookings(resB.data || []);
       setAdminCosts(resC.data || []);
+      setMonthEndBonuses(resBonus.error ? [] : (resBonus.data || []));
       setLoading(false);
     });
   }, [user]);
@@ -83,8 +88,8 @@ export default function ExecutiveDashboard() {
   }, [quickRange]);
 
   // Core filtering logic for current vs previous period
-  const { currentData, prevData, currentCosts, prevCosts } = useMemo(() => {
-    if (!dateFrom || !dateTo) return { currentData: [], prevData: [], currentCosts: [], prevCosts: [] };
+  const { currentData, prevData, currentCosts, prevCosts, currentBonuses, prevBonuses } = useMemo(() => {
+    if (!dateFrom || !dateTo) return { currentData: [], prevData: [], currentCosts: [], prevCosts: [], currentBonuses: [], prevBonuses: [] };
     
     const start = new Date(dateFrom).getTime();
     const end = new Date(dateTo).getTime();
@@ -117,13 +122,32 @@ export default function ExecutiveDashboard() {
       });
     };
 
+    // Month-end bonuses: guide-pay cost for their month, placed like admin costs (mid-month inside
+    // the range). Travel basis with no product/channel filter only — a bonus belongs to no product
+    // or channel. Summed once per guide_monthly row.
+    const bonusApplies = dateMode === 'travel' && productFilter === 'All' && channelFilter === 'All';
+    const filterBonuses = (startT: number, endT: number) => {
+      if (!bonusApplies) return [] as { key: string; amount: number }[];
+      const out: { key: string; amount: number }[] = [];
+      monthEndBonuses.forEach(b => {
+        const m = /^(\d{4})-(\d{2})$/.exec(b.month || '');
+        const amount = Number(b.bonus) || 0;
+        if (!m || !amount) return;
+        const t = new Date(Number(m[1]), Number(m[2]) - 1, 15).getTime();
+        if (t >= startT && t <= endT) out.push({ key: b.month as string, amount });
+      });
+      return out;
+    };
+
     return {
       currentData,
       prevData,
       currentCosts: filterCosts(start, end),
-      prevCosts: filterCosts(prevStart, prevEnd)
+      prevCosts: filterCosts(prevStart, prevEnd),
+      currentBonuses: filterBonuses(start, end),
+      prevBonuses: filterBonuses(prevStart, prevEnd - 1),
     };
-  }, [bookings, adminCosts, dateFrom, dateTo, dateMode, productFilter, channelFilter, includeCancelled]);
+  }, [bookings, adminCosts, monthEndBonuses, dateFrom, dateTo, dateMode, productFilter, channelFilter, includeCancelled]);
 
   // KPIs
   const calcOpProfit = (b: any) => (b.net_revenue || 0) - (b.ticket_cost || 0) - (b.guide_cost || 0) - (b.extra_cost || 0);
@@ -131,8 +155,8 @@ export default function ExecutiveDashboard() {
   const curGross = currentData.reduce((s,b) => s + (b.gross_revenue || 0), 0);
   const prevGross = prevData.reduce((s,b) => s + (b.gross_revenue || 0), 0);
   
-  const curOpProfit = currentData.reduce((s,b) => s + calcOpProfit(b), 0);
-  const prevOpProfit = prevData.reduce((s,b) => s + calcOpProfit(b), 0);
+  const curOpProfit = currentData.reduce((s,b) => s + calcOpProfit(b), 0) - currentBonuses.reduce((s, b) => s + b.amount, 0);
+  const prevOpProfit = prevData.reduce((s,b) => s + calcOpProfit(b), 0) - prevBonuses.reduce((s, b) => s + b.amount, 0);
   
   const curAdmin = currentCosts.reduce((s,c) => s + (c.amount || 0), 0);
   const prevAdmin = prevCosts.reduce((s,c) => s + (c.amount || 0), 0);
@@ -164,11 +188,16 @@ export default function ExecutiveDashboard() {
       map[key].admin += (c.amount || 0);
     });
 
+    currentBonuses.forEach(b => {
+      const row = map[b.key];
+      if (row) row.opProfit -= b.amount;
+    });
+
     return Object.values(map).map(m => {
       m.netProfit = m.opProfit - m.admin;
       return m;
     }).sort((a,b) => a.sort - b.sort);
-  }, [currentData, currentCosts, dateMode]);
+  }, [currentData, currentCosts, currentBonuses, dateMode]);
 
   // Donut Chart Data
   const donutData = useMemo(() => {

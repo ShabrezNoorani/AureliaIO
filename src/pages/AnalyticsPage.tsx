@@ -11,6 +11,7 @@ import { Filter, Calendar, TrendingUp, AlertTriangle, ArrowLeft, Package } from 
 import { useChartColors } from '@/lib/theme';
 import { shortProductCode, isCancelled } from '@/lib/utils';
 import { attributeSessionGuideCostByBooking } from '@/lib/guidePerformance';
+import { monthEndBonusCostByMonth } from '@/lib/guideBonus';
 
 // const COLORS = ['#3b82f6', '#10b981', '#f5a623', '#8b5cf6', '#64748b', '#f43f5e', '#06b6d4'];
 
@@ -76,6 +77,9 @@ function AnalyticsPage() {
   // above — see bookingGuideCost below for how it's attributed per booking.
   const [sessionBookings, setSessionBookings] = useState<{ booking_ref: string; session_id: string }[]>([]);
   const [sessionGuides, setSessionGuides] = useState<{ session_id: string; status: string; base_pay: number | null; bonus: number | null }[]>([]);
+  // Month-end guide bonuses (guide_monthly.month + bonus) — guide-pay cost for their month, see
+  // monthEndBonusForMonth below. Empty until the bonus migration is run.
+  const [monthEndBonusRows, setMonthEndBonusRows] = useState<{ month: string | null; bonus: number | null }[]>([]);
 
   // Filters state
   const [dateMode, setDateMode] = useState<'travel' | 'booking'>('travel');
@@ -91,11 +95,13 @@ function AnalyticsPage() {
     setLoading(true);
     const loadData = async () => {
       try {
-        const [bRes, sbRes, sgRes] = await Promise.all([
+        const [bRes, sbRes, sgRes, bonusRes] = await Promise.all([
           supabase.from('bookings').select('*').eq('user_id', user.id),
           supabase.from('session_bookings').select('booking_ref, session_id').eq('user_id', user.id),
           supabase.from('session_guides').select('session_id, status, base_pay, bonus').eq('user_id', user.id),
+          supabase.from('guide_monthly').select('month, bonus').eq('user_id', user.id).not('bonus', 'is', null),
         ]);
+        setMonthEndBonusRows(bonusRes.error ? [] : (bonusRes.data || []));
         if (bRes.error) console.error("Error fetching bookings:", bRes.error);
         if (sbRes.error) console.error("Error fetching session_bookings:", sbRes.error);
         if (sgRes.error) console.error("Error fetching session_guides:", sgRes.error);
@@ -160,6 +166,15 @@ function AnalyticsPage() {
     return (b?.gross_revenue || 0) - otherCosts - guideCost;
   }, [sessionedRefs, bookingGuideCost]);
 
+  // MONTH-END BONUSES — a guide-pay cost for a whole month, not for any booking. Counted only on
+  // the travel-date basis with no product/channel/status filter (a bonus can't be attributed to a
+  // product, channel or booking status), and only for months that have bookings in the current
+  // view — so it reaches exactly the month-level totals below (KPI net, monthly trend, monthly
+  // table), never the per-channel/per-product breakdowns. Summed once per guide_monthly row.
+  const monthEndBonusCost = useMemo(() => monthEndBonusCostByMonth(monthEndBonusRows), [monthEndBonusRows]);
+  const bonusApplies = dateMode === 'travel' && productFilter === 'All' && channelFilter === 'All' && statusFilter === 'All';
+  const monthEndBonusForMonth = (ym: string) => (bonusApplies ? monthEndBonusCost.get(ym) || 0 : 0);
+
   // Derived filter options
   // Grouped/labeled by the short product code, not product_name — old (gsheet) rows and new
   // (bokun) rows for the same tour otherwise split into two buckets: product_name on old rows is
@@ -221,8 +236,11 @@ function AnalyticsPage() {
       gross += (b?.gross_revenue||0);
       net += profitOf(b);
     });
+    // Month-end bonuses for every month present in this view (see monthEndBonusForMonth).
+    const months = new Set(items.map(b => (b?.travel_date || '').slice(0, 7)).filter(Boolean));
+    months.forEach(ym => { net -= monthEndBonusForMonth(ym); });
     return { totBk, totPax, gross, net, margin: gross > 0 ? net / gross : 0 };
-  }, [filteredBookings, profitOf]);
+  }, [filteredBookings, profitOf, monthEndBonusCost, bonusApplies]);
 
   // 2. REVENUE TREND
   const [trendMode, setTrendMode] = useState<'Monthly' | 'By Product' | 'By Channel'>('Monthly');
@@ -252,8 +270,11 @@ function AnalyticsPage() {
         }
       } catch (e) {}
     });
+    if (trendMode === 'Monthly') {
+      Object.values(map).forEach((m: any) => { m.Net -= monthEndBonusForMonth(m.month); });
+    }
     return Object.values(map).sort((a,b) => a.sort - b.sort);
-  }, [filteredBookings, trendMode, dateMode, profitOf]);
+  }, [filteredBookings, trendMode, dateMode, profitOf, monthEndBonusCost, bonusApplies]);
 
   const trendKeys = useMemo(() => {
     if (trendMode === 'Monthly') return [];
@@ -298,7 +319,7 @@ function AnalyticsPage() {
         if (isNaN(d.getTime())) return;
         const monStr = `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]} ${d.getFullYear()}`;
         
-        if (!map[monStr]) map[monStr] = { month: monStr, sort: d.getTime(), bk: 0, pax: 0, gross: 0, comm: 0, netr: 0, costs: 0, netp: 0, cancLoss: 0 };
+        if (!map[monStr]) map[monStr] = { month: monStr, ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, sort: d.getTime(), bk: 0, pax: 0, gross: 0, comm: 0, netr: 0, costs: 0, netp: 0, cancLoss: 0 };
 
         // No-shows never count toward the main P&L columns (a guest who didn't show up isn't a
         // completed sale) — unchanged by this task. Cancelled bookings, by contrast, now flow
@@ -326,6 +347,13 @@ function AnalyticsPage() {
       } catch (e) {}
     });
 
+    // Month-end bonuses → guide-pay cost of their month (see monthEndBonusForMonth).
+    Object.values(map).forEach((m: any) => {
+      const bonus = monthEndBonusForMonth(m.ym);
+      m.costs += bonus;
+      m.netp -= bonus;
+    });
+
     const arr = Object.values(map).sort((a,b) => b.sort - a.sort).map(m => ({
       ...m,
       margin: m.gross > 0 ? m.netp / m.gross : 0
@@ -342,7 +370,7 @@ function AnalyticsPage() {
       arr.push(tot);
     }
     return arr;
-  }, [filteredBookings, dateMode, profitOf, sessionedRefs, bookingGuideCost]);
+  }, [filteredBookings, dateMode, profitOf, sessionedRefs, bookingGuideCost, monthEndBonusCost, bonusApplies]);
 
   // 5. PRODUCT DEEP DIVE
   const [productDrilldown, setProductDrilldown] = useState<string | null>(null);

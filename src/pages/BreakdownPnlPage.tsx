@@ -13,7 +13,7 @@ import {
   attachAdminCosts, uniqueChannelsFrom, PNL_GRANULARITIES, DEFAULT_PNL_STATUSES, PNL_STATUS_BUCKETS,
   type PnlDatePreset, type PnlStatusBucket, type PnlBooking, type PnlAdminCost,
   type PnlGranularity, type PnlDateField, type PeriodRowWithAdmin,
-  type PnlSessionBookingLink, type PnlSessionGuidePay, type PnlSession,
+  type PnlSessionBookingLink, type PnlSessionGuidePay, type PnlSession, type PnlMonthEndBonus,
 } from '@/lib/monthlyPnl';
 
 const fmtE = (v: number) => `€${(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -34,6 +34,9 @@ export default function BreakdownPnlPage() {
   const [sessionBookings, setSessionBookings] = useState<PnlSessionBookingLink[]>([]);
   const [sessionGuides, setSessionGuides] = useState<PnlSessionGuidePay[]>([]);
   const [sessions, setSessions] = useState<PnlSession[]>([]);
+  // Month-end guide bonuses (guide_monthly.bonus) — a guide-pay cost for their month. Read-only;
+  // empty until the bonus migration is run (the select errors and is ignored).
+  const [monthEndBonuses, setMonthEndBonuses] = useState<PnlMonthEndBonus[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -45,7 +48,8 @@ export default function BreakdownPnlPage() {
       supabase.from('session_bookings').select('booking_ref, session_id').eq('user_id', user.id),
       supabase.from('session_guides').select('session_id, status, base_pay, bonus').eq('user_id', user.id),
       supabase.from('tour_sessions').select('id, tour_date').eq('user_id', user.id),
-    ]).then(([bRes, aRes, sbRes, sgRes, sessRes]) => {
+      supabase.from('guide_monthly').select('month, bonus').eq('user_id', user.id).not('bonus', 'is', null),
+    ]).then(([bRes, aRes, sbRes, sgRes, sessRes, bonusRes]) => {
       if (cancelled) return;
       if (bRes.error) console.error('Error fetching bookings:', bRes.error);
       if (aRes.error) console.error('Error fetching admin_costs:', aRes.error);
@@ -69,6 +73,7 @@ export default function BreakdownPnlPage() {
       setSessionBookings(sbRes.data || []);
       setSessionGuides(sgRes.data || []);
       setSessions(sessRes.data || []);
+      setMonthEndBonuses(bonusRes.error ? [] : (bonusRes.data || []));
       setLoading(false);
     });
     return () => { cancelled = true; };
@@ -113,8 +118,8 @@ export default function BreakdownPnlPage() {
   );
 
   const baseRows = useMemo(
-    () => groupBookingsByPeriod(filtered, dateBasis, granularity, { sessionBookings, sessionGuides, sessions }),
-    [filtered, dateBasis, granularity, sessionBookings, sessionGuides, sessions]
+    () => groupBookingsByPeriod(filtered, dateBasis, granularity, { sessionBookings, sessionGuides, sessions, monthEndBonuses }),
+    [filtered, dateBasis, granularity, sessionBookings, sessionGuides, sessions, monthEndBonuses]
   );
 
   // Admin costs are only ever meaningful on the Travel basis (they're a whole-company cost tied

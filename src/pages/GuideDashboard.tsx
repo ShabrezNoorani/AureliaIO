@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Euro, BarChart2, Calendar, FileText, X, Star, Info, CheckCircle2, CalendarRange, Plus, Pencil, Trash2, EyeOff, Eye } from 'lucide-react';
+import { Activity, Euro, BarChart2, Calendar, FileText, X, Star, Info, CheckCircle2, CalendarRange, Plus, Pencil, Trash2, EyeOff, Eye, Wallet, Users, LayoutGrid, Table as TableIcon, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import { localDateStr } from '@/lib/utils';
 import {
   computeGuideOverviewRows, computeAssignmentStats, computePunctualityStats,
@@ -14,6 +14,8 @@ import {
   computeGuideReviewScore, REVIEW_PLATFORMS, isApprovedReview,
   computeCheckedInBookingRecords, countCheckedInBookingsByGuide, getScoreBand,
   ADMIN_SCORE_BAND_LABELS, computeMetricValue, getCombinedScoreBand, GUIDE_SCORE_MIN_BOOKINGS,
+  computeCheckedInBookingCountsForPeriod, filterReviewsByPeriod, countCheckedInBookingsByGuideAndMonth,
+  groupReviewsByMonth,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideReviewRow,
   type AdminDateFilter, type GuidePaymentSummary, type AdminStatusFilter, type GuideReviewScore,
   type ArrivalPunctualityRow, type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
@@ -22,14 +24,17 @@ import {
 import { updateGuideMonthlyPayment, insertGuideMonthlyPayment } from '@/lib/guideRatingActions';
 import { addGuideReview, updateGuideReview, deleteGuideReview, setReviewExcluded, approveGuideReview, rejectGuideReview, type ReviewPayload } from '@/lib/guideReviewActions';
 import PendingReviewsQueue from '@/components/guide/PendingReviewsQueue';
-import GuideStatCards from '@/components/guide/GuideStatCards';
-import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
 import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
+import GuideScorePill from '@/components/guide/GuideScorePill';
+import GuideDetailView, { type ScoreTrendPoint } from '@/components/guide/GuideDetailView';
+import AddBonusModal from '@/components/guide/AddBonusModal';
+import { bonusTotalsByGuide, listMonthEndBonuses, isMissingBonusColumnError } from '@/lib/guideBonus';
+import { downloadGuideInvoice } from '@/lib/guideInvoice';
+import { saveMonthEndBonus } from '@/lib/guideRatingActions';
 
-// recharts (pulled in by GuideEarningsChart) is a large charting library — lazy-loaded here too
-// (same as GuideHome, the guide's own equivalent view) so it never blocks this page's first paint.
-const GuideEarningsChart = lazy(() => import('@/components/guide/GuideEarningsChart'));
+
+const fmtEur = (v: number) => `€${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 interface GuideArrivalRow extends ArrivalPunctualityRow {
   guide_id: string;
@@ -117,20 +122,12 @@ export default function GuideDashboard() {
     [statusFilter]
   );
 
-  // Invoice Modal State
-  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
-  const [selectedGuide, setSelectedGuide] = useState<any | null>(null);
-  const [invoiceDates, setInvoiceDates] = useState({
-    from: localDateStr(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
-    to: localDateStr()
-  });
-
-  // Full-detail panel — opened from the new "All Guides" overview table below. Separate from
-  // selectedGuide/showDetailsModal above (the pre-existing lightweight assignment-table modal),
-  // which stays untouched.
+  // Guide detail page — opened from a card or a table row; replaces the overview while open.
   const [detailGuideId, setDetailGuideId] = useState<string | null>(null);
   const [detailVirtualName, setDetailVirtualName] = useState<string | null>(null);
+  // Overview presentation — same data, same filter either way.
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+  const [showInactive, setShowInactive] = useState(false);
 
   // Reviews modal — Add/Edit form at the top, filterable list (by guide + platform) below, so the
   // owner can see what's already on file and avoid logging the same review twice. One shared
@@ -294,8 +291,10 @@ export default function GuideDashboard() {
       // never reactive to adminFilter (see ADMIN_DEFAULT_FILTER_START's own usage elsewhere).
       // travel_date is the checkin's OWN date — computeCheckedInBookingRecords counts off this
       // column directly, never a joined session's tour_date (see its own doc comment for why).
+      // All checked-in rows (no Oct-1 floor) — the score now follows the selected period, which
+      // can be "All Time" or any older month.
       supabase.from('checkins').select('booking_ref, status, travel_date').eq('user_id', user.id)
-        .eq('status', 'checked_in').gte('travel_date', ADMIN_DEFAULT_FILTER_START),
+        .eq('status', 'checked_in'),
       supabase.from('session_bookings').select('booking_ref, allotted_guide_id, session_id').eq('user_id', user.id),
     ]);
 
@@ -374,76 +373,69 @@ export default function GuideDashboard() {
     return filterMonthlyRowsByStatus(dateScoped, statusFilter);
   }, [monthlyRows, adminFilter, statusFilter]);
 
-  // The score's denominator — checked-in BOOKINGS only, since Oct 1 2026, fixed regardless of
-  // whatever adminFilter/statusFilter the rest of the page is currently showing. Dated directly
-  // off each checkin row's own travel_date (see computeCheckedInBookingRecords' own doc comment).
-  const checkedInBookingRecords = useMemo(
-    () => computeCheckedInBookingRecords(sessionBookingsForGuiding, checkinsForGuiding, ADMIN_DEFAULT_FILTER_START, sessionGuidesForPay),
-    [sessionBookingsForGuiding, checkinsForGuiding, sessionGuidesForPay]
-  );
-  const overallBookingCounts = useMemo(() => countCheckedInBookingsByGuide(checkedInBookingRecords), [checkedInBookingRecords]);
+  // ONE window for EVERY number on this page — tours/earnings (travel_date), reviews
+  // (review_date), checked-in bookings (the checkin's own travel_date), arrivals (arrived_at) and
+  // month-end bonuses (their month). Nothing here uses a different window.
+  const bounds = useMemo(() => getAdminDateFilterBounds(adminFilter), [adminFilter]);
 
-  // Reviews feeding the score are likewise always scoped to Oct 1 2026 onward, never to
-  // adminFilter — the review LIST further down the page (filterable by guide/platform) uses the
-  // full `reviews` array instead, since browsing/avoiding duplicates benefits from seeing
-  // everything on file, not just the score's own fixed window.
-  const reviewsSinceOct1 = useMemo(
-    () => reviews.filter(r => r.review_date >= ADMIN_DEFAULT_FILTER_START),
-    [reviews]
+  // Score denominator for the period — the SAME function the Leaderboard uses for its periods.
+  const periodBookingCounts = useMemo(
+    () => computeCheckedInBookingCountsForPeriod(sessionBookingsForGuiding, checkinsForGuiding, bounds, sessionGuidesForPay),
+    [sessionBookingsForGuiding, checkinsForGuiding, bounds, sessionGuidesForPay]
+  );
+  const periodReviews = useMemo(() => filterReviewsByPeriod(reviews, bounds), [reviews, bounds]);
+  const periodArrivals = useMemo(
+    () => arrivals.filter(a => { const d = (a.arrived_at ?? '').slice(0, 10); return !!d && d >= bounds.start && d <= bounds.end; }),
+    [arrivals, bounds]
   );
 
-  // Headline per-guide score — overall/Oct-1-onward, shown on every card/row/detail panel here.
-  // The ranked, period-filterable Leaderboard now lives on its own page (LeaderboardPage.tsx) —
-  // see that file for the monthly view.
-  const reviewScoreByGuide = useMemo(() => {
-    const out = new Map<string, GuideReviewScore>();
-    guides.forEach(g => {
-      const guideReviews = reviewsSinceOct1.filter(r => r.guide_id === g.id);
-      out.set(g.id, computeGuideReviewScore(guideReviews, overallBookingCounts.get(g.id) || 0));
+  // Month-end bonuses in the window, narrowed by the status filter the same way tours are (a bonus
+  // is paid/pending with its month; it's never "upcoming").
+  const bonusByGuide = useMemo(() => {
+    const out = new Map<string, { total: number; paid: number; pending: number }>();
+    bonusTotalsByGuide(monthlyRows, bounds).forEach((t, guideId) => {
+      const shown = statusFilter === 'upcoming' ? { total: 0, paid: 0, pending: 0 }
+        : statusFilter === 'paid' ? { total: t.paid, paid: t.paid, pending: 0 }
+        : statusFilter === 'pending' ? { total: t.pending, paid: 0, pending: t.pending }
+        : t;
+      out.set(guideId, shown);
     });
     return out;
-  }, [guides, reviewsSinceOct1, overallBookingCounts]);
+  }, [monthlyRows, bounds, statusFilter]);
 
-  // Headline COMBINED score (review 65% + punctuality 35%), same Oct-1-onward window as the
-  // review score above. Computed by computeMetricValue('combined', …) — the exact function the
-  // Leaderboard and the guide's own dashboard use — so all three can never disagree. Same
-  // GUIDE_SCORE_MIN_BOOKINGS gate as the Leaderboard: under 3 checked-in bookings shows "—".
-  const combinedScoreByGuide = useMemo(() => {
-    const out = new Map<string, number | null>();
+  // Per-guide score for the period. Combined comes from computeMetricValue('combined', …) — the
+  // exact shared function the Leaderboard and the guide's own dashboard use — with the same 3+
+  // checked-in-bookings gate ("—" below it).
+  const scoreByGuide = useMemo(() => {
+    const out = new Map<string, { reviewScore: number | null; reviewCount: number; bookings: number; combined: number | null; onTimeCount: number; countedArrivals: number; reviews: GuideReviewRow[] }>();
     guides.forEach(g => {
-      const bookings = overallBookingCounts.get(g.id) || 0;
-      if (bookings < GUIDE_SCORE_MIN_BOOKINGS) { out.set(g.id, null); return; }
-      const guideReviews = reviewsSinceOct1.filter(r => r.guide_id === g.id);
-      const guideArrivals = arrivals.filter(a => a.guide_id === g.id && (a.arrived_at ?? '').slice(0, 10) >= ADMIN_DEFAULT_FILTER_START);
-      out.set(g.id, computeMetricValue('combined', guideReviews, bookings, 0, guideArrivals));
+      const guideReviews = periodReviews.filter(r => r.guide_id === g.id);
+      const guideArrivals = periodArrivals.filter(a => a.guide_id === g.id);
+      const bookings = periodBookingCounts.get(g.id) || 0;
+      const rs = computeGuideReviewScore(guideReviews, bookings);
+      const punctuality = computePunctualityStats(guideArrivals);
+      out.set(g.id, {
+        reviewScore: rs.score,
+        reviewCount: rs.reviewCount,
+        bookings,
+        combined: bookings >= GUIDE_SCORE_MIN_BOOKINGS ? computeMetricValue('combined', guideReviews, bookings, 0, guideArrivals) : null,
+        onTimeCount: punctuality.onTimeCount,
+        countedArrivals: punctuality.countedArrivals,
+        reviews: guideReviews,
+      });
     });
     return out;
-  }, [guides, reviewsSinceOct1, overallBookingCounts, arrivals]);
+  }, [guides, periodReviews, periodArrivals, periodBookingCounts]);
 
-  // "All Guides" overview now respects both the selected period AND status (per-guide
-  // cards/totals strip/table all agree, all built from the same narrowed arrays) — pass
-  // adminFilter.mode === 'allTime' + statusFilter === 'all' to see the old lifetime-only view,
-  // including every "Unlinked" row regardless of date. The review score columns are the one
-  // exception — always Oct-1-onward, per computeGuideOverviewRows' own inputs here.
-  const overviewRows = useMemo(
-    () => computeGuideOverviewRows(guides, statusFilteredAssignments, reviewsSinceOct1, overallBookingCounts, filteredMonthlyRowsForOverview, todayStr),
-    [guides, statusFilteredAssignments, reviewsSinceOct1, overallBookingCounts, filteredMonthlyRowsForOverview, todayStr]
-  );
-  // Drops a guide with literally nothing left after the status narrowing above, instead of
-  // rendering an empty €0 row — see matchesAdminStatusFilter's own doc comment.
-  const visibleOverviewRows = useMemo(
-    () => overviewRows.filter(row => matchesAdminStatusFilter(row, statusFilter)),
-    [overviewRows, statusFilter]
-  );
-  const unattributedAssignmentCount = useMemo(
-    () => assignments.filter(a => !a.guide_id).length,
-    [assignments]
+  // Name-only imported monthly history (no guide profile) in the window — table view only.
+  const virtualOverviewRows = useMemo(
+    () => computeGuideOverviewRows([], [], [], new Map(), filteredMonthlyRowsForOverview, todayStr)
+      .filter(row => matchesAdminStatusFilter(row, statusFilter)),
+    [filteredMonthlyRowsForOverview, todayStr, statusFilter]
   );
 
-  // "Paid through [month]" + last payment date, per guide — always all-time regardless of the
-  // period filter (see computeGuidePaymentSummary's own doc comment: this is an "are we caught
-  // up overall" question, not something that should vanish just because a single month is being
-  // viewed). Grouped once here and looked up per guide below.
+  // "Paid through [month]" + last payment date, per guide — always all-time (an "are we caught
+  // up overall" question, see computeGuidePaymentSummary).
   const paymentSummaryByGuide = useMemo(() => {
     const byGuide = new Map<string, GuideMonthlyRow[]>();
     monthlyRows.forEach(r => {
@@ -458,8 +450,6 @@ export default function GuideDashboard() {
   }, [monthlyRows]);
 
   const detailGuide = detailGuideId ? guides.find(g => g.id === detailGuideId) || null : null;
-  // Date- AND status-scoped (same statusFilteredAssignments every other section uses) — the
-  // detail view's earned/paid/pending/tours (via GuideStatCards below) respects both filters too.
   const detailGuideAssignments = useMemo(
     () => detailGuideId ? statusFilteredAssignments.filter(a => a.guide_id === detailGuideId) : [],
     [statusFilteredAssignments, detailGuideId]
@@ -467,33 +457,33 @@ export default function GuideDashboard() {
   const detailGuidePaymentSummary = detailGuideId
     ? (paymentSummaryByGuide.get(detailGuideId) || { paidThroughMonth: null, lastPaymentDate: null })
     : { paidThroughMonth: null, lastPaymentDate: null };
-  // Unified per-month view — real (imported) guide_monthly rows plus a synthetic row for any
-  // month whose ONLY earnings are session-based (no guide_monthly row yet) — see
-  // buildUnifiedMonthlyRows in lib/guidePerformance.ts.
+  // Payment history: real guide_monthly rows + synthetic session-only months, scoped to the
+  // window like everything else (see buildUnifiedMonthlyRows).
   const detailGuideMonthly: UnifiedMonthlyRow[] = useMemo(() => {
     if (!detailGuideId) return [];
     const mySessionRows = sessionAssignmentRows.filter(a => a.guide_id === detailGuideId);
-    return buildUnifiedMonthlyRows(detailGuideId, detailGuide?.name || '', monthlyRows, mySessionRows);
-  }, [detailGuideId, detailGuide, monthlyRows, sessionAssignmentRows]);
-  const detailGuideStats = useMemo(
-    () => computeAssignmentStats(detailGuideAssignments, todayStr),
-    [detailGuideAssignments, todayStr]
+    return filterMonthlyRowsByDateRange(
+      buildUnifiedMonthlyRows(detailGuideId, detailGuide?.name || '', monthlyRows, mySessionRows), bounds);
+  }, [detailGuideId, detailGuide, monthlyRows, sessionAssignmentRows, bounds]);
+  const detailGuideBonuses = useMemo(
+    () => detailGuideId ? listMonthEndBonuses(monthlyRows, { guideId: detailGuideId, bounds }) : [],
+    [monthlyRows, detailGuideId, bounds]
   );
-  const detailGuideMonthlyEarnings = useMemo(
-    () => groupMonthlyEarnings(detailGuideAssignments),
-    [detailGuideAssignments]
-  );
-  const detailGuideArrivals = useMemo(
-    () => detailGuideId ? arrivals.filter(a => a.guide_id === detailGuideId) : [],
-    [arrivals, detailGuideId]
-  );
-  // Raw "On-time X/Y" (all-time) next to the scores below — the same arrival-vs-checkin_time count
-  // the guide's own dashboard shows (GuideOwnScoreCard). The Combined score uses the Oct-1-onward
-  // slice of these arrivals (see combinedScoreByGuide).
-  const detailGuidePunctuality = useMemo(
-    () => computePunctualityStats(detailGuideArrivals),
-    [detailGuideArrivals]
-  );
+  // Review score per month inside the window (same per-booking formula, month by month).
+  const detailScoreTrend: ScoreTrendPoint[] = useMemo(() => {
+    if (!detailGuideId) return [];
+    const records = computeCheckedInBookingRecords(sessionBookingsForGuiding, checkinsForGuiding, bounds.start, sessionGuidesForPay)
+      .filter(r => r.guide_id === detailGuideId && r.month <= bounds.end.slice(0, 7));
+    const bookingsByMonth = countCheckedInBookingsByGuideAndMonth(records).get(detailGuideId) || new Map<string, number>();
+    const reviewsByMonth = groupReviewsByMonth(periodReviews.filter(r => r.guide_id === detailGuideId));
+    const months = Array.from(new Set([...bookingsByMonth.keys(), ...reviewsByMonth.keys()])).sort().slice(-12);
+    return months.map(month => {
+      const monthReviews = reviewsByMonth.get(month) || [];
+      const rs = computeGuideReviewScore(monthReviews, bookingsByMonth.get(month) || 0);
+      const [y, m] = month.split('-').map(Number);
+      return { month, label: new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short' }), score: rs.score, reviews: rs.reviewCount };
+    });
+  }, [detailGuideId, sessionBookingsForGuiding, checkinsForGuiding, sessionGuidesForPay, bounds, periodReviews]);
 
   const virtualMonthlyByName = useMemo(() => groupOrphanedMonthlyByName(monthlyRows), [monthlyRows]);
   const detailVirtualRows = detailVirtualName ? (virtualMonthlyByName.get(detailVirtualName) || []) : [];
@@ -536,61 +526,52 @@ export default function GuideDashboard() {
     await refreshMonthly();
   };
 
-  // computeAssignmentStats — the SAME function the guide's own dashboard and the "All Guides"
-  // table below both use — so paid/pending here is derived identically everywhere, just scoped to
-  // this guide's rows within the selected period.
-  // Built from statusFilteredAssignments (date AND status already narrowed) — this is what makes
-  // the top totals strip below (summed from this same array) follow the status filter instead of
-  // staying fixed: selecting "Paid" means every guide's own Tours/Earnings tiles AND the header
-  // totals both become the paid-only subset, by construction, not by a separate patch.
+  // Per-guide figures for the period: tours/pay from the date+status-narrowed tour list
+  // (computeAssignmentStats, same as everywhere), plus that guide's month-end bonuses (never a
+  // tour), plus the period score. Earned = tours + bonus; paid/pending split the same way.
   const guideStats = useMemo(() => {
     return guides.map(g => {
       const myAsns = statusFilteredAssignments.filter(a => a.guide_id === g.id);
       const stats = computeAssignmentStats(myAsns, todayStr);
+      const bonus = bonusByGuide.get(g.id) || { total: 0, paid: 0, pending: 0 };
+      const score = scoreByGuide.get(g.id)!;
       const payment = paymentSummaryByGuide.get(g.id) || { paidThroughMonth: null, lastPaymentDate: null };
       return {
-        ...g, tours: myAsns.length, earnings: stats.totalEarned, paid: stats.paidAmount, pending: stats.pendingAmount,
-        toursDone: stats.toursDone, toursUpcoming: stats.toursUpcoming, payment,
+        ...g,
+        tours: myAsns.length,
+        tourEarnings: stats.totalEarned,
+        earnings: stats.totalEarned + bonus.total,
+        paid: stats.paidAmount + bonus.paid,
+        pending: stats.pendingAmount + bonus.pending,
+        bonus: bonus.total,
+        toursDone: stats.toursDone,
+        toursUpcoming: stats.toursUpcoming,
+        score,
+        payment,
+        // Activity in the period: at least one tour, a review, or a bonus.
+        active: myAsns.length > 0 || score.reviews.length > 0 || bonus.total > 0,
       };
-    });
-  }, [guides, statusFilteredAssignments, todayStr, paymentSummaryByGuide]);
+    }).sort((a, b) => b.earnings - a.earnings || a.name.localeCompare(b.name));
+  }, [guides, statusFilteredAssignments, todayStr, bonusByGuide, scoreByGuide, paymentSummaryByGuide]);
 
-  // Drops a guide with nothing left after the status narrowing above, instead of rendering an
-  // empty €0 card — same matchesAdminStatusFilter predicate as visibleOverviewRows, so the cards
-  // grid and the "All Guides" table can never disagree on which guides are showing.
-  const visibleGuideStats = useMemo(
-    () => guideStats.filter(g => matchesAdminStatusFilter(
-      { toursDone: g.toursDone, toursUpcoming: g.toursUpcoming, paidAmount: g.paid, pendingAmount: g.pending },
-      statusFilter
-    )),
-    [guideStats, statusFilter]
-  );
+  const activeGuideStats = useMemo(() => guideStats.filter(g => g.active), [guideStats]);
+  const inactiveGuideStats = useMemo(() => guideStats.filter(g => !g.active), [guideStats]);
 
-  // Header totals are the SUM of the per-guide cards (not an independently-recomputed count over
-  // filteredAssignments) — this is what guarantees "Total Tours == sum of every guide card's
-  // tours" by construction, for every preset, forever, rather than merely by the two happening to
-  // use the same filtered array today. A row with no guide_id (unattributed imported history)
-  // can't belong to any guide's card, so it correctly can't count toward "tours performed by
-  // guides" here either — it's surfaced separately via unattributedInRangeCount below instead of
-  // silently vanishing.
-  // Summed from guideStats, which is itself built from statusFilteredAssignments — so these
-  // follow BOTH the date filter and the secondary status filter automatically, with no separate
-  // patch needed (requirement: top totals must update with the status filter, not stay fixed).
+  // Header totals are the SUM of the per-guide figures, so they always equal the cards. A tour
+  // with no guide_id belongs to no card and is reported in the footnote instead.
   const totalTours = useMemo(() => guideStats.reduce((sum, g) => sum + g.tours, 0), [guideStats]);
+  const totalTourEarnings = useMemo(() => guideStats.reduce((sum, g) => sum + g.tourEarnings, 0), [guideStats]);
   const totalEarnings = useMemo(() => guideStats.reduce((sum, g) => sum + g.earnings, 0), [guideStats]);
+  const totalPaid = useMemo(() => guideStats.reduce((sum, g) => sum + g.paid, 0), [guideStats]);
+  const totalPending = useMemo(() => guideStats.reduce((sum, g) => sum + g.pending, 0), [guideStats]);
   const unattributedInRangeCount = useMemo(
     () => statusFilteredAssignments.filter(a => !a.guide_id).length,
     [statusFilteredAssignments]
   );
 
-  // Self-check (dev only): recompute Total Tours independently — by filtering+counting
-  // guide-attributed rows directly out of the SAME statusFilteredAssignments array, rather than
-  // via guideStats' per-guide reduce — and assert it still matches. Passes trivially today since
-  // totalTours is defined as that same sum, but it's a real regression guard: it would fire the
-  // moment a future edit makes guideStats and totalTours diverge again (e.g. reintroducing an
-  // independently-filtered header count), which is exactly the class of bug this diff fixes.
+  // Dev-only regression guard: header Total Tours must equal the guide-attributed rows directly.
   if (import.meta.env.DEV) {
-    const independentTotal = statusFilteredAssignments.filter(a => !!a.guide_id).length;
+    const independentTotal = statusFilteredAssignments.filter(a => !!a.guide_id && guides.some(g => g.id === a.guide_id)).length;
     console.assert(
       independentTotal === totalTours,
       '[GuideDashboard] Total Tours header does not equal the sum of per-guide cards',
@@ -598,32 +579,56 @@ export default function GuideDashboard() {
     );
   }
 
-  const handleDownloadInvoice = async () => {
-    if (!selectedGuide) return;
-    // allAssignments (imported + unified session-based pay), not the raw imported-only
-    // `assignments` — otherwise a guide's session-based tours/pay would silently never appear on
-    // their invoice even though they're already counted in every on-screen total.
-    const guideAsns = allAssignments.filter(a =>
-      a.guide_id === selectedGuide.id &&
-      (a.travel_date || '') >= invoiceDates.from &&
-      (a.travel_date || '') <= invoiceDates.to
-    );
-    
-    if (guideAsns.length === 0) {
-      alert("No assignments found for this guide in the selected period.");
-      return;
-    }
+  // Table view sorting.
+  type SortKey = 'name' | 'toursDone' | 'toursUpcoming' | 'earnings' | 'paid' | 'pending' | 'score';
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'earnings', dir: 'desc' });
+  const sortedTableRows = useMemo(() => {
+    const rows = showInactive ? guideStats : activeGuideStats;
+    const val = (g: typeof guideStats[number]) => sort.key === 'name' ? g.name.toLowerCase()
+      : sort.key === 'score' ? (g.score.combined ?? -1) : g[sort.key];
+    return [...rows].sort((a, b) => {
+      const va = val(a), vb = val(b);
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+      return sort.dir === 'asc' ? cmp : -cmp;
+    });
+  }, [guideStats, activeGuideStats, showInactive, sort]);
+  const toggleSort = (key: SortKey) => setSort(prev => prev.key === key
+    ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+    : { key, dir: key === 'name' ? 'asc' : 'desc' });
 
-    // jsPDF (+ jspdf-autotable) is a heavy dependency only ever needed for this one action —
-    // loaded on demand instead of bundled into the app's initial download.
-    const { generateGuideInvoice } = await import('@/lib/generateInvoice');
-    generateGuideInvoice(
-      selectedGuide,
-      guideAsns,
-      profile?.company_name || 'AURELIA Suite',
-      invoiceDates
-    );
-    setShowInvoiceModal(false);
+  // Invoice PDF for the selected period — tours (date-filtered, all statuses) + month-end bonuses.
+  const downloadInvoiceFor = async (g: any) => {
+    const ok = await downloadGuideInvoice({
+      guide: g,
+      assignments: filteredAssignments,
+      monthlyRows,
+      bounds,
+      periodLabel: adminFilterLabel,
+      companyName: profile?.company_name,
+    });
+    if (!ok) alert(`Nothing to invoice for ${g.name} in ${adminFilterLabel}.`);
+  };
+
+  // Month-end bonus (owner-only write to that guide's guide_monthly row for that month).
+  const [bonusModal, setBonusModal] = useState<{ guideId: string; month: string } | null>(null);
+  const monthlyRowFor = (guideId: string, month: string) => monthlyRows.find(m => m.guide_id === guideId && m.month === month) || null;
+  const defaultBonusMonth = (adminFilter.mode === 'month' || adminFilter.mode === 'thisMonth' || adminFilter.mode === 'lastMonth')
+    ? bounds.start.slice(0, 7) : todayStr.slice(0, 7);
+  const handleSaveBonus = async (month: string, amount: number | null, note: string | null): Promise<string | null> => {
+    if (!user || !bonusModal) return 'Not signed in';
+    const guide = guides.find(g => g.id === bonusModal.guideId);
+    const existing = monthlyRowFor(bonusModal.guideId, month);
+    const { error } = await saveMonthEndBonus(supabase, user.id, {
+      guideId: bonusModal.guideId, guideName: guide?.name || 'Guide', month, amount, note,
+      existing: existing ? { id: existing.id, bonus: existing.bonus, bonus_note: existing.bonus_note } : null,
+    });
+    if (error) {
+      return isMissingBonusColumnError({ message: error })
+        ? 'The bonus columns are not in the database yet — run the guide_monthly bonus migration in Supabase first.'
+        : error;
+    }
+    await refreshMonthly();
+    return null;
   };
 
   return (
@@ -747,358 +752,218 @@ export default function GuideDashboard() {
             <div className="text-7xl mb-6">📊</div>
             <h3 className="text-2xl font-extrabold mb-2">No guide data yet</h3>
             <p className="text-muted-foreground mb-8 max-w-sm">Add guides first to see performance</p>
-            <button 
+            <button
               onClick={() => navigate('/app/guides')}
               className="aurelia-gold-btn px-8 py-3 font-bold flex items-center gap-2"
             >
               Go to Guides <ArrowRight size={18} />
             </button>
           </div>
+        ) : detailGuide ? (
+          (() => {
+            const g = guideStats.find(x => x.id === detailGuide.id)!;
+            return (
+              <GuideDetailView
+                guide={detailGuide}
+                periodLabel={`${adminFilterLabel}${statusFilter !== 'all' ? ` · ${statusFilterLabel}` : ''}`}
+                todayStr={todayStr}
+                stats={{
+                  toursDone: g.toursDone, toursUpcoming: g.toursUpcoming, earned: g.earnings, paid: g.paid, pending: g.pending,
+                  bonus: g.bonus, combined: g.score.combined, reviewScore: g.score.reviewScore, reviewCount: g.score.reviewCount,
+                  bookings: g.score.bookings, onTimeCount: g.score.onTimeCount, countedArrivals: g.score.countedArrivals,
+                }}
+                assignments={detailGuideAssignments}
+                reviews={g.score.reviews}
+                scoreTrend={detailScoreTrend}
+                monthlyRows={detailGuideMonthly}
+                bonuses={detailGuideBonuses}
+                paymentSummary={detailGuidePaymentSummary}
+                onBack={closeDetail}
+                onAddBonus={() => setBonusModal({ guideId: detailGuide.id, month: defaultBonusMonth })}
+                onEditBonus={(month) => setBonusModal({ guideId: detailGuide.id, month })}
+                onDownloadInvoice={() => downloadInvoiceFor(detailGuide)}
+                onManageReviews={() => openReviewsModal(detailGuide.id)}
+                onUpdatePayment={handleUpdatePayment}
+              />
+            );
+          })()
         ) : (
-          <div className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="aurelia-card p-6 border-l-[3px] border-l-blue-500">
-                <div className="flex items-center gap-2.5 text-muted-foreground mb-2.5">
-                  <Activity size={16} />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide">Total Tours</span>
-                </div>
-                <div className="text-3xl font-bold tracking-tight">{totalTours}</div>
-              </div>
-              <div className="aurelia-card p-6 border-l-[3px] border-l-gold">
-                <div className="flex items-center gap-2.5 text-muted-foreground mb-2.5">
-                  <Euro size={16} />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide">Total Earnings</span>
-                </div>
-                <div className="text-3xl font-bold tracking-tight text-gold">€{totalEarnings.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-              </div>
-              <div className="aurelia-card p-6 border-l-[3px] border-l-purple-500">
-                <div className="flex items-center gap-2.5 text-muted-foreground mb-2.5">
-                  <BarChart2 size={16} />
-                  <span className="text-[11px] font-semibold uppercase tracking-wide">Avg / Tour</span>
-                </div>
-                <div className="text-3xl font-bold tracking-tight text-purple-700">€{totalTours > 0 ? (totalEarnings / totalTours).toFixed(2) : '0.00'}</div>
-              </div>
-            </div>
-
-            {unattributedInRangeCount > 0 && (
-              <p className="text-[11px] text-muted-foreground -mt-4 flex items-center gap-1.5">
-                <Info size={12} className="shrink-0" />
-                {unattributedInRangeCount} additional tour{unattributedInRangeCount !== 1 ? 's' : ''} in this period {unattributedInRangeCount !== 1 ? "have" : "has"} no guide on file, so {unattributedInRangeCount !== 1 ? "they aren't" : "it isn't"} counted above or on any guide's card.
-              </p>
-            )}
-
-            {statusFilter !== 'all' && visibleGuideStats.length === 0 && (
-              <div className="flex flex-col items-center justify-center p-12 text-center border border-dashed border-border rounded-2xl bg-muted/40">
-                <p className="text-sm font-semibold text-foreground">No guides match "{statusFilterLabel}" in {adminFilterLabel}</p>
-                <p className="text-xs text-muted-foreground mt-1">Try a different status, or widen the date range.</p>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {visibleGuideStats.map(g => (
-                <div key={g.id} className="aurelia-card p-6 border border-border hover:border-gold/30 hover:shadow-[var(--card-shadow-hover)] transition-all group">
-                  <div className="flex items-center gap-4 mb-5">
-                    <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-xl border border-border group-hover:border-gold/50 transition-colors">
-                      👤
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-bold text-base text-foreground group-hover:text-gold transition-colors truncate">{g.name}</div>
-                      <div className="text-[11px] font-mono text-muted-foreground uppercase tracking-widest">{g.guide_number}</div>
-                    </div>
+          <div className="space-y-6">
+            {/* SUMMARY STRIP */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              {[
+                { label: 'Total tours', hint: 'tours worked', value: String(totalTours), icon: Activity, cls: '' },
+                { label: 'Total earnings', hint: 'earned, incl. bonuses', value: fmtEur(totalEarnings), icon: Euro, cls: 'text-gold' },
+                { label: 'Avg / tour', hint: 'tour pay only', value: fmtEur(totalTours > 0 ? totalTourEarnings / totalTours : 0), icon: BarChart2, cls: '' },
+                { label: 'You owe (pending)', hint: 'still to pay out', value: fmtEur(totalPending), icon: Wallet, cls: 'text-amber-700' },
+                { label: 'Paid', hint: 'already paid out', value: fmtEur(totalPaid), icon: CheckCircle2, cls: 'text-green-700' },
+                { label: 'Active guides', hint: 'with activity this period', value: String(activeGuideStats.length), icon: Users, cls: '' },
+              ].map(k => (
+                <div key={k.label} className={`aurelia-card p-4 ${k.label.startsWith('You owe') ? 'border-l-[3px] border-l-amber-500' : ''}`}>
+                  <div className="flex items-center gap-1.5 text-muted-foreground mb-1.5">
+                    <k.icon size={13} />
+                    <span className="text-[10px] font-bold uppercase tracking-wide">{k.label}</span>
                   </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-muted p-3 rounded-xl border border-border">
-                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Tours</div>
-                      <div className="text-xl font-bold">{g.tours}</div>
-                    </div>
-                    <div className="bg-muted p-3 rounded-xl border border-border">
-                      <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Earnings</div>
-                      <div className="text-xl font-bold text-gold">€{g.earnings.toLocaleString()}</div>
-                    </div>
-                    <div className="bg-green-600/8 p-3 rounded-xl border border-green-600/15">
-                      <div className="text-[10px] font-bold text-green-700/80 uppercase tracking-widest mb-1">Paid</div>
-                      <div className="text-base font-bold text-green-700">€{g.paid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                    </div>
-                    <div className="bg-amber-600/8 p-3 rounded-xl border border-amber-600/15">
-                      <div className="text-[10px] font-bold text-amber-700/80 uppercase tracking-widest mb-1">Pending</div>
-                      <div className="text-base font-bold text-amber-700">€{g.pending.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 mt-4 text-[11px] text-muted-foreground">
-                    <CheckCircle2 size={12} className="shrink-0 text-muted-foreground/60" />
-                    {g.payment.paidThroughMonth
-                      ? <span>Paid through <span className="font-semibold text-foreground">{g.payment.paidThroughMonth}</span>{g.payment.lastPaymentDate ? ` · last paid ${g.payment.lastPaymentDate}` : ''}</span>
-                      : <span>No payments recorded yet</span>
-                    }
-                  </div>
-
-                  {(() => {
-                    const rs = reviewScoreByGuide.get(g.id);
-                    const band = getScoreBand(rs?.score ?? null);
-                    return (
-                      <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-muted-foreground">
-                        <Star size={12} className="shrink-0 text-gold" />
-                        <span>
-                          Score{' '}
-                          <span className={`font-semibold ${rs?.score != null ? (rs.score >= 0 ? 'text-green-700' : 'text-red-600') : 'text-foreground'}`}>
-                            {rs?.score != null ? `${rs.score >= 0 ? '+' : ''}${rs.score.toFixed(2)}` : '—'}
-                          </span>
-                          {' · '}{rs?.reviewCount ?? 0} review{(rs?.reviewCount ?? 0) !== 1 ? 's' : ''} / {rs?.bookingsGuided ?? 0} bookings
-                          {band && <span className="text-muted-foreground"> · {ADMIN_SCORE_BAND_LABELS[band]}</span>}
-                          {' · '}Combined{' '}
-                          <span className="font-semibold text-foreground">{formatCombinedScore(combinedScoreByGuide.get(g.id))}</span>
-                        </span>
-                        <ScoreInfoTooltip />
-                      </div>
-                    );
-                  })()}
-
-                  <div className="grid grid-cols-3 gap-2.5 mt-5">
-                    <button
-                      onClick={() => openReviewsModal(g.id)}
-                      className="py-3 bg-muted border border-border rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-muted/70 hover:border-gold/30 transition-all flex items-center justify-center gap-1.5 group/btn"
-                    >
-                      <Star size={13} className="text-muted-foreground group-hover/btn:text-gold" />
-                      Reviews
-                    </button>
-                    <button
-                      onClick={() => { setSelectedGuide(g); setShowDetailsModal(true); }}
-                      className="py-3 bg-muted border border-border rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-muted/70 hover:border-gold/30 transition-all flex items-center justify-center gap-2 group/btn"
-                    >
-                      <Activity size={14} className="text-muted-foreground group-hover/btn:text-gold" />
-                      Details
-                    </button>
-                    <button
-                      onClick={() => { setSelectedGuide(g); setShowInvoiceModal(true); }}
-                      className="py-3 bg-muted border border-border rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-muted/70 hover:border-gold/30 transition-all flex items-center justify-center gap-2 group/btn"
-                    >
-                      <FileText size={14} className="text-muted-foreground group-hover/btn:text-gold" />
-                      Invoice
-                    </button>
-                  </div>
+                  <div className={`text-2xl font-bold tracking-tight tabular-nums ${k.cls}`}>{k.value}</div>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{k.hint}</p>
                 </div>
               ))}
             </div>
 
-            {/* ALL GUIDES — PERIOD-SCOPED OVERVIEW */}
-            <div className="pt-4 border-t border-border">
-              <div className="flex items-center justify-between mb-1">
-                <h2 className="text-xl font-bold tracking-tight">All Guides — {adminFilterLabel}</h2>
-              </div>
-              <p className="text-xs text-muted-foreground mb-4">
-                Totals for the selected period{statusFilter !== 'all' ? ` · ${statusFilterLabel} only` : ''}. "Unlinked" imported history only appears when its month falls inside the selected window — switch to "All Time" above to see every tour on record, including older unlinked rows. Score/Reviews are always since Oct 1, 2026 — see the Leaderboard page for a monthly breakdown.
+            {(unattributedInRangeCount > 0 || virtualOverviewRows.length > 0) && (
+              <p className="text-[11px] text-muted-foreground flex items-start gap-1.5 -mt-2">
+                <Info size={12} className="shrink-0 mt-0.5" />
+                <span>
+                  Not counted on any guide:{' '}
+                  {[
+                    unattributedInRangeCount > 0 ? `${unattributedInRangeCount} tour${unattributedInRangeCount !== 1 ? 's' : ''} with no guide assigned` : null,
+                    virtualOverviewRows.length > 0 ? `imported invoices for ${virtualOverviewRows.length} name${virtualOverviewRows.length !== 1 ? 's' : ''} with no guide profile (see Table view)` : null,
+                  ].filter(Boolean).join(' · ')}.
+                </span>
               </p>
-              {visibleOverviewRows.length === 0 ? (
-                <div className="aurelia-card border border-dashed border-border p-10 text-center">
-                  <p className="text-sm text-muted-foreground">No guides match the current date and status filters.</p>
-                </div>
-              ) : (
+            )}
+
+            {/* VIEW TOGGLE */}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <h2 className="text-lg font-bold tracking-tight">Guides · {adminFilterLabel}</h2>
+              <div className="flex gap-1 bg-muted/60 p-1 rounded-xl border border-border">
+                {([['cards', 'Cards', LayoutGrid], ['table', 'Table', TableIcon]] as const).map(([mode, label, Icon]) => (
+                  <button key={mode} onClick={() => setViewMode(mode)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wide ${viewMode === mode ? 'bg-card text-gold shadow-[var(--card-shadow)]' : 'text-muted-foreground'}`}>
+                    <Icon size={13} /> {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {activeGuideStats.length === 0 && !showInactive && (
+              <div className="flex flex-col items-center justify-center p-12 text-center border border-dashed border-border rounded-2xl bg-muted/40">
+                <p className="text-sm font-semibold text-foreground">No guide activity in {adminFilterLabel}{statusFilter !== 'all' ? ` (${statusFilterLabel})` : ''}</p>
+                <p className="text-xs text-muted-foreground mt-1">Try a wider period or a different status.</p>
+              </div>
+            )}
+
+            {viewMode === 'cards' ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {(showInactive ? guideStats : activeGuideStats).map(g => {
+                  const paidPct = g.earnings > 0 ? Math.min(100, (g.paid / g.earnings) * 100) : 0;
+                  return (
+                    <div key={g.id} className={`aurelia-card p-5 border border-border hover:border-gold/30 hover:shadow-[var(--card-shadow-hover)] transition-all flex flex-col ${g.active ? '' : 'opacity-70'}`}>
+                      <button onClick={() => setDetailGuideId(g.id)} className="text-left flex-1">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="font-bold text-base text-foreground break-words leading-snug">{g.name}</div>
+                            {g.guide_number && <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mt-0.5">{g.guide_number}</div>}
+                          </div>
+                          <GuideScorePill combined={g.score.combined} reviewCount={g.score.reviewCount} />
+                        </div>
+                        <div className="mt-4">
+                          <div className="text-3xl font-bold tracking-tight text-gold tabular-nums">{fmtEur(g.earnings)}</div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {g.toursDone} tour{g.toursDone !== 1 ? 's' : ''} done{g.toursUpcoming > 0 ? ` · ${g.toursUpcoming} upcoming` : ''}
+                            {g.bonus > 0 ? ` · incl. ${fmtEur(g.bonus)} bonus` : ''}
+                          </div>
+                        </div>
+                        <div className="mt-4">
+                          <div className="h-2 rounded-full bg-amber-500/25 overflow-hidden">
+                            <div className="h-full bg-green-600" style={{ width: `${paidPct}%` }} />
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-1.5">
+                            <span className="text-green-700 font-semibold">{fmtEur(g.paid)} paid</span> · <span className="text-amber-700 font-semibold">{fmtEur(g.pending)} pending</span>
+                          </p>
+                        </div>
+                      </button>
+                      <div className="grid grid-cols-3 gap-2 mt-5">
+                        {[
+                          { label: 'Reviews', icon: Star, onClick: () => openReviewsModal(g.id) },
+                          { label: 'Details', icon: Activity, onClick: () => setDetailGuideId(g.id) },
+                          { label: 'Invoice', icon: FileText, onClick: () => downloadInvoiceFor(g) },
+                        ].map(btn => (
+                          <button key={btn.label} onClick={btn.onClick}
+                            className="py-2.5 bg-muted border border-border rounded-xl text-[10px] font-bold uppercase tracking-widest hover:border-gold/30 transition-all flex items-center justify-center gap-1.5">
+                            <btn.icon size={13} className="text-muted-foreground" /> {btn.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
               <div className="aurelia-card border border-border overflow-x-auto">
-                <table className="w-full text-left text-sm min-w-[920px]">
-                  <thead className="bg-muted text-xs text-muted-foreground uppercase tracking-widest font-bold">
+                <table className="w-full text-left text-sm min-w-[820px]">
+                  <thead className="bg-muted text-[11px] text-muted-foreground uppercase tracking-widest font-bold">
                     <tr>
-                      <th className="px-5 py-3">Guide</th>
-                      <th className="px-5 py-3 text-right">Done</th>
-                      <th className="px-5 py-3 text-right">Upcoming</th>
-                      <th className="px-5 py-3 text-right">Earned</th>
-                      <th className="px-5 py-3 text-right">Paid</th>
-                      <th className="px-5 py-3 text-right">Pending</th>
-                      <th className="px-5 py-3 text-right">
-                        <span className="inline-flex items-center gap-1">
-                          Score <ScoreInfoTooltip />
-                        </span>
-                      </th>
-                      <th className="px-5 py-3 text-right">Combined</th>
-                      <th className="px-5 py-3 text-right">Reviews</th>
+                      {([
+                        ['name', 'Guide', 'text-left'], ['toursDone', 'Tours done', 'text-right'], ['toursUpcoming', 'Upcoming', 'text-right'],
+                        ['earnings', 'Earned', 'text-right'], ['paid', 'Paid', 'text-right'], ['pending', 'Pending', 'text-right'], ['score', 'Score', 'text-right'],
+                      ] as const).map(([key, label, align]) => (
+                        <th key={key} className={`px-4 py-3 ${align}`}>
+                          <button onClick={() => toggleSort(key)} className={`inline-flex items-center gap-1 uppercase tracking-widest hover:text-foreground ${sort.key === key ? 'text-foreground' : ''}`}>
+                            {label}
+                            {sort.key === key ? (sort.dir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : <ChevronsUpDown size={11} className="opacity-40" />}
+                          </button>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {visibleOverviewRows.map(row => {
-                      const band = getScoreBand(row.reviewScore);
-                      return (
-                      <tr
-                        key={row.id}
-                        onClick={() => row.kind === 'real' ? setDetailGuideId(row.id) : setDetailVirtualName(row.name)}
-                        className="hover:bg-muted transition-colors cursor-pointer"
-                      >
-                        <td className="px-5 py-3">
+                    {sortedTableRows.map(g => (
+                      <tr key={g.id} onClick={() => setDetailGuideId(g.id)} className={`hover:bg-muted transition-colors cursor-pointer ${g.active ? '' : 'opacity-60'}`}>
+                        <td className="px-4 py-3">
+                          <div className="font-bold">{g.name}</div>
+                          {g.guide_number && <div className="text-[10px] text-muted-foreground font-mono">{g.guide_number}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">{g.toursDone}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-blue-700">{g.toursUpcoming}</td>
+                        <td className="px-4 py-3 text-right tabular-nums font-bold">{fmtEur(g.earnings)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-green-700">{fmtEur(g.paid)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums text-amber-700">{fmtEur(g.pending)}</td>
+                        <td className="px-4 py-3 text-right"><GuideScorePill combined={g.score.combined} reviewCount={g.score.reviewCount} /></td>
+                      </tr>
+                    ))}
+                    {virtualOverviewRows.map(row => (
+                      <tr key={row.id} onClick={() => setDetailVirtualName(row.name)} className="hover:bg-muted transition-colors cursor-pointer text-muted-foreground">
+                        <td className="px-4 py-3">
                           <div className="font-bold flex items-center gap-2">
                             {row.name}
-                            {row.kind === 'virtual' && (
-                              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border" title="Imported invoice history with no linked guide profile">
-                                Unlinked
-                              </span>
-                            )}
+                            <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-muted border border-border" title="Imported invoice history with no linked guide profile">Unlinked</span>
                           </div>
-                          {row.guideNumber && <div className="text-[10px] text-muted-foreground font-mono">{row.guideNumber}</div>}
                         </td>
-                        <td className="px-5 py-3 text-right tabular-nums">{row.toursDone}</td>
-                        <td className="px-5 py-3 text-right tabular-nums text-blue-700">{row.toursUpcoming}</td>
-                        <td className="px-5 py-3 text-right tabular-nums font-bold">€{row.totalEarned.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                        <td className="px-5 py-3 text-right tabular-nums text-green-700">€{row.paidAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                        <td className="px-5 py-3 text-right tabular-nums text-amber-700">€{row.pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                        <td className="px-5 py-3 text-right tabular-nums">
-                          {row.reviewScore != null ? (
-                            <div className="flex flex-col items-end gap-0.5">
-                              <span className={`font-bold ${row.reviewScore >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                                {row.reviewScore >= 0 ? '+' : ''}{row.reviewScore.toFixed(2)}
-                              </span>
-                              {band && <span className="text-[9px] text-muted-foreground">{ADMIN_SCORE_BAND_LABELS[band]}</span>}
-                            </div>
-                          ) : '—'}
-                        </td>
-                        <td className="px-5 py-3 text-right tabular-nums">
-                          {(() => {
-                            const combined = row.kind === 'real' ? combinedScoreByGuide.get(row.id) ?? null : null;
-                            const combinedBand = getCombinedScoreBand(combined);
-                            return combined != null ? (
-                              <div className="flex flex-col items-end gap-0.5">
-                                <span className="font-bold">{formatCombinedScore(combined)}</span>
-                                {combinedBand && <span className="text-[9px] text-muted-foreground">{ADMIN_SCORE_BAND_LABELS[combinedBand]}</span>}
-                              </div>
-                            ) : '—';
-                          })()}
-                        </td>
-                        <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
-                          {row.reviewCount} / {row.bookingsGuided}
-                        </td>
-                      </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              )}
-              {unattributedAssignmentCount > 0 && (
-                <p className="text-[11px] text-muted-foreground mt-2 flex items-center gap-1.5">
-                  <Info size={12} className="shrink-0" />
-                  {unattributedAssignmentCount} additional imported tour record{unattributedAssignmentCount !== 1 ? 's have' : ' has'} no guide on file and {unattributedAssignmentCount !== 1 ? "aren't" : "isn't"} shown per-guide above.
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* DETAILS MODAL */}
-        {showDetailsModal && selectedGuide && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-fade-in">
-            <div className="bg-card border border-border rounded-[32px] w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl overflow-hidden">
-              <div className="p-8 border-b border-border flex items-center justify-between bg-muted">
-                <div>
-                  <h2 className="text-2xl font-black">Assignment Details</h2>
-                  <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">{selectedGuide.name} · {adminFilterLabel}{statusFilter !== 'all' ? ` · ${statusFilterLabel}` : ''}</p>
-                </div>
-                <button onClick={() => setShowDetailsModal(false)} className="p-2 hover:bg-muted rounded-xl text-muted-foreground hover:text-foreground transition-colors">
-                  <X size={24} />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-4">
-                <table className="w-full text-left text-xs">
-                  <thead className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest border-b border-border">
-                    <tr>
-                      <th className="px-3 py-3">Date</th>
-                      <th className="px-3 py-3">Time</th>
-                      <th className="px-3 py-3">Tour Name</th>
-                      <th className="px-3 py-3">Language</th>
-                      <th className="px-3 py-3">Type</th>
-                      <th className="px-3 py-3 text-right">Pay</th>
-                      <th className="px-3 py-3 text-right">Bonus</th>
-                      <th className="px-3 py-3 text-right">Total</th>
-                      <th className="px-3 py-3 text-center">Paid?</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {statusFilteredAssignments.filter(a => a.guide_id === selectedGuide.id).map(a => (
-                      <tr key={a.id} className="hover:bg-muted transition-colors">
-                        <td className="px-3 py-3 font-mono text-muted-foreground whitespace-nowrap">{a.travel_date}</td>
-                        <td className="px-3 py-3 text-muted-foreground">{a.travel_time || '—'}</td>
-                        <td className="px-3 py-3 font-bold">{a.tour_name || a.product_code || '—'}</td>
-                        <td className="px-3 py-3 text-foreground/80">{a.language || '—'}</td>
-                        <td className="px-3 py-3 text-muted-foreground">{a.tour_type || '—'}</td>
-                        <td className="px-3 py-3 text-right font-mono">€{Number(a.calculated_pay || 0).toFixed(2)}</td>
-                        <td className="px-3 py-3 text-right font-mono text-gold">{a.bonus ? `€${Number(a.bonus).toFixed(2)}` : '—'}</td>
-                        <td className="px-3 py-3 text-right font-black text-green-700">€{assignmentEarned(a).toFixed(2)}</td>
-                        <td className="px-3 py-3 text-center">
-                          {a.is_paid
-                            ? <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-green-600/20 text-green-700">Paid</span>
-                            : <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-orange-600/20 text-orange-700">Pending</span>
-                          }
-                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">{row.toursDone}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">—</td>
+                        <td className="px-4 py-3 text-right tabular-nums">{fmtEur(row.totalEarned)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">{fmtEur(row.paidAmount)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">{fmtEur(row.pendingAmount)}</td>
+                        <td className="px-4 py-3 text-right">—</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            </div>
+            )}
+
+            {inactiveGuideStats.length > 0 && (
+              <button onClick={() => setShowInactive(v => !v)} className="w-full text-center text-xs text-muted-foreground hover:text-foreground py-2">
+                {showInactive
+                  ? `Hide ${inactiveGuideStats.length} guide${inactiveGuideStats.length !== 1 ? 's' : ''} with no activity this period`
+                  : `${inactiveGuideStats.length} guide${inactiveGuideStats.length !== 1 ? 's' : ''} with no activity this period — Show`}
+              </button>
+            )}
           </div>
         )}
 
-        {/* INVOICE MODAL */}
-        {showInvoiceModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-xl animate-fade-in">
-            <div className="bg-card border border-border rounded-[32px] w-full max-w-md shadow-2xl overflow-hidden animate-slide-up">
-              <div className="p-8 border-b border-border flex items-center justify-between bg-muted">
-                <div>
-                  <h2 className="text-2xl font-black">Generate Invoice</h2>
-                  <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">{selectedGuide?.name}</p>
-                </div>
-                <button
-                  onClick={() => setShowInvoiceModal(false)}
-                  className="p-2 hover:bg-muted rounded-xl transition-colors text-muted-foreground hover:text-foreground"
-                >
-                  <X size={24} />
-                </button>
-              </div>
-
-              <div className="p-8 space-y-6">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Start Date</label>
-                    <div className="relative">
-                      <input
-                        type="date"
-                        value={invoiceDates.from}
-                        onChange={e => setInvoiceDates(prev => ({ ...prev, from: e.target.value }))}
-                        className="aurelia-input w-full pl-10"
-                      />
-                      <Calendar className="absolute left-3 top-3 text-muted-foreground" size={16} />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">End Date</label>
-                    <div className="relative">
-                      <input
-                        type="date"
-                        value={invoiceDates.to}
-                        onChange={e => setInvoiceDates(prev => ({ ...prev, to: e.target.value }))}
-                        className="aurelia-input w-full pl-10"
-                      />
-                      <Calendar className="absolute left-3 top-3 text-muted-foreground" size={16} />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-4 flex gap-3">
-                  <button
-                    onClick={() => setShowInvoiceModal(false)}
-                    className="flex-1 py-4 rounded-2xl font-bold border border-border hover:bg-muted transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    onClick={handleDownloadInvoice}
-                    className="flex-[2] py-4 bg-gold text-black rounded-2xl font-black text-sm uppercase tracking-widest shadow-xl shadow-gold/20 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
-                  >
-                    <FileText size={18} />
-                    Download PDF
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+        {bonusModal && (
+          <AddBonusModal
+            guideName={guides.find(g => g.id === bonusModal.guideId)?.name || 'Guide'}
+            defaultMonth={bonusModal.month}
+            existingFor={(month) => {
+              const row = monthlyRowFor(bonusModal.guideId, month);
+              return row ? { bonus: row.bonus ?? null, bonus_note: row.bonus_note ?? null } : null;
+            }}
+            onSave={handleSaveBonus}
+            onClose={() => setBonusModal(null)}
+          />
         )}
 
         {/* REVIEWS MODAL — Add/Edit form + filterable list, shared by the header "+ Add Review"
@@ -1288,122 +1153,6 @@ export default function GuideDashboard() {
                       })}
                     </div>
                   )}
-                </section>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* GUIDE DETAIL PANEL — real guide, full picture matching their own dashboard */}
-        {detailGuide && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 bg-black/80 backdrop-blur-xl animate-fade-in">
-            <div className="bg-card border border-border rounded-[32px] w-full max-w-4xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
-              <div className="p-6 md:p-8 border-b border-border flex items-center justify-between bg-muted shrink-0">
-                <div className="min-w-0">
-                  <h2 className="text-2xl font-black truncate">{detailGuide.name}</h2>
-                  <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1 font-mono">
-                    {detailGuide.guide_number}{detailGuide.status ? ` · ${detailGuide.status}` : ''}
-                  </p>
-                </div>
-                <button onClick={closeDetail} className="p-2 hover:bg-background rounded-xl text-muted-foreground hover:text-foreground transition-colors shrink-0">
-                  <X size={24} />
-                </button>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-8 aurelia-scrollbar">
-                <section className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Tours &amp; Pay · {adminFilterLabel}{statusFilter !== 'all' ? ` · ${statusFilterLabel}` : ''}</h3>
-                    <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                      <CheckCircle2 size={12} className="shrink-0 text-muted-foreground/60" />
-                      {detailGuidePaymentSummary.paidThroughMonth
-                        ? <span>Paid through <span className="font-semibold text-foreground">{detailGuidePaymentSummary.paidThroughMonth}</span>{detailGuidePaymentSummary.lastPaymentDate ? ` · last paid ${detailGuidePaymentSummary.lastPaymentDate}` : ''}</span>
-                        : <span>No payments recorded yet</span>
-                      }
-                    </div>
-                  </div>
-                  <GuideStatCards stats={detailGuideStats} />
-                  <Suspense fallback={<div className="h-64 rounded-2xl bg-muted animate-pulse" />}>
-                    <GuideEarningsChart data={detailGuideMonthlyEarnings} />
-                  </Suspense>
-                  <TourHistoryList
-                    assignments={detailGuideAssignments}
-                    todayStr={todayStr}
-                    isOwner
-                    guideWhatsapp={detailGuide.whatsapp || detailGuide.phone}
-                  />
-                </section>
-
-                <section className="space-y-4 pt-6 border-t border-border">
-                  <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Invoices</h3>
-                  <MonthlyInvoiceList rows={detailGuideMonthly} isOwner onUpdatePayment={handleUpdatePayment} />
-                </section>
-
-                <section className="space-y-4 pt-6 border-t border-border">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-1.5">
-                      <h3 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Reviews · Since Oct 1, 2026</h3>
-                      <ScoreInfoTooltip />
-                    </div>
-                    <button
-                      onClick={() => openReviewsModal(detailGuide.id)}
-                      className="px-3 py-1.5 rounded-lg bg-muted border border-border text-[10px] font-bold uppercase tracking-widest hover:border-gold/30 transition-all"
-                    >
-                      Manage Reviews
-                    </button>
-                  </div>
-                  {(() => {
-                    const rs = reviewScoreByGuide.get(detailGuide.id);
-                    const band = getScoreBand(rs?.score ?? null);
-                    const combined = combinedScoreByGuide.get(detailGuide.id) ?? null;
-                    const combinedBand = getCombinedScoreBand(combined);
-                    return (
-                      <div className="aurelia-card p-5 border-l-[3px] border-l-gold space-y-3">
-                        <div className="flex flex-wrap items-center gap-6">
-                          <div>
-                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Combined</div>
-                            <div className="text-2xl font-bold">{formatCombinedScore(combined)}</div>
-                          </div>
-                          <div>
-                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Score</div>
-                            <div className={`text-2xl font-bold ${rs?.score != null ? (rs.score >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
-                              {rs?.score != null ? `${rs.score >= 0 ? '+' : ''}${rs.score.toFixed(2)}` : '—'}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Reviews</div>
-                            <div className="text-2xl font-bold">{rs?.reviewCount ?? 0}</div>
-                          </div>
-                          <div>
-                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Bookings</div>
-                            <div className="text-2xl font-bold">{rs?.bookingsGuided ?? 0}</div>
-                          </div>
-                        </div>
-                        {band && (
-                          <p className={`text-sm font-bold ${band === 'falling' ? 'text-red-600' : band === 'excellent' ? 'text-green-700' : 'text-foreground'}`}>
-                            {ADMIN_SCORE_BAND_LABELS[band]}
-                          </p>
-                        )}
-                        {combinedBand && (
-                          <p className="text-xs text-muted-foreground">
-                            Combined verdict (review 65% + punctuality 35%):{' '}
-                            <span className={`font-bold ${combinedBand === 'falling' ? 'text-red-600' : combinedBand === 'excellent' ? 'text-green-700' : 'text-foreground'}`}>
-                              {ADMIN_SCORE_BAND_LABELS[combinedBand]}
-                            </span>
-                          </p>
-                        )}
-                        {combined == null && (rs?.bookingsGuided ?? 0) < GUIDE_SCORE_MIN_BOOKINGS && (
-                          <p className="text-xs text-muted-foreground">Combined score appears after {GUIDE_SCORE_MIN_BOOKINGS} checked-in bookings.</p>
-                        )}
-                        {/* Raw on-time count behind the punctuality part of the Combined score. */}
-                        {detailGuidePunctuality.countedArrivals > 0 && (
-                          <div className="pt-3 border-t border-border text-xs text-muted-foreground">
-                            Punctuality: <span className="font-bold text-foreground">On-time {detailGuidePunctuality.onTimeCount}/{detailGuidePunctuality.countedArrivals}</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
                 </section>
               </div>
             </div>

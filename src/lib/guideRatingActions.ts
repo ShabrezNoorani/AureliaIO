@@ -179,3 +179,64 @@ export async function insertGuideMonthlyPayment(
   });
   return { error: null, id: data.id };
 }
+
+/**
+ * Owner-only: sets (or clears, with amount null/0) a guide's MONTH-END bonus — guide_monthly.bonus
+ * + bonus_note on that guide's row for that month. Touches only that one row: UPDATEs it when the
+ * month already has a guide_monthly row, otherwise INSERTs a minimal unpaid row carrying just the
+ * bonus (amount_owed/tours_completed left null, so buildUnifiedMonthlyRows still adds the month's
+ * session-based pay on top exactly once). A DB trigger additionally rejects any non-owner write to
+ * these two columns (see migration 20261101120000_guide_monthly_bonus.sql).
+ */
+export async function saveMonthEndBonus(
+  supabase: SupabaseClient,
+  userId: string,
+  params: {
+    guideId: string;
+    guideName: string;
+    month: string;
+    amount: number | null;
+    note: string | null;
+    existing: { id: string; bonus?: number | null; bonus_note?: string | null } | null;
+  }
+): Promise<{ error: string | null }> {
+  const { guideId, guideName, month, existing } = params;
+  const amount = params.amount && params.amount > 0 ? Math.round(params.amount * 100) / 100 : null;
+  const note = params.note?.trim() || null;
+
+  if (existing) {
+    const { error } = await supabase
+      .from('guide_monthly')
+      .update({ bonus: amount, bonus_note: note })
+      .eq('id', existing.id)
+      .eq('user_id', userId);
+    if (error) return { error: error.message };
+    await logChange(supabase, userId, {
+      tableName: 'guide_monthly',
+      recordId: existing.id,
+      fieldName: 'bonus',
+      oldValue: { bonus: existing.bonus ?? null, bonus_note: existing.bonus_note ?? null },
+      newValue: { bonus: amount, bonus_note: note },
+      description: amount
+        ? `Set ${guideName}'s ${month} month-end bonus to €${amount.toFixed(2)}`
+        : `Removed ${guideName}'s ${month} month-end bonus`,
+    });
+    return { error: null };
+  }
+
+  if (!amount) return { error: null }; // nothing to store for a month with no row yet
+  const { data, error } = await supabase
+    .from('guide_monthly')
+    .insert({ user_id: userId, guide_id: guideId, guide_name: guideName, month, bonus: amount, bonus_note: note, payment_sent: false })
+    .select('id')
+    .single();
+  if (error) return { error: error.message };
+  await logChange(supabase, userId, {
+    tableName: 'guide_monthly',
+    recordId: data.id,
+    fieldName: 'bonus',
+    newValue: { bonus: amount, bonus_note: note },
+    description: `Added a €${amount.toFixed(2)} month-end bonus for ${guideName} (${month})`,
+  });
+  return { error: null };
+}

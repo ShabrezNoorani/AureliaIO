@@ -116,6 +116,160 @@ export function generateGuideInvoice(
   doc.save(`Guide_${guide.name.replace(/\s/g, '_')}_${dateRange.from}.pdf`);
 }
 
+/** Default company header for guide invoices when the owner's profile has no company name. */
+export const DEFAULT_INVOICE_COMPANY = 'Scenic Zest Tours';
+
+export interface GuideInvoiceGuide {
+  name: string;
+  guide_number: string | null;
+  account_holder?: string | null;
+  iban?: string | null;
+  swift_code?: string | null;
+  bank_name?: string | null;
+}
+
+export interface GuideInvoiceBonusLine {
+  /** YYYY-MM */
+  month: string;
+  amount: number;
+  note: string | null;
+  paid: boolean;
+}
+
+const eur = (v: number) => `€${v.toFixed(2)}`;
+const monthName = (ym: string) => {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+};
+
+/**
+ * Period invoice for ONE guide — used by the admin (any guide) and by a guide for their own
+ * months. Rows are the same unified tour rows the dashboards render (assignmentEarned for every
+ * amount), plus month-end bonuses as their own lines. Pure rendering: reads nothing, writes
+ * nothing, just saves a PDF.
+ */
+export function generateGuidePeriodInvoice(params: {
+  guide: GuideInvoiceGuide;
+  assignments: GuideAssignmentRow[];
+  monthBonuses: GuideInvoiceBonusLine[];
+  companyName?: string | null;
+  periodLabel: string;
+  dateRange: { from: string; to: string };
+  paidThroughMonth: string | null;
+}) {
+  const { guide, monthBonuses, periodLabel, dateRange, paidThroughMonth } = params;
+  const companyName = params.companyName || DEFAULT_INVOICE_COMPANY;
+  const assignments = [...params.assignments].sort((a, b) =>
+    `${a.travel_date || ''}${a.travel_time || ''}`.localeCompare(`${b.travel_date || ''}${b.travel_time || ''}`));
+  const doc: any = new jsPDF();
+
+  // Header
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.setTextColor(180, 83, 9);
+  doc.text(companyName, 20, 24);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  doc.text('Guide payment invoice', 20, 30);
+
+  doc.setTextColor(30);
+  doc.setFontSize(10);
+  doc.text(`Invoice date: ${new Date().toLocaleDateString()}`, 190, 22, { align: 'right' });
+  doc.text(`Period: ${periodLabel}`, 190, 27, { align: 'right' });
+  doc.setFontSize(8);
+  doc.setTextColor(120);
+  doc.text(`${dateRange.from} to ${dateRange.to}`, 190, 32, { align: 'right' });
+
+  doc.setDrawColor(230);
+  doc.line(20, 37, 190, 37);
+
+  // Guide + bank details
+  doc.setTextColor(30);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('GUIDE', 20, 46);
+  doc.text('BANK DETAILS', 110, 46);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(guide.name, 20, 52);
+  doc.text(`Guide no.: ${guide.guide_number || '—'}`, 20, 57);
+  const bank = [
+    `Account holder: ${guide.account_holder || '—'}`,
+    `IBAN: ${guide.iban || '—'}`,
+    `SWIFT/BIC: ${guide.swift_code || '—'}`,
+    `Bank: ${guide.bank_name || '—'}`,
+  ];
+  bank.forEach((line, i) => doc.text(line, 110, 52 + i * 5));
+
+  // Tours
+  const body = assignments.map(a => {
+    const total = assignmentEarned(a);
+    const bonus = Number(a.bonus) || 0;
+    return [
+      a.travel_date || '—',
+      a.tour_name || a.option_name || (a.product_code ? shortProductCode(a.product_code) : 'Tour'),
+      a.tour_type || '—',
+      a.pax_count != null ? String(a.pax_count) : '—',
+      eur(total - bonus),
+      bonus ? eur(bonus) : '—',
+      eur(total),
+    ];
+  });
+  const bonusRows = monthBonuses.map(b => [
+    b.month, `Month-end bonus — ${monthName(b.month)}${b.note ? ` (${b.note})` : ''}`, 'Bonus', '—', '—', eur(b.amount), eur(b.amount),
+  ]);
+
+  doc.autoTable({
+    startY: 76,
+    head: [['Date', 'Tour', 'Type', 'Pax', 'Pay', 'Bonus', 'Total']],
+    body: [...body, ...bonusRows],
+    headStyles: { fillColor: [180, 83, 9], textColor: [255, 255, 255] },
+    alternateRowStyles: { fillColor: [250, 248, 244] },
+    styles: { fontSize: 8, cellPadding: 2 },
+    columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
+    margin: { left: 20, right: 20 },
+    theme: 'striped',
+  });
+
+  // Totals — paid/pending use the same rules as the dashboards: a tour by its own is_paid, a
+  // month-end bonus by its month's payment status.
+  const tourTotal = assignments.reduce((s, a) => s + assignmentEarned(a), 0);
+  const tourPaid = assignments.filter(a => a.is_paid).reduce((s, a) => s + assignmentEarned(a), 0);
+  const bonusTotal = monthBonuses.reduce((s, b) => s + b.amount, 0);
+  const bonusPaid = monthBonuses.filter(b => b.paid).reduce((s, b) => s + b.amount, 0);
+  const total = tourTotal + bonusTotal;
+  const paid = tourPaid + bonusPaid;
+
+  let y = (doc as any).lastAutoTable.finalY + 10;
+  if (y > 250) { doc.addPage(); y = 25; }
+  const line = (label: string, value: string, bold = false) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.text(label, 130, y);
+    doc.text(value, 190, y, { align: 'right' });
+    y += 6;
+  };
+  doc.setFontSize(9);
+  doc.setTextColor(30);
+  line(`Tours subtotal (${assignments.length})`, eur(tourTotal));
+  if (monthBonuses.length) line('Month-end bonus', eur(bonusTotal));
+  doc.setDrawColor(220);
+  doc.line(130, y - 3, 190, y - 3);
+  doc.setFontSize(11);
+  line('Total', eur(total), true);
+  doc.setFontSize(9);
+  line('Amount paid', eur(paid));
+  line('Amount pending', eur(total - paid), true);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(120);
+  doc.text(`Paid through: ${paidThroughMonth ? monthName(paidThroughMonth) : '—'}`, 130, y + 2);
+
+  doc.setFontSize(8);
+  doc.text('Generated by AURELIA', 105, 288, { align: 'center' });
+
+  doc.save(`Invoice_${guide.name.replace(/\s+/g, '_')}_${dateRange.from}_${dateRange.to}.pdf`);
+}
+
 export function generateBookingInvoice(
   booking: Booking,
   companyName: string

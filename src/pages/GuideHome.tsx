@@ -17,6 +17,8 @@ import { fetchMeetingPoints, type MeetingPointRow } from '@/lib/meetingPoints';
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
+import { selectWithBonusColumns } from '@/lib/guideBonus';
+import { downloadOwnMonthInvoice } from '@/lib/guideInvoice';
 import GuideOwnScoreCard from '@/components/guide/GuideOwnScoreCard';
 import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 import TransferTourModal from '@/components/guide/TransferTourModal';
@@ -232,15 +234,15 @@ export default function GuideHome() {
         supabase.from('guide_assignments')
           .select('id, guide_id, travel_date, travel_time, tour_name, tour_type, language, calculated_pay, rate_override, bonus, total_pay, is_paid, paid_date, product_code, option_name, booking_ref, clients, notes, pax_count')
           .eq('guide_id', guideId),
-        supabase.from('guide_monthly')
-          .select('id, guide_id, guide_name, month, tours_completed, amount_owed, invoice_received, invoice_amount, tva, difference, payment_sent, payment_date')
-          .eq('guide_id', guideId),
+        // Reads the month-end bonus too (read-only); falls back if the column isn't migrated yet.
+        selectWithBonusColumns<GuideMonthlyRow>('id, guide_id, guide_name, month, tours_completed, amount_owed, invoice_received, invoice_amount, tva, difference, payment_sent, payment_date', (cols) =>
+          supabase.from('guide_monthly').select(cols).eq('guide_id', guideId)),
         // NEW per-session pay — this guide's own rows, ALL dates (past + future), unlike the "My
         // Tours" sessionGuides state above.
         supabase.from('session_guides').select('session_id, guide_id, status, base_pay, bonus').eq('guide_id', guideId),
       ]);
       setAssignments(aRes.data || []);
-      setMonthlyRows(mRes.data || []);
+      setMonthlyRows(mRes);
       const mySessionGuides = sgRes.data || [];
       setPerfSessionGuides(mySessionGuides);
       const perfSessionIds = Array.from(new Set(mySessionGuides.map(sg => sg.session_id)));
@@ -477,7 +479,12 @@ export default function GuideHome() {
 
           <section className="space-y-4">
             <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Invoices</h2>
-            <MonthlyInvoiceList rows={unifiedMonthlyRows} />
+            <MonthlyInvoiceList
+              rows={unifiedMonthlyRows}
+              onDownloadInvoice={(row) => guideId && row.month
+                ? downloadOwnMonthInvoice(supabase, { guideId, guideName: guideName || '', month: row.month, assignments: allAssignments, monthlyRows })
+                : undefined}
+            />
           </section>
         </>
       )}

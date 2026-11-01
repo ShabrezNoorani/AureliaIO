@@ -9,6 +9,8 @@ import {
 import GuideStatCards from '@/components/guide/GuideStatCards';
 import TourHistoryList from '@/components/guide/TourHistoryList';
 import MonthlyInvoiceList from '@/components/guide/MonthlyInvoiceList';
+import { selectWithBonusColumns } from '@/lib/guideBonus';
+import { downloadOwnMonthInvoice } from '@/lib/guideInvoice';
 
 const GuideEarningsChart = lazy(() => import('@/components/guide/GuideEarningsChart'));
 
@@ -39,14 +41,14 @@ export default function GuideEarningsOnly() {
         supabase.from('guide_assignments')
           .select('id, guide_id, travel_date, travel_time, tour_name, tour_type, language, calculated_pay, rate_override, bonus, total_pay, is_paid, paid_date, product_code, option_name, pax_count')
           .eq('guide_id', guideId).lt('travel_date', today),
-        supabase.from('guide_monthly')
-          .select('id, guide_id, guide_name, month, tours_completed, amount_owed, invoice_received, invoice_amount, tva, difference, payment_sent, payment_date')
-          .eq('guide_id', guideId),
+        // Reads the month-end bonus too (read-only); falls back if the column isn't migrated yet.
+        selectWithBonusColumns<GuideMonthlyRow>('id, guide_id, guide_name, month, tours_completed, amount_owed, invoice_received, invoice_amount, tva, difference, payment_sent, payment_date', (cols) =>
+          supabase.from('guide_monthly').select(cols).eq('guide_id', guideId)),
         supabase.from('session_guides').select('session_id, guide_id, status, base_pay, bonus').eq('guide_id', guideId),
       ]);
       if (!mounted) return;
       setAssignments((aRes.data || []).map(a => ({ ...a, booking_ref: null, clients: null, notes: null })));
-      setMonthlyRows(mRes.data || []);
+      setMonthlyRows(mRes);
       const mySessionGuides = sgRes.data || [];
       setPerfSessionGuides(mySessionGuides);
       const ids = Array.from(new Set(mySessionGuides.map(sg => sg.session_id)));
@@ -110,7 +112,12 @@ export default function GuideEarningsOnly() {
 
           <section className="space-y-4">
             <h2 className="text-sm font-black uppercase tracking-widest text-muted-foreground">Invoices</h2>
-            <MonthlyInvoiceList rows={unifiedMonthlyRows} />
+            <MonthlyInvoiceList
+              rows={unifiedMonthlyRows}
+              onDownloadInvoice={(row) => guideId && row.month
+                ? downloadOwnMonthInvoice(supabase, { guideId, guideName: guideName || '', month: row.month, assignments: pastAssignments, monthlyRows })
+                : undefined}
+            />
           </section>
         </>
       )}

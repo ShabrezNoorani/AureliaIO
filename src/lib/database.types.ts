@@ -460,6 +460,8 @@ export type Database = {
       guide_monthly: {
         Row: {
           amount_owed: number | null
+          bonus: number | null
+          bonus_note: string | null
           created_at: string | null
           difference: number | null
           guide_id: string | null
@@ -477,6 +479,8 @@ export type Database = {
         }
         Insert: {
           amount_owed?: number | null
+          bonus?: number | null
+          bonus_note?: string | null
           created_at?: string | null
           difference?: number | null
           guide_id?: string | null
@@ -494,6 +498,8 @@ export type Database = {
         }
         Update: {
           amount_owed?: number | null
+          bonus?: number | null
+          bonus_note?: string | null
           created_at?: string | null
           difference?: number | null
           guide_id?: string | null
