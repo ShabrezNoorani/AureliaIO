@@ -8,7 +8,8 @@ import {
   reviewPoints, computeGuideReviewScore, computeGuideOverviewRows,
   computeCheckedInBookingRecords, countCheckedInBookingsByGuide, countCheckedInBookingsByGuideAndMonth,
   groupReviewsByMonth, computeGuideLeaderboard, getScoreBand,
-  computeCombinedGuideScore, PUNCTUALITY_SCORE_WEIGHT, GUIDE_SCORE_MIN_BOOKINGS,
+  computeCombinedGuideScore, PUNCTUALITY_SCORE_WEIGHT, GUIDE_SCORE_MIN_BOOKINGS, COMBINED_SCORE_WEIGHTS,
+  getCombinedScoreBand, getMetricScoreBand,
   ADMIN_DEFAULT_FILTER_START,
   PUNCTUALITY_GRACE_MINUTES,
   computeToursPerGuide, computeCheckedInBookingCountsForPeriod, computeReviewPointsPerUnit,
@@ -960,12 +961,23 @@ describe('computeGuideLeaderboard', () => {
   });
 });
 
-describe('computeCombinedGuideScore — punctuality, built now, zero weight', () => {
-  it('at PUNCTUALITY_SCORE_WEIGHT === 0, always returns the review score unchanged, regardless of punctuality', () => {
-    expect(PUNCTUALITY_SCORE_WEIGHT).toBe(0);
-    expect(computeCombinedGuideScore(0.2, 100)).toBe(0.2);
-    expect(computeCombinedGuideScore(0.2, 0)).toBe(0.2);
-    expect(computeCombinedGuideScore(-0.3, 50)).toBe(-0.3);
+describe('computeCombinedGuideScore — punctuality at its real 35% weight', () => {
+  it('PUNCTUALITY_SCORE_WEIGHT is derived from COMBINED_SCORE_WEIGHTS (65/35)', () => {
+    expect(COMBINED_SCORE_WEIGHTS.review).toBe(0.65);
+    expect(COMBINED_SCORE_WEIGHTS.punctuality).toBe(0.35);
+    expect(COMBINED_SCORE_WEIGHTS.review + COMBINED_SCORE_WEIGHTS.punctuality).toBeCloseTo(1);
+    expect(PUNCTUALITY_SCORE_WEIGHT).toBe(0.35);
+  });
+
+  it('is computeCombinedMetric mapped back onto the -1..+1 scale (one shared calc)', () => {
+    // review 0.2 -> 60; 100% on time -> 0.65*60 + 0.35*100 = 74 -> 74/50 - 1 = 0.48
+    expect(computeCombinedGuideScore(0.2, 100)).toBeCloseTo(0.48);
+    expect(computeCombinedGuideScore(0.2, 100)).toBeCloseTo(computeCombinedMetric(0.2, 100).score! / 50 - 1);
+    // 50% on time is neutral: leaves the review score where it is
+    expect(computeCombinedGuideScore(-0.3, 50)).toBeCloseTo(-0.3 * 0.65);
+  });
+
+  it('missing punctuality is left out, never counted as 0 — returns the review score unchanged', () => {
     expect(computeCombinedGuideScore(0.2, null)).toBe(0.2);
   });
 
@@ -1137,12 +1149,18 @@ describe('normalizeReviewScoreTo100', () => {
   });
 });
 
-describe('computeCombinedMetric — "Combined" metric: Rating 50% + Punctuality 50%', () => {
-  it('blends a perfect rating (+1 -> 100) and 80% on-time into a 50/50 average', () => {
+describe('computeCombinedMetric — "Combined" metric: Review 65% + Punctuality 35%', () => {
+  it('blends a perfect rating (+1 -> 100) and 80% on-time 65/35', () => {
     const result = computeCombinedMetric(1, 80);
     expect(result.ratingNormalized).toBe(100);
     expect(result.punctualityPct).toBe(80);
-    expect(result.score).toBeCloseTo(90); // (100*0.5 + 80*0.5)
+    expect(result.score).toBeCloseTo(93); // (100*0.65 + 80*0.35)
+  });
+
+  it('weights review more heavily than punctuality', () => {
+    // Great reviews + poor punctuality beats poor reviews + great punctuality.
+    expect(computeCombinedMetric(1, 0).score!).toBeCloseTo(65);
+    expect(computeCombinedMetric(-1, 100).score!).toBeCloseTo(35);
   });
 
   it('falls back to rating-only (renormalized, not rating*0.5+0) when punctuality has no data yet', () => {
@@ -1152,7 +1170,7 @@ describe('computeCombinedMetric — "Combined" metric: Rating 50% + Punctuality 
 
   it('falls back to punctuality-only when there is no review score at all', () => {
     const result = computeCombinedMetric(null, 60);
-    expect(result.score).toBe(60);
+    expect(result.score).toBeCloseTo(60);
   });
 
   it('is null only when BOTH rating and punctuality are missing', () => {
@@ -1177,8 +1195,8 @@ describe('computeMetricValue — one entry point for all 4 metrics', () => {
   });
 
   it('combined blends the perBooking score and the punctuality %', () => {
-    // perBooking score here = 2.0/4 = 0.5 -> normalizes to 75; punctuality = 50 -> blend = 62.5
-    expect(computeMetricValue('combined', reviews, 4, 2, arrivals)).toBeCloseTo(62.5);
+    // perBooking score here = 2.0/4 = 0.5 -> normalizes to 75; punctuality = 50 -> 75*0.65 + 50*0.35 = 66.25
+    expect(computeMetricValue('combined', reviews, 4, 2, arrivals)).toBeCloseTo(66.25);
   });
 
   it('returns null for perTour when toursCount is 0, even if bookingsCount is healthy', () => {
@@ -1416,5 +1434,23 @@ describe('filterReviewsByPeriod / filterArrivalsByPeriod', () => {
     const result = filterArrivalsByPeriod(arrivals, { start: '2026-10-01', end: '2026-10-10' });
     expect(result).toHaveLength(1);
     expect(result[0].arrived_at).toContain('2026-10-05');
+  });
+});
+
+describe('getCombinedScoreBand / getMetricScoreBand — verdicts for the 0-100 combined score', () => {
+  it('uses getScoreBand thresholds mapped onto 0-100 (75 / 60 / 50)', () => {
+    expect(getCombinedScoreBand(75)).toBe('excellent');
+    expect(getCombinedScoreBand(74.9)).toBe('good');
+    expect(getCombinedScoreBand(60)).toBe('good');
+    expect(getCombinedScoreBand(50)).toBe('needs_improvement');
+    expect(getCombinedScoreBand(49.9)).toBe('falling');
+    expect(getCombinedScoreBand(null)).toBeNull();
+  });
+
+  it('only perBooking and combined have verdicts', () => {
+    expect(getMetricScoreBand('perBooking', 0.5)).toBe('excellent');
+    expect(getMetricScoreBand('combined', 80)).toBe('excellent');
+    expect(getMetricScoreBand('perTour', 1)).toBeNull();
+    expect(getMetricScoreBand('punctuality', 100)).toBeNull();
   });
 });

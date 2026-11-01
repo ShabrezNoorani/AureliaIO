@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight, Camera, Users, BarChart3, Wallet, Star, MapPin, Quote,
+  Sparkles, ShieldCheck, MessageSquareText, Tag, HelpCircle, Inbox, Trophy, Scale,
 } from 'lucide-react';
 import Logo from '@/components/Logo';
 
@@ -113,6 +114,26 @@ function MockCard({ children, className = '' }: { children: ReactNode; className
   );
 }
 
+/** What the AI operations assistant does — plain benefit language, no real data. */
+const AI_CAPABILITIES = [
+  { icon: HelpCircle, title: 'Ask about your business', copy: '"Which month was best?" "Which channel earns the most?" Plain questions, answered from your own numbers.' },
+  { icon: MessageSquareText, title: 'Review insights', copy: 'What guests keep praising, what they wish were better, and the patterns behind it — per guide or company-wide.' },
+  { icon: Tag, title: 'Price-point suggestions', copy: 'See how each price performs on bookings, cancellations and profit, and where there is room to adjust.' },
+  { icon: ShieldCheck, title: 'Automatic health check', copy: 'Flags mismatched totals, missing booking data and upcoming sessions that still need a guide — before they cost you.' },
+];
+
+/** Everything the platform does, each with the one reason it matters. */
+const ALL_FEATURES = [
+  { icon: Camera, title: 'Live check-in with photo proof', why: 'Every guest accounted for on the day, with a ticket photo on file if a booking is ever disputed.' },
+  { icon: Scale, title: 'Smart guide allocation & balancing', why: 'Groups stay even as guests arrive, so no guide is overloaded and no guest waits.' },
+  { icon: Inbox, title: 'Automatic OTA booking ingestion', why: 'Viator, GetYourGuide and direct bookings land on their own — no re-typing, no missed reservations.' },
+  { icon: Wallet, title: 'Guide payments, earnings & invoices', why: 'Payday comes from the tours actually worked, not a month-end spreadsheet.' },
+  { icon: Trophy, title: 'Guide performance scoring & leaderboard', why: 'Reviews and on-time arrivals combine into one fair score, so you know who is excelling and who needs support.' },
+  { icon: MapPin, title: 'Geo-verified guide arrival', why: 'An "I\'ve arrived" counts only at the real meeting point, so punctuality is a fact, not a claim.' },
+  { icon: BarChart3, title: 'Owner analytics & live board', why: 'Revenue, true profit and today\'s tours in one view, so you spot problems while there is still time to act.' },
+  { icon: Sparkles, title: 'AI insights & health check', why: 'An assistant that reads your summaries, answers questions and catches inconsistencies for you.' },
+];
+
 export default function LandingPage() {
   return (
     <div className="min-h-screen font-sans overflow-x-hidden" style={{ background: PAPER, color: INK }}>
@@ -172,7 +193,7 @@ export default function LandingPage() {
 
             <p className="text-lg leading-relaxed max-w-lg mb-10" style={{ color: INK_SOFT }}>
               AURELIA is the all-in-one platform for tour operators — bookings, check-in, guides,
-              payments and insights, in one live view.
+              payments and an AI operations assistant, in one live view.
             </p>
 
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -225,6 +246,44 @@ export default function LandingPage() {
             </div>
           </div>
         </div>
+      </section>
+
+      {/* ─── AI — headline selling point. Illustrative only, no real data. ─── */}
+      <section className="px-6 pb-24 md:pb-32">
+        <Reveal>
+          <div className="max-w-6xl mx-auto rounded-[2rem] p-8 md:p-14 relative overflow-hidden" style={{ background: INK }}>
+            <div aria-hidden className="absolute -top-32 -right-20 w-[420px] h-[420px] rounded-full blur-[120px] pointer-events-none" style={{ background: `${GOLD}40` }} />
+            <div className="relative z-10 grid md:grid-cols-[0.9fr_1.1fr] gap-10 md:gap-14 items-start">
+              <div>
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold tracking-widest uppercase mb-6" style={{ border: '1px solid #F5C6A540', background: '#F5C6A514', color: '#F5C6A5' }}>
+                  <Sparkles size={13} /> New · AI-powered
+                </div>
+                <h2 className="font-serif text-3xl md:text-[2.75rem] md:leading-[1.1] font-semibold tracking-tight mb-5 text-white">
+                  AI-powered insights &amp; health check
+                </h2>
+                <p className="text-base md:text-lg leading-relaxed mb-6" style={{ color: '#D6D3D1' }}>
+                  Your AI operations assistant. Ask questions about your business, learn what guests love,
+                  test your prices and let it check your data for problems — in plain language, in seconds.
+                </p>
+                <p className="text-sm leading-relaxed" style={{ color: '#A8A29E' }}>
+                  It only reads summaries and never changes your data. Every answer is labelled
+                  AI-generated, so you always verify before acting.
+                </p>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-4">
+                {AI_CAPABILITIES.map((c, i) => (
+                  <Reveal key={c.title} delay={i * 60}>
+                    <div className="h-full rounded-2xl p-5" style={{ background: '#FFFFFF0D', border: '1px solid #FFFFFF1A' }}>
+                      <c.icon size={20} style={{ color: '#F5C6A5' }} />
+                      <h3 className="text-base font-bold text-white mt-3 mb-1.5">{c.title}</h3>
+                      <p className="text-sm leading-relaxed" style={{ color: '#D6D3D1' }}>{c.copy}</p>
+                    </div>
+                  </Reveal>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Reveal>
       </section>
 
       {/* ─── FEATURE SECTIONS — the 6 strongest capabilities, not an exhaustive list ─── */}
@@ -380,6 +439,33 @@ export default function LandingPage() {
         />
 
       </div>
+
+      {/* ─── EVERYTHING IN ONE PLATFORM — the full feature list, one "why it matters" each ─── */}
+      <section className="px-6 pt-28 pb-28 md:pt-40 md:pb-40">
+        <div className="max-w-6xl mx-auto">
+          <Reveal className="text-center max-w-2xl mx-auto mb-12 md:mb-16">
+            <span className="text-xs font-bold tracking-[0.25em] uppercase" style={{ color: GOLD }}>Everything included</span>
+            <h2 className="font-serif text-3xl md:text-[2.5rem] font-semibold tracking-tight mt-3" style={{ color: INK }}>
+              One platform, the whole operation.
+            </h2>
+          </Reveal>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
+            {ALL_FEATURES.map((f, i) => (
+              <Reveal key={f.title} delay={(i % 4) * 60}>
+                <div className="h-full rounded-2xl bg-white p-6" style={{ border: `1px solid ${HAIRLINE}` }}>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-4" style={{ background: `${GOLD}14` }}>
+                    <f.icon size={18} style={{ color: GOLD_SOFT }} />
+                  </div>
+                  <h3 className="text-base font-bold mb-2 leading-snug" style={{ color: INK }}>{f.title}</h3>
+                  <p className="text-sm leading-relaxed" style={{ color: INK_SOFT }}>
+                    <span className="font-semibold" style={{ color: GOLD_SOFT }}>Why it matters: </span>{f.why}
+                  </p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* ─── CASE STUDY — anonymized, outcomes only, no real figures ─── */}
       <Reveal className="px-6 pb-28 md:pb-40">

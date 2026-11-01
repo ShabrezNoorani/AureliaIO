@@ -13,7 +13,7 @@ import {
   filterAssignmentsByStatus, filterMonthlyRowsByStatus, dedupeAssignmentsAcrossSources,
   computeGuideReviewScore, REVIEW_PLATFORMS, isApprovedReview,
   computeCheckedInBookingRecords, countCheckedInBookingsByGuide, getScoreBand,
-  ADMIN_SCORE_BAND_LABELS,
+  ADMIN_SCORE_BAND_LABELS, computeMetricValue, getCombinedScoreBand, GUIDE_SCORE_MIN_BOOKINGS,
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideReviewRow,
   type AdminDateFilter, type GuidePaymentSummary, type AdminStatusFilter, type GuideReviewScore,
   type ArrivalPunctualityRow, type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
@@ -33,6 +33,12 @@ const GuideEarningsChart = lazy(() => import('@/components/guide/GuideEarningsCh
 
 interface GuideArrivalRow extends ArrivalPunctualityRow {
   guide_id: string;
+  arrived_at?: string | null;
+}
+
+/** Combined score is 0-100 (review 65% + punctuality 35%) — same formatting as the Leaderboard. */
+function formatCombinedScore(value: number | null | undefined): string {
+  return value == null ? '—' : `${Math.round(value)}%`;
 }
 
 export default function GuideDashboard() {
@@ -280,7 +286,7 @@ export default function GuideDashboard() {
         .eq('user_id', user.id),
       supabase.from('guide_product_rates').select('*').eq('user_id', user.id),
       supabase.from('guide_monthly').select('*').eq('user_id', user.id),
-      supabase.from('guide_arrivals').select('guide_id, minutes_late').eq('user_id', user.id),
+      supabase.from('guide_arrivals').select('guide_id, minutes_late, arrived_at').eq('user_id', user.id),
       supabase.from('session_guides').select('session_id, guide_id, status, base_pay, bonus, checkin_time').eq('user_id', user.id),
       supabase.from('tour_sessions').select('id, tour_date, start_time, label').eq('user_id', user.id),
       supabase.from('guide_reviews').select('*').eq('user_id', user.id),
@@ -398,6 +404,22 @@ export default function GuideDashboard() {
     return out;
   }, [guides, reviewsSinceOct1, overallBookingCounts]);
 
+  // Headline COMBINED score (review 65% + punctuality 35%), same Oct-1-onward window as the
+  // review score above. Computed by computeMetricValue('combined', …) — the exact function the
+  // Leaderboard and the guide's own dashboard use — so all three can never disagree. Same
+  // GUIDE_SCORE_MIN_BOOKINGS gate as the Leaderboard: under 3 checked-in bookings shows "—".
+  const combinedScoreByGuide = useMemo(() => {
+    const out = new Map<string, number | null>();
+    guides.forEach(g => {
+      const bookings = overallBookingCounts.get(g.id) || 0;
+      if (bookings < GUIDE_SCORE_MIN_BOOKINGS) { out.set(g.id, null); return; }
+      const guideReviews = reviewsSinceOct1.filter(r => r.guide_id === g.id);
+      const guideArrivals = arrivals.filter(a => a.guide_id === g.id && (a.arrived_at ?? '').slice(0, 10) >= ADMIN_DEFAULT_FILTER_START);
+      out.set(g.id, computeMetricValue('combined', guideReviews, bookings, 0, guideArrivals));
+    });
+    return out;
+  }, [guides, reviewsSinceOct1, overallBookingCounts, arrivals]);
+
   // "All Guides" overview now respects both the selected period AND status (per-guide
   // cards/totals strip/table all agree, all built from the same narrowed arrays) — pass
   // adminFilter.mode === 'allTime' + statusFilter === 'all' to see the old lifetime-only view,
@@ -465,9 +487,9 @@ export default function GuideDashboard() {
     () => detailGuideId ? arrivals.filter(a => a.guide_id === detailGuideId) : [],
     [arrivals, detailGuideId]
   );
-  // Display-only "On-time X/Y" next to the review score below — zero-weight in the real score
-  // today (see PUNCTUALITY_SCORE_WEIGHT in guidePerformance.ts), shown here as the same raw
-  // arrival-vs-checkin_time count the guide's own dashboard shows (GuideOwnScoreCard).
+  // Raw "On-time X/Y" (all-time) next to the scores below — the same arrival-vs-checkin_time count
+  // the guide's own dashboard shows (GuideOwnScoreCard). The Combined score uses the Oct-1-onward
+  // slice of these arrivals (see combinedScoreByGuide).
   const detailGuidePunctuality = useMemo(
     () => computePunctualityStats(detailGuideArrivals),
     [detailGuideArrivals]
@@ -825,6 +847,8 @@ export default function GuideDashboard() {
                           </span>
                           {' · '}{rs?.reviewCount ?? 0} review{(rs?.reviewCount ?? 0) !== 1 ? 's' : ''} / {rs?.bookingsGuided ?? 0} bookings
                           {band && <span className="text-muted-foreground"> · {ADMIN_SCORE_BAND_LABELS[band]}</span>}
+                          {' · '}Combined{' '}
+                          <span className="font-semibold text-foreground">{formatCombinedScore(combinedScoreByGuide.get(g.id))}</span>
                         </span>
                         <ScoreInfoTooltip />
                       </div>
@@ -872,7 +896,7 @@ export default function GuideDashboard() {
                 </div>
               ) : (
               <div className="aurelia-card border border-border overflow-x-auto">
-                <table className="w-full text-left text-sm min-w-[820px]">
+                <table className="w-full text-left text-sm min-w-[920px]">
                   <thead className="bg-muted text-xs text-muted-foreground uppercase tracking-widest font-bold">
                     <tr>
                       <th className="px-5 py-3">Guide</th>
@@ -886,6 +910,7 @@ export default function GuideDashboard() {
                           Score <ScoreInfoTooltip />
                         </span>
                       </th>
+                      <th className="px-5 py-3 text-right">Combined</th>
                       <th className="px-5 py-3 text-right">Reviews</th>
                     </tr>
                   </thead>
@@ -923,6 +948,18 @@ export default function GuideDashboard() {
                               {band && <span className="text-[9px] text-muted-foreground">{ADMIN_SCORE_BAND_LABELS[band]}</span>}
                             </div>
                           ) : '—'}
+                        </td>
+                        <td className="px-5 py-3 text-right tabular-nums">
+                          {(() => {
+                            const combined = row.kind === 'real' ? combinedScoreByGuide.get(row.id) ?? null : null;
+                            const combinedBand = getCombinedScoreBand(combined);
+                            return combined != null ? (
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span className="font-bold">{formatCombinedScore(combined)}</span>
+                                {combinedBand && <span className="text-[9px] text-muted-foreground">{ADMIN_SCORE_BAND_LABELS[combinedBand]}</span>}
+                              </div>
+                            ) : '—';
+                          })()}
                         </td>
                         <td className="px-5 py-3 text-right tabular-nums text-muted-foreground">
                           {row.reviewCount} / {row.bookingsGuided}
@@ -1318,9 +1355,15 @@ export default function GuideDashboard() {
                   {(() => {
                     const rs = reviewScoreByGuide.get(detailGuide.id);
                     const band = getScoreBand(rs?.score ?? null);
+                    const combined = combinedScoreByGuide.get(detailGuide.id) ?? null;
+                    const combinedBand = getCombinedScoreBand(combined);
                     return (
                       <div className="aurelia-card p-5 border-l-[3px] border-l-gold space-y-3">
                         <div className="flex flex-wrap items-center gap-6">
+                          <div>
+                            <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Combined</div>
+                            <div className="text-2xl font-bold">{formatCombinedScore(combined)}</div>
+                          </div>
                           <div>
                             <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Score</div>
                             <div className={`text-2xl font-bold ${rs?.score != null ? (rs.score >= 0 ? 'text-green-700' : 'text-red-600') : ''}`}>
@@ -1341,7 +1384,18 @@ export default function GuideDashboard() {
                             {ADMIN_SCORE_BAND_LABELS[band]}
                           </p>
                         )}
-                        {/* Display-only — doesn't affect the score above yet (see PUNCTUALITY_SCORE_WEIGHT). */}
+                        {combinedBand && (
+                          <p className="text-xs text-muted-foreground">
+                            Combined verdict (review 65% + punctuality 35%):{' '}
+                            <span className={`font-bold ${combinedBand === 'falling' ? 'text-red-600' : combinedBand === 'excellent' ? 'text-green-700' : 'text-foreground'}`}>
+                              {ADMIN_SCORE_BAND_LABELS[combinedBand]}
+                            </span>
+                          </p>
+                        )}
+                        {combined == null && (rs?.bookingsGuided ?? 0) < GUIDE_SCORE_MIN_BOOKINGS && (
+                          <p className="text-xs text-muted-foreground">Combined score appears after {GUIDE_SCORE_MIN_BOOKINGS} checked-in bookings.</p>
+                        )}
+                        {/* Raw on-time count behind the punctuality part of the Combined score. */}
                         {detailGuidePunctuality.countedArrivals > 0 && (
                           <div className="pt-3 border-t border-border text-xs text-muted-foreground">
                             Punctuality: <span className="font-bold text-foreground">On-time {detailGuidePunctuality.onTimeCount}/{detailGuidePunctuality.countedArrivals}</span>

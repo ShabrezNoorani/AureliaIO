@@ -101,9 +101,8 @@ export default function GuideOwnScoreCard({
             </div>
           )}
 
-          {/* Display-only, shown regardless of the selected metric — see
-              computeCombinedGuideScore's own doc comment for why this never affects the "real"
-              per-booking score yet. */}
+          {/* Raw on-time count, shown for the review-only metrics (Combined/Punctuality already
+              include it). */}
           {countedArrivals > 0 && metric !== 'punctuality' && metric !== 'combined' && (
             <div className="pt-3 border-t border-border text-xs text-muted-foreground">
               Punctuality: <span className="font-bold text-foreground">On-time {onTimeCount}/{countedArrivals}</span>

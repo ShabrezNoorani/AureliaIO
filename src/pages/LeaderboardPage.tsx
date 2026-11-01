@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import {
   computeGuideLeaderboardByMetric, computeCheckedInBookingCountsForPeriod, computeToursPerGuide,
-  filterReviewsByPeriod, filterArrivalsByPeriod, getScoreBand, getLeaderboardPeriodBounds,
+  filterReviewsByPeriod, filterArrivalsByPeriod, getMetricScoreBand, getLeaderboardPeriodBounds,
   getLeaderboardPeriodLabel, GUIDE_SCORE_MIN_BOOKINGS, ADMIN_SCORE_BAND_LABELS,
   ADMIN_DEFAULT_FILTER_START, DEFAULT_LEADERBOARD_PERIOD, isApprovedReview,
   type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding,
@@ -40,7 +40,7 @@ export default function LeaderboardPage() {
   const [sessions, setSessions] = useState<SessionDateForTourCount[]>([]);
   const [arrivals, setArrivals] = useState<ArrivalForPeriod[]>([]);
 
-  const [metric, setMetric] = useState<LeaderboardMetric>('perBooking');
+  const [metric, setMetric] = useState<LeaderboardMetric>('combined');
   const [period, setPeriod] = useState<LeaderboardPeriod>(DEFAULT_LEADERBOARD_PERIOD);
 
   const fetchData = async () => {
@@ -150,9 +150,8 @@ export default function LeaderboardPage() {
         ) : (
           <div className="aurelia-card border border-border divide-y divide-border overflow-hidden">
             {leaderboard.map((entry) => {
-              // getScoreBand's thresholds are calibrated for the per-booking score's own range —
-              // only meaningful (and only shown) for that one metric.
-              const band = metric === 'perBooking' ? getScoreBand(entry.value) : null;
+              // Verdicts exist for Per Booking and Combined only (see getMetricScoreBand).
+              const band = getMetricScoreBand(metric, entry.value);
               const unitCount = metric === 'perTour' ? entry.toursCount : entry.bookingsCount;
               return (
                 <div key={entry.guide_id} className="flex items-center gap-4 px-5 py-4 flex-wrap">

@@ -610,7 +610,7 @@ export const METRIC_TOOLTIP_DESCRIPTIONS: { metric: LeaderboardMetric; label: st
   { metric: 'perBooking', label: 'Per Booking', note: 'Review points ÷ checked-in bookings in the selected period.' },
   { metric: 'perTour', label: 'Per Tour', note: 'Review points ÷ distinct tours (sessions) the guide worked in the selected period.' },
   { metric: 'punctuality', label: 'Punctuality', note: 'Of the guide’s recorded arrivals, the % that were on time (at or before their own check-in time).' },
-  { metric: 'combined', label: 'Combined', note: 'Rating (50%) + Punctuality (50%), each normalized to 0–100 and blended.' },
+  { metric: 'combined', label: 'Combined', note: 'Review score (65%) + Punctuality (35%), each normalized to 0–100 and blended. A part with no data yet is left out, never counted as 0.' },
 ];
 
 /** sum(reviewPoints, excluding excluded_from_score) ÷ denominator — the SAME arithmetic
@@ -730,19 +730,25 @@ export interface CombinedMetricResult {
   punctualityPct: number | null;
 }
 
+/** THE combined-score weighting — the single source for every combined score in the app (admin
+    Leaderboard, admin guide dashboard, a guide's own dashboard). Geo-verified arrivals made
+    punctuality trustworthy enough to carry real weight. Must sum to 1. */
+export const COMBINED_SCORE_WEIGHTS = { review: 0.65, punctuality: 0.35 } as const;
+
 /**
- * Rating (50%) + Punctuality (50%), each already 0-100. Same fairness rule as computeGuideScore
- * above: a missing component is dropped from both the numerator and the weight total rather than
- * scored as 0, so a guide with reviews but no verified arrivals yet shows their rating alone
- * (100%-weighted against the renormalized pool), not rating*0.5 + 0. This is also why the combined
- * score "firms up" as more arrivals land — punctuality isn't contributing yet until it has data,
- * then it gradually counts for its full, intended share.
+ * THE shared combined score: Review score (65%) + Punctuality (35%), each normalized to 0-100
+ * first (review via normalizeReviewScoreTo100, punctuality is already an on-time %). Same fairness
+ * rule as computeGuideScore above: a missing component is dropped from both the numerator and the
+ * weight total rather than scored as 0, so a guide with reviews but no verified arrivals yet shows
+ * their rating alone (renormalized), not rating*0.65 + 0. This is also why the combined score
+ * "firms up" as more arrivals land — punctuality only contributes once it has data. Null only
+ * when neither component has any data (rendered as "—").
  */
 export function computeCombinedMetric(reviewScore: number | null, onTimePct: number | null): CombinedMetricResult {
   const ratingNormalized = normalizeReviewScoreTo100(reviewScore);
   const parts: { value: number; weight: number }[] = [];
-  if (ratingNormalized != null) parts.push({ value: ratingNormalized, weight: 0.5 });
-  if (onTimePct != null) parts.push({ value: onTimePct, weight: 0.5 });
+  if (ratingNormalized != null) parts.push({ value: ratingNormalized, weight: COMBINED_SCORE_WEIGHTS.review });
+  if (onTimePct != null) parts.push({ value: onTimePct, weight: COMBINED_SCORE_WEIGHTS.punctuality });
   const totalWeight = parts.reduce((sum, p) => sum + p.weight, 0);
   const score = totalWeight > 0 ? parts.reduce((sum, p) => sum + p.value * p.weight, 0) / totalWeight : null;
   return { score, ratingNormalized, punctualityPct: onTimePct };
@@ -916,31 +922,25 @@ export function stepLeaderboardPeriod(period: LeaderboardPeriod, direction: -1 |
   return period;
 }
 
-// ── PUNCTUALITY, BUILT NOW, ZERO WEIGHT ─────────────────────────────────────────────────────────
+// ── PUNCTUALITY WEIGHT ──────────────────────────────────────────────────────────────────────────
 // Punctuality (on-time = arrived at/before the guide's own checkin_time, via
-// computePunctualityStats/ArrivalPunctualityRow above) is DISPLAYED on both the guide's own
-// dashboard and the admin dashboard, but deliberately does NOT yet move the real, ranked score —
-// arrival is currently self-reported with no geo-verification, so a guide could claim "arrived"
-// from home; it isn't trustworthy enough yet to affect rank or money. Structured as a single
-// weight constant precisely so that changes the moment geo-verification lands: raise
-// PUNCTUALITY_SCORE_WEIGHT and every caller of computeCombinedGuideScore picks it up with no
-// other code change.
+// computePunctualityStats/ArrivalPunctualityRow above) is now geo-verified, so it carries real
+// weight in the COMBINED score (COMBINED_SCORE_WEIGHTS / computeCombinedMetric). The per-booking
+// review score itself is unchanged and still shown on its own.
 
-/** 0 = punctuality has zero effect on the real score (current state). Any value in (0, 1] blends
-    it in proportionally — see computeCombinedGuideScore. Never negative, never above 1. */
-export const PUNCTUALITY_SCORE_WEIGHT = 0;
+/** Punctuality's share of the combined score — derived from COMBINED_SCORE_WEIGHTS, never set
+    separately, so the two can't disagree. */
+export const PUNCTUALITY_SCORE_WEIGHT = COMBINED_SCORE_WEIGHTS.punctuality;
 
-/** At PUNCTUALITY_SCORE_WEIGHT === 0 this ALWAYS returns `reviewScore` unchanged — verified by
-    test, so raising the weight later is the only thing that can ever change this function's
-    output for the exact same inputs today. `onTimePct` (0-100, or null when there's no counted
-    arrival data yet) is re-centered onto a -1..+1 band before blending (50% → 0, 100% → +1, 0% →
-    -1) so it sits on roughly the same scale as review points, rather than mixing a 0-100 number
-    directly into a -1..+1 one. */
+/** The combined score on the per-booking score's own -1..+1 scale (0-100 → -1..+1), for callers
+    that hold a review score and want it blended with punctuality. Delegates to
+    computeCombinedMetric so there is exactly one combined calculation. Returns `reviewScore`
+    unchanged when there's no punctuality data, and null when there's no review score. */
 export function computeCombinedGuideScore(reviewScore: number | null, onTimePct: number | null): number | null {
   if (reviewScore == null) return null;
-  if (PUNCTUALITY_SCORE_WEIGHT <= 0 || onTimePct == null) return reviewScore;
-  const punctualityScore = (onTimePct - 50) / 50;
-  return reviewScore * (1 - PUNCTUALITY_SCORE_WEIGHT) + punctualityScore * PUNCTUALITY_SCORE_WEIGHT;
+  if (onTimePct == null) return reviewScore;
+  const combined = computeCombinedMetric(reviewScore, onTimePct).score;
+  return combined == null ? null : combined / 50 - 1;
 }
 
 export type ScoreBand = 'excellent' | 'good' | 'needs_improvement' | 'falling';
@@ -952,6 +952,27 @@ export function getScoreBand(score: number | null): ScoreBand | null {
   if (score >= 0.2) return 'good';
   if (score >= 0) return 'needs_improvement';
   return 'falling';
+}
+
+/** Verdict band for a 0-100 COMBINED score — the same thresholds as getScoreBand, mapped onto the
+    0-100 scale exactly as normalizeReviewScoreTo100 maps the review score (75+ Excellent, 60+
+    Good, 50+ Needs improvement, below 50 Falling), so the verdict reads the same on both scales. */
+export function getCombinedScoreBand(score100: number | null): ScoreBand | null {
+  if (score100 == null) return null;
+  // Compared on the 0-100 scale directly (not via score100/50 - 1, which lands a hair under the
+  // +0.2 boundary at exactly 60 through floating-point rounding).
+  if (score100 >= 75) return 'excellent';
+  if (score100 >= 60) return 'good';
+  if (score100 >= 50) return 'needs_improvement';
+  return 'falling';
+}
+
+/** Verdict band for whichever metric is being shown — perBooking and combined have calibrated
+    bands; perTour/punctuality don't (null). */
+export function getMetricScoreBand(metric: LeaderboardMetric, value: number | null): ScoreBand | null {
+  if (metric === 'perBooking') return getScoreBand(value);
+  if (metric === 'combined') return getCombinedScoreBand(value);
+  return null;
 }
 
 /** Actionable, for the owner — the negative band is explicitly flagged as worth a conversation. */
@@ -979,6 +1000,9 @@ export const SCORE_BAND_TOOLTIP_ROWS: { range: string; note: string }[] = [
   { range: '0 to +0.2', note: 'Needs improvement' },
   { range: 'Below 0', note: 'Falling — needs attention' },
 ];
+
+export const COMBINED_BAND_TOOLTIP_TEXT =
+  'Combined (0–100) uses the same verdicts: 75+ Excellent, 60–75 Good, 50–60 Needs improvement, below 50 Falling.';
 
 export const SCORE_FORMULA_TOOLTIP_TEXT =
   'Score = review points ÷ completed tours since Oct 1; getting more guests to leave 5-star reviews raises it.';

@@ -68,11 +68,12 @@ export default function GuideHome() {
   const { guideId, guideName, guideUserId, retryRoleResolution } = useAuth();
   const navigate = useNavigate();
 
-  // Leads the dashboard — this guide's own review score, verdict and anonymized rank/top-score.
+  // Leads the dashboard — this guide's own COMBINED score (review 65% + punctuality 35%) by
+  // default, verdict and anonymized rank/top-score.
   // Shared with GuideReviews.tsx via useGuideOwnScore, so the two can never disagree. Metric/
   // period state lives HERE (not inside the shared hook/card) so this page's toggle is
   // independent of GuideReviews.tsx's own.
-  const [scoreMetric, setScoreMetric] = useState<LeaderboardMetric>('perBooking');
+  const [scoreMetric, setScoreMetric] = useState<LeaderboardMetric>('combined');
   const [scorePeriod, setScorePeriod] = useState<LeaderboardPeriod>(DEFAULT_LEADERBOARD_PERIOD);
   const ownScore = useGuideOwnScore(guideId, guideUserId, scoreMetric, scorePeriod);
 

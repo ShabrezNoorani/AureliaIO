@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Info } from 'lucide-react';
-import { SCORE_BAND_TOOLTIP_ROWS, SCORE_FORMULA_TOOLTIP_TEXT, METRIC_TOOLTIP_DESCRIPTIONS } from '@/lib/guidePerformance';
+import { SCORE_BAND_TOOLTIP_ROWS, SCORE_FORMULA_TOOLTIP_TEXT, METRIC_TOOLTIP_DESCRIPTIONS, COMBINED_BAND_TOOLTIP_TEXT } from '@/lib/guidePerformance';
 
 /**
  * The "i" info button next to a score, on BOTH the guide's own dashboard and the admin dashboard —
@@ -66,6 +66,7 @@ export default function ScoreInfoTooltip() {
             </li>
           ))}
         </ul>
+        <p className="text-[10px] text-muted-foreground mt-2 leading-snug">{COMBINED_BAND_TOOLTIP_TEXT}</p>
         <p className="text-[10px] text-muted-foreground mt-2 pt-2 border-t border-border leading-snug">
           {SCORE_FORMULA_TOOLTIP_TEXT}
         </p>

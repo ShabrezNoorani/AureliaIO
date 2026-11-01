@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import {
   computeMetricValue, computeGuideLeaderboardByMetric, computeToursPerGuide,
   computeCheckedInBookingCountsForPeriod, filterReviewsByPeriod, filterArrivalsByPeriod,
-  computePunctualityStats, getScoreBand, getLeaderboardPeriodBounds,
+  computePunctualityStats, getMetricScoreBand, getLeaderboardPeriodBounds,
   GUIDE_SCORE_MIN_BOOKINGS, ADMIN_DEFAULT_FILTER_START, DEFAULT_LEADERBOARD_PERIOD,
   type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding,
   type SessionGuideForTourCount, type SessionDateForTourCount, type ArrivalForPeriod,
@@ -47,8 +47,8 @@ export interface GuideOwnScore {
   /** The selected metric's value, in that metric's own scale (points-per-unit for perBooking/
       perTour, 0-100 for punctuality/combined) — null renders as "—", never a fabricated 0. */
   score: number | null;
-  /** Only ever set for the 'perBooking' metric — getScoreBand's thresholds are calibrated for
-      that score's own range and would misread a 0-100 punctuality/combined value. */
+  /** Set for the 'perBooking' and 'combined' metrics (see getMetricScoreBand — combined uses the
+      same verdict thresholds mapped onto its 0-100 scale); null for perTour/punctuality. */
   band: ScoreBand | null;
   onTimeCount: number;
   onTimePct: number | null;
@@ -205,7 +205,7 @@ export function useGuideOwnScore(
 
   const topScore = leaderboard[0]?.value ?? null;
   const myRankEntry = guideId ? leaderboard.find((e) => e.guide_id === guideId) : undefined;
-  const band = metric === 'perBooking' ? getScoreBand(score) : null;
+  const band = getMetricScoreBand(metric, score);
 
   return {
     loading,

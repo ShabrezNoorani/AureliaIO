@@ -4,6 +4,7 @@ import Logo from '@/components/Logo';
 import { fetchPublishedBlogs, Blog } from '@/lib/blogService';
 import {
   ArrowRight, Inbox, CalendarRange, Smartphone, Scale, MapPin, Star, Wallet,
+  Sparkles, Eye, Lightbulb, ShieldCheck, AlertTriangle,
 } from 'lucide-react';
 
 // Same fixed, self-contained palette as LandingPage.tsx — deliberately independent of the
@@ -95,6 +96,25 @@ const STEPS = [
   },
 ];
 
+/** "How AI can help" — plain language, no real data. */
+const AI_POINTS = [
+  {
+    icon: Eye,
+    title: 'It reads summaries — it never changes anything',
+    copy: 'The assistant only sees short summaries of your numbers and reviews. It can\'t edit, add or delete a single booking, payment or guide.',
+  },
+  {
+    icon: Lightbulb,
+    title: 'It turns your data into insights',
+    copy: 'Ask a question in plain words, see what guests praise and what to improve, and how each price point is really performing.',
+  },
+  {
+    icon: ShieldCheck,
+    title: 'It catches inconsistencies for you',
+    copy: 'A built-in health check spots mismatched totals, missing booking details and upcoming sessions without a guide, then explains each one simply.',
+  },
+];
+
 export default function HowItWorksPage() {
   const [blogs, setBlogs] = useState<Blog[]>([]);
   const [blogsLoading, setBlogsLoading] = useState(true);
@@ -164,6 +184,41 @@ export default function HowItWorksPage() {
             </Reveal>
           ))}
         </div>
+
+        {/* ─── HOW AI CAN HELP ─── */}
+        <Reveal className="mt-16">
+          <div className="rounded-3xl p-7 md:p-10" style={{ background: INK }}>
+            <div className="flex items-center gap-2.5 mb-3">
+              <Sparkles size={18} style={{ color: '#F5C6A5' }} />
+              <span className="text-xs font-bold tracking-widest uppercase" style={{ color: '#F5C6A5' }}>How AI can help</span>
+            </div>
+            <h2 className="font-serif text-2xl md:text-3xl font-semibold tracking-tight text-white mb-3">
+              Your AI operations assistant
+            </h2>
+            <p className="text-sm md:text-base leading-relaxed mb-8" style={{ color: '#D6D3D1' }}>
+              Alongside the steps above, an AI assistant keeps an eye on the business for you — and stays strictly read-only.
+            </p>
+            <div className="space-y-5">
+              {AI_POINTS.map((pt) => (
+                <div key={pt.title} className="flex gap-4 items-start">
+                  <div className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: '#FFFFFF14' }}>
+                    <pt.icon size={18} style={{ color: '#F5C6A5' }} />
+                  </div>
+                  <div>
+                    <h3 className="text-base md:text-lg font-bold text-white mb-1">{pt.title}</h3>
+                    <p className="text-sm leading-relaxed" style={{ color: '#D6D3D1' }}>{pt.copy}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-8 flex items-start gap-2.5 rounded-xl px-4 py-3" style={{ background: '#F5C6A514', border: '1px solid #F5C6A533' }}>
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" style={{ color: '#F5C6A5' }} />
+              <p className="text-sm leading-relaxed" style={{ color: '#F5E6D8' }}>
+                Every AI answer is labelled <span className="font-bold">"AI-generated — verify before acting."</span> It's an assistant, not the final word — the decisions stay yours.
+              </p>
+            </div>
+          </div>
+        </Reveal>
 
         <Reveal className="mt-14 text-center">
           <Link
