@@ -25,16 +25,16 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-// Pinned to a concrete model (rather than the moving "gemini-flash-latest" alias) so behaviour and
-// latency are predictable. gemini-2.5-flash is retired for new API keys (404). Overridable via the
-// optional GEMINI_MODEL secret.
-const DEFAULT_MODEL = 'gemini-3.8-flash'
+// Flash-Lite: answers these summarising tasks in ~1s. The full Flash models time out (slow
+// thinking) and gemini-2.5-flash is retired for new API keys (404). Overridable via the optional
+// GEMINI_MODEL secret.
+const DEFAULT_MODEL = 'gemini-flash-lite-latest'
 // Supabase's edge request limit (150s) is well above this, leaving headroom for the DB reads.
-const GEMINI_TIMEOUT_MS = 60_000
+const GEMINI_TIMEOUT_MS = 45_000
 const MAX_OUTPUT_TOKENS = 800
 const MAX_QUESTION_CHARS = 500
-const MAX_REVIEW_COMMENTS = 80
-const MAX_COMMENT_CHARS = 300
+const MAX_REVIEW_COMMENTS = 50
+const MAX_COMMENT_CHARS = 250
 const MAX_BOOKING_ROWS = 50_000
 const PAGE_SIZE = 1000
 
@@ -372,60 +372,47 @@ function parseAuditReply(text: string, types: string[]) {
   }
 }
 
-async function callGemini(kind: Kind, data: unknown, question?: string, jsonOutput = false): Promise<string> {
+async function callGemini(kind: Kind, data: unknown, question?: string): Promise<string> {
   const apiKey = Deno.env.get('GEMINI_API_KEY')
   if (!apiKey) throw new HttpError(503, 'AI is not configured')
   const model = Deno.env.get('GEMINI_MODEL') || DEFAULT_MODEL
 
-  const userText =
+  // Instructions travel inside the single user turn (no systemInstruction / thinkingConfig /
+  // responseMimeType): the minimal body shape a direct curl to Flash-Lite accepted, after the
+  // fuller body got 400 INVALID_ARGUMENT.
+  const prompt =
+    `${SYSTEM_PREAMBLE}\n\nTASK: ${TASKS[kind]}\n\n` +
     (question ? `QUESTION:\n${question}\n\n` : '') +
     `DATA:\n\`\`\`json\n${JSON.stringify(data)}\n\`\`\``
+  const requestBody = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.3, maxOutputTokens: MAX_OUTPUT_TOKENS },
+  })
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS)
   const started = Date.now()
-  // Flash models "think" by default, which is the main source of slow replies (and eats into
-  // maxOutputTokens). These are summarising tasks, so thinking is switched off. Pro models can't
-  // disable thinking, so only Flash / Flash-Lite get the param.
-  const thinkingOff = model.includes('flash')
-  console.log(`Gemini request: model=${model}${Deno.env.get('GEMINI_MODEL') ? ' (from GEMINI_MODEL secret)' : ''} kind=${kind} promptChars=${userText.length} thinkingOff=${thinkingOff} timeoutMs=${GEMINI_TIMEOUT_MS}`)
-  const send = (withThinkingConfig: boolean) => fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: `${SYSTEM_PREAMBLE}\n\nTASK: ${TASKS[kind]}` }] },
-        contents: [{ role: 'user', parts: [{ text: userText }] }],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: MAX_OUTPUT_TOKENS,
-          ...(withThinkingConfig ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-          ...(jsonOutput ? { responseMimeType: 'application/json' } : {}),
-        },
-      }),
-    },
-  )
+  console.log(`Gemini request: model=${model}${Deno.env.get('GEMINI_MODEL') ? ' (from GEMINI_MODEL secret)' : ''} kind=${kind} promptChars=${prompt.length} timeoutMs=${GEMINI_TIMEOUT_MS}`)
   try {
-    let res = await send(thinkingOff)
-    if (res.status === 400 && thinkingOff) {
-      // If this model rejects thinkingBudget: 0, retry once without it (same overall timeout)
-      // rather than failing outright.
-      const errText = await res.text().catch(() => '')
-      if (/thinking/i.test(errText)) {
-        console.warn(`Gemini rejected thinkingBudget=0: model=${model} body=${errText.slice(0, 300).replace(/\s+/g, ' ')} — retrying without it`)
-        res = await send(false)
-      } else {
-        console.error(`Gemini error: model=${model} kind=${kind} status=400 ms=${Date.now() - started} body=${errText.slice(0, 500).replace(/\s+/g, ' ')}`)
-        throw new HttpError(503, 'AI unavailable')
-      }
-    }
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: 'POST',
+        signal: controller.signal,
+        // The key is only ever in this header — never in the body, URL or logs.
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: requestBody,
+      },
+    )
     if (!res.ok) {
-      // Status + the start of Google's response body only — never the request (which carries the
-      // key header). Google's error bodies don't echo the key.
+      // Status + the start of Google's response body (Google's error bodies don't echo the key).
       const errText = await res.text().catch(() => '')
       console.error(`Gemini error: model=${model} kind=${kind} status=${res.status} ms=${Date.now() - started} body=${errText.slice(0, 500).replace(/\s+/g, ' ')}`)
+      if (res.status === 400) {
+        // Debug aid: the exact body we sent (it holds no key — that's header-only), so the
+        // rejected field is visible. Capped so a huge prompt can't flood the log.
+        console.error(`Gemini 400 request body (${requestBody.length} chars): ${requestBody.slice(0, 20_000)}`)
+      }
       throw new HttpError(503, 'AI unavailable')
     }
     const body = await res.json()
@@ -479,7 +466,7 @@ Deno.serve(async (req) => {
     if (kind === 'audit') {
       const groups = sanitizeAuditGroups(body.findings)
       if (groups.length === 0) return json({ audit: { summary: '', explanations: {} } })
-      const text = await callGemini(kind, groups, undefined, true)
+      const text = await callGemini(kind, groups)
       return json({ audit: parseAuditReply(text, groups.map((g) => g.type)) })
     }
 
