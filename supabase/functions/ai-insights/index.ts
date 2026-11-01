@@ -28,9 +28,9 @@ const corsHeaders = {
 // Pinned to a concrete, free-tier-valid model (rather than the moving "gemini-flash-latest" alias)
 // so behaviour and latency are predictable. Overridable via the optional GEMINI_MODEL secret.
 const DEFAULT_MODEL = 'gemini-2.5-flash'
-// Supabase's edge request limit is well above this; 55s leaves headroom for the DB reads.
-const GEMINI_TIMEOUT_MS = 55_000
-const MAX_OUTPUT_TOKENS = 900
+// Supabase's edge request limit (150s) is well above this, leaving headroom for the DB reads.
+const GEMINI_TIMEOUT_MS = 60_000
+const MAX_OUTPUT_TOKENS = 800
 const MAX_QUESTION_CHARS = 500
 const MAX_REVIEW_COMMENTS = 80
 const MAX_COMMENT_CHARS = 300
@@ -383,7 +383,7 @@ async function callGemini(kind: Kind, data: unknown, question?: string, jsonOutp
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS)
   const started = Date.now()
-  console.log(`Gemini request: model=${model} kind=${kind} promptChars=${userText.length}`)
+  console.log(`Gemini request: model=${model}${Deno.env.get('GEMINI_MODEL') ? ' (from GEMINI_MODEL secret)' : ''} kind=${kind} promptChars=${userText.length} thinkingOff=${model.includes('2.5-flash')} timeoutMs=${GEMINI_TIMEOUT_MS}`)
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -399,6 +399,7 @@ async function callGemini(kind: Kind, data: unknown, question?: string, jsonOutp
             maxOutputTokens: MAX_OUTPUT_TOKENS,
             // 2.5 Flash "thinks" by default, which is the main source of slow replies (and eats
             // into maxOutputTokens). These are summarising tasks, so thinking is switched off.
+            // (2.5 Pro can't disable thinking, so it gets the param only for Flash/Flash-Lite.)
             ...(model.includes('2.5-flash') ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
             ...(jsonOutput ? { responseMimeType: 'application/json' } : {}),
           },
@@ -406,9 +407,10 @@ async function callGemini(kind: Kind, data: unknown, question?: string, jsonOutp
       },
     )
     if (!res.ok) {
-      // Status + Google's error message only — never the request (which carries the key header).
-      const errBody = await res.json().catch(() => null)
-      console.error(`Gemini error: model=${model} status=${res.status} message=${String(errBody?.error?.message ?? '').slice(0, 200)}`)
+      // Status + the start of Google's response body only — never the request (which carries the
+      // key header). Google's error bodies don't echo the key.
+      const errText = await res.text().catch(() => '')
+      console.error(`Gemini error: model=${model} kind=${kind} status=${res.status} ms=${Date.now() - started} body=${errText.slice(0, 500).replace(/\s+/g, ' ')}`)
       throw new HttpError(503, 'AI unavailable')
     }
     const body = await res.json()
@@ -416,12 +418,18 @@ async function callGemini(kind: Kind, data: unknown, question?: string, jsonOutp
       .map((p: { text?: string }) => p.text ?? '')
       .join('')
       .trim()
-    console.log(`Gemini ok: model=${model} kind=${kind} ms=${Date.now() - started} finish=${body?.candidates?.[0]?.finishReason ?? '?'}`)
-    if (!text) throw new HttpError(503, 'AI returned no answer')
+    const finish = body?.candidates?.[0]?.finishReason ?? '?'
+    const usage = body?.usageMetadata ?? {}
+    console.log(`Gemini ok: model=${model} kind=${kind} ms=${Date.now() - started} finish=${finish} promptTokens=${usage.promptTokenCount ?? '?'} outputTokens=${usage.candidatesTokenCount ?? '?'} thinkingTokens=${usage.thoughtsTokenCount ?? 0}`)
+    if (!text) {
+      console.error(`Gemini empty answer: model=${model} kind=${kind} finish=${finish} blockReason=${body?.promptFeedback?.blockReason ?? 'none'}`)
+      throw new HttpError(503, 'AI returned no answer')
+    }
     return text
   } catch (e) {
     if (e instanceof HttpError) throw e
-    console.error(`Gemini call failed: model=${model} kind=${kind} ms=${Date.now() - started} error=${e instanceof Error ? e.name : 'unknown'}`)
+    const reason = e instanceof Error && e.name === 'AbortError' ? `timeout after ${GEMINI_TIMEOUT_MS}ms` : e instanceof Error ? `${e.name}: ${e.message.slice(0, 200)}` : 'unknown'
+    console.error(`Gemini call failed: model=${model} kind=${kind} ms=${Date.now() - started} error=${reason}`)
     throw new HttpError(503, 'AI unavailable')
   } finally {
     clearTimeout(timer)
