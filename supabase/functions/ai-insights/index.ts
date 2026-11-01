@@ -25,9 +25,10 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-// Pinned to a concrete, free-tier-valid model (rather than the moving "gemini-flash-latest" alias)
-// so behaviour and latency are predictable. Overridable via the optional GEMINI_MODEL secret.
-const DEFAULT_MODEL = 'gemini-2.5-flash'
+// Pinned to a concrete model (rather than the moving "gemini-flash-latest" alias) so behaviour and
+// latency are predictable. gemini-2.5-flash is retired for new API keys (404). Overridable via the
+// optional GEMINI_MODEL secret.
+const DEFAULT_MODEL = 'gemini-3.8-flash'
 // Supabase's edge request limit (150s) is well above this, leaving headroom for the DB reads.
 const GEMINI_TIMEOUT_MS = 60_000
 const MAX_OUTPUT_TOKENS = 800
@@ -383,29 +384,43 @@ async function callGemini(kind: Kind, data: unknown, question?: string, jsonOutp
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS)
   const started = Date.now()
-  console.log(`Gemini request: model=${model}${Deno.env.get('GEMINI_MODEL') ? ' (from GEMINI_MODEL secret)' : ''} kind=${kind} promptChars=${userText.length} thinkingOff=${model.includes('2.5-flash')} timeoutMs=${GEMINI_TIMEOUT_MS}`)
+  // Flash models "think" by default, which is the main source of slow replies (and eats into
+  // maxOutputTokens). These are summarising tasks, so thinking is switched off. Pro models can't
+  // disable thinking, so only Flash / Flash-Lite get the param.
+  const thinkingOff = model.includes('flash')
+  console.log(`Gemini request: model=${model}${Deno.env.get('GEMINI_MODEL') ? ' (from GEMINI_MODEL secret)' : ''} kind=${kind} promptChars=${userText.length} thinkingOff=${thinkingOff} timeoutMs=${GEMINI_TIMEOUT_MS}`)
+  const send = (withThinkingConfig: boolean) => fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: `${SYSTEM_PREAMBLE}\n\nTASK: ${TASKS[kind]}` }] },
+        contents: [{ role: 'user', parts: [{ text: userText }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          ...(withThinkingConfig ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+          ...(jsonOutput ? { responseMimeType: 'application/json' } : {}),
+        },
+      }),
+    },
+  )
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: `${SYSTEM_PREAMBLE}\n\nTASK: ${TASKS[kind]}` }] },
-          contents: [{ role: 'user', parts: [{ text: userText }] }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: MAX_OUTPUT_TOKENS,
-            // 2.5 Flash "thinks" by default, which is the main source of slow replies (and eats
-            // into maxOutputTokens). These are summarising tasks, so thinking is switched off.
-            // (2.5 Pro can't disable thinking, so it gets the param only for Flash/Flash-Lite.)
-            ...(model.includes('2.5-flash') ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-            ...(jsonOutput ? { responseMimeType: 'application/json' } : {}),
-          },
-        }),
-      },
-    )
+    let res = await send(thinkingOff)
+    if (res.status === 400 && thinkingOff) {
+      // If this model rejects thinkingBudget: 0, retry once without it (same overall timeout)
+      // rather than failing outright.
+      const errText = await res.text().catch(() => '')
+      if (/thinking/i.test(errText)) {
+        console.warn(`Gemini rejected thinkingBudget=0: model=${model} body=${errText.slice(0, 300).replace(/\s+/g, ' ')} — retrying without it`)
+        res = await send(false)
+      } else {
+        console.error(`Gemini error: model=${model} kind=${kind} status=400 ms=${Date.now() - started} body=${errText.slice(0, 500).replace(/\s+/g, ' ')}`)
+        throw new HttpError(503, 'AI unavailable')
+      }
+    }
     if (!res.ok) {
       // Status + the start of Google's response body only — never the request (which carries the
       // key header). Google's error bodies don't echo the key.
