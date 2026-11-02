@@ -36,6 +36,7 @@ interface Guide {
   contracted?: boolean;
   contract_date?: string | null;
   website_consent?: boolean;
+  location_exempt?: boolean;
   auth_user_id?: string | null;
   claim_token?: string | null;
   claimed_at?: string | null;
@@ -94,6 +95,7 @@ export default function GuidesPage() {
     bankAddress: '',
     contracted: false,
     contractDate: '',
+    locationExempt: false,
     optionRates: [] as GuideOptionRate[]
   });
 
@@ -383,6 +385,7 @@ export default function GuidesPage() {
         bankAddress: guide.bank_address || '',
         contracted: guide.contracted || false,
         contractDate: guide.contract_date || '',
+        locationExempt: guide.location_exempt || false,
         optionRates: guide.option_rates || []
       });
     } else {
@@ -407,6 +410,7 @@ export default function GuidesPage() {
         bankAddress: '',
         contracted: false,
         contractDate: '',
+        locationExempt: false,
         optionRates: []
       });
     }
@@ -434,6 +438,7 @@ export default function GuidesPage() {
     contract_date: source.contracted && (source.contractDate ?? source.contract_date)
       ? (source.contractDate ?? source.contract_date)
       : null,
+    location_exempt: !!(source.locationExempt ?? source.location_exempt),
   });
 
   const handleSave = async () => {
@@ -469,11 +474,15 @@ export default function GuidesPage() {
         toast.success('Guide updated');
       }
     } else {
+      // location_exempt is only sent when actually set — false is the column default, and
+      // omitting it keeps new-guide creation working even before its migration has been run.
+      const { location_exempt, ...details } = toEditableDetails(form);
       const payload = {
         user_id: user.id,
         guide_number: form.guideNumber,
         status: form.status,
-        ...toEditableDetails(form),
+        ...details,
+        ...(location_exempt ? { location_exempt: true } : {}),
       };
 
       const { data, error } = await supabase
@@ -892,6 +901,19 @@ export default function GuidesPage() {
                       onChange={e => setForm({...form, notes: e.target.value})}
                       className="aurelia-input resize-none"
                       placeholder="General notes or internal comments..."
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between bg-muted p-3 rounded-xl border border-border">
+                    <div>
+                      <label className="block text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Location Exempt</label>
+                      <span className="text-[10px] text-muted-foreground block mt-0.5">Check-in never asks for this guide's location. They confirm arrival manually, and punctuality is left out of their score (not counted as 0).</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={form.locationExempt}
+                      onChange={e => setForm({...form, locationExempt: e.target.checked})}
+                      className="w-4 h-4 rounded text-gold bg-muted border-border focus:ring-gold"
                     />
                   </div>
                 </div>

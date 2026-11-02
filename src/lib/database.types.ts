@@ -726,6 +726,7 @@ export type Database = {
           inactivated_at: string | null
           languages: string | null
           licensed: boolean | null
+          location_exempt: boolean
           name: string
           notes: string | null
           phone: string | null
@@ -755,6 +756,7 @@ export type Database = {
           inactivated_at?: string | null
           languages?: string | null
           licensed?: boolean | null
+          location_exempt?: boolean
           name: string
           notes?: string | null
           phone?: string | null
@@ -784,6 +786,7 @@ export type Database = {
           inactivated_at?: string | null
           languages?: string | null
           licensed?: boolean | null
+          location_exempt?: boolean
           name?: string
           notes?: string | null
           phone?: string | null

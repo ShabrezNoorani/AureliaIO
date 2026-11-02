@@ -44,6 +44,65 @@ export function mergeArrivalsGuardingPending(
   return [...serverRows, ...carriedOver];
 }
 
+/**
+ * Ids of the company's location-exempt guides (guides.location_exempt — owner-set). Their
+ * arrivals are excluded from every punctuality/combined calculation (see
+ * excludeExemptGuideArrivals in lib/guidePerformance.ts). Resolves to an empty set on any error
+ * (e.g. the column not migrated yet), which is exactly the pre-feature behavior.
+ */
+export async function fetchLocationExemptGuideIds(ownerUserId: string): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('guides')
+    .select('id')
+    .eq('user_id', ownerUserId)
+    .eq('location_exempt', true);
+  if (error || !data) return new Set();
+  return new Set(data.map((g: { id: string }) => g.id));
+}
+
+/**
+ * Whether ONE guide is location-exempt — the check-in page's gate on ever touching geolocation.
+ * Unlike fetchLocationExemptGuideIds this distinguishes "not exempt" (false) from "couldn't tell"
+ * (an error): the caller keeps the arrival button disabled until it gets a definite answer, so an
+ * exempt guide is never prompted for location just because the lookup was slow. A missing column
+ * (migration not run yet, Postgres 42703) is a definite "not exempt" — no guide can be exempt yet.
+ */
+export async function fetchGuideLocationExempt(guideId: string): Promise<boolean | null> {
+  const { data, error } = await supabase
+    .from('guides')
+    .select('location_exempt')
+    .eq('id', guideId)
+    .maybeSingle();
+  if (error) return error.code === '42703' ? false : null;
+  return !!(data as { location_exempt?: boolean } | null)?.location_exempt;
+}
+
+const manualArrivalStorageKey = (guideId: string, sessionId: string) =>
+  `aurelia:manual-arrival:${guideId}:${sessionId}`;
+
+/**
+ * A location-exempt guide's manual "I've arrived" confirmation. Deliberately NOT written to
+ * guide_arrivals (no row, no coordinates, no punctuality) — kept on this device only, so the
+ * button shows as confirmed across reloads without ever creating location or punctuality data.
+ */
+export function recordManualArrival(guideId: string, sessionId: string, arrivedAt: Date): string {
+  const iso = arrivedAt.toISOString();
+  try {
+    localStorage.setItem(manualArrivalStorageKey(guideId, sessionId), iso);
+  } catch {
+    // Storage unavailable (private mode / quota) — the in-memory confirmation still shows.
+  }
+  return iso;
+}
+
+export function readManualArrival(guideId: string, sessionId: string): string | null {
+  try {
+    return localStorage.getItem(manualArrivalStorageKey(guideId, sessionId));
+  } catch {
+    return null;
+  }
+}
+
 export interface ArrivalCoords {
   latitude: number;
   longitude: number;

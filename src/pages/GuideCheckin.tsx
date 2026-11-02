@@ -21,6 +21,7 @@ import { compressCheckinPhoto, uploadCheckinPhoto } from '@/lib/checkinPhotos';
 import {
   ARRIVAL_COLUMNS, ArrivalRow, arrivalRetryKey, buildArrivalPayload, formatArrivalStatus,
   getArrivalCoords, mergeArrivalsGuardingPending, saveArrival, sessionIdFromArrivalKey,
+  fetchGuideLocationExempt, recordManualArrival, readManualArrival,
 } from '@/lib/guideArrivals';
 import { fetchMeetingPoints, evaluateArrivalGate, type MeetingPointRow } from '@/lib/meetingPoints';
 import { fetchCompanyGuides, transferTourToGuide, type CompanyGuide } from '@/lib/guideTransfer';
@@ -129,6 +130,13 @@ export default function GuideCheckin() {
   // Sessions whose arrival tap is mid-flight (waiting on the location fix) — distinct from the
   // retry queue, which only takes over once there's a payload to write.
   const [arrivingSessionIds, setArrivingSessionIds] = useState<Set<string>>(new Set());
+  // Owner-set guides.location_exempt for THIS guide. null = not known yet: the arrival button
+  // stays disabled until it resolves, so an exempt guide is never prompted for location just
+  // because this lookup was slower than their tap.
+  const [locationExempt, setLocationExempt] = useState<boolean | null>(null);
+  // An exempt guide's manual arrival confirmations (session_id -> ISO tap time) — device-local
+  // only, never a guide_arrivals row (see recordManualArrival).
+  const [manualArrivals, setManualArrivals] = useState<Map<string, string>>(new Map());
   // Split from a single "loading" flag so the page can render progressively: sessions (known
   // after the tour_sessions stage) show almost immediately, with each session's guest list
   // showing its own small inline loader until bookings/checkins (the slower, later stage) land —
@@ -631,6 +639,29 @@ export default function GuideCheckin() {
     };
   }, [guideId, guideUserId]);
 
+  // Resolves this guide's location exemption once per guide. Re-runs on a manual refresh too, so
+  // an owner change is picked up without a full app reload; a failed lookup leaves the previous
+  // answer in place (or null, keeping the button disabled until a refresh succeeds).
+  useEffect(() => {
+    if (!guideId) return;
+    let cancelled = false;
+    fetchGuideLocationExempt(guideId).then(exempt => {
+      if (!cancelled && exempt !== null) setLocationExempt(exempt);
+    });
+    return () => { cancelled = true; };
+  }, [guideId, refreshing]);
+
+  // Rehydrates an exempt guide's device-local manual confirmations for today's sessions.
+  useEffect(() => {
+    if (!guideId || locationExempt !== true) return;
+    const next = new Map<string, string>();
+    sessions.forEach(s => {
+      const iso = readManualArrival(guideId, s.id);
+      if (iso) next.set(s.id, iso);
+    });
+    setManualArrivals(next);
+  }, [guideId, locationExempt, sessions]);
+
   // Realtime replaces the old 30s interval poll: instead of reloading the whole page on a timer
   // (which visibly refreshed the screen and could interrupt a check-in in progress), quietly
   // refresh just the affected slice of state whenever a checkins or session_bookings row actually
@@ -869,6 +900,17 @@ export default function GuideCheckin() {
   const handleArrive = async (session: TourSession) => {
     if (!guideUserId || !guideId) return;
     if (arrivingSessionIds.has(session.id)) return;
+    // Exemption still unknown — never fall through to the GPS path on a guess.
+    if (locationExempt === null) return;
+
+    // LOCATION-EXEMPT guide (owner-set): a manual tap-to-confirm, accepted without any
+    // geo-verification. Never requests geolocation, never evaluates the meeting-point gate, and
+    // never writes a guide_arrivals row — so no location and no punctuality data exist for them.
+    if (locationExempt) {
+      const iso = recordManualArrival(guideId, session.id, new Date());
+      setManualArrivals(prev => new Map(prev).set(session.id, iso));
+      return;
+    }
 
     const arrivedAt = new Date();
     setArrivingSessionIds(prev => new Set(prev).add(session.id));
@@ -1189,8 +1231,12 @@ export default function GuideCheckin() {
   const arrivalStatusBySession = useMemo(() => {
     const m = new Map<string, string>();
     arrivals.forEach(a => m.set(a.session_id, formatArrivalStatus(a.arrived_at, a.minutes_late)));
+    // An exempt guide's manual confirmation has no punctuality — time only, never on-time/late.
+    manualArrivals.forEach((iso, sessionId) => {
+      if (!m.has(sessionId)) m.set(sessionId, `${formatArrivalStatus(iso, null)} (confirmed)`);
+    });
     return m;
-  }, [arrivals]);
+  }, [arrivals, manualArrivals]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -1324,6 +1370,7 @@ export default function GuideCheckin() {
                   guestsLoaded={guestsLoaded}
                   arrivalStatus={arrivalStatusBySession.get(session.id) ?? null}
                   arriving={arrivingSessionIds.has(session.id)}
+                  arrivalReady={locationExempt !== null}
                   arrivalSyncStuck={stuckArrivalSessionIds.has(session.id)}
                   stuckBookingRefs={stuckBookingRefs}
                   getDisplayName={getDisplayName}
@@ -1384,6 +1431,7 @@ function GuideSessionCard({
   guestsLoaded,
   arrivalStatus,
   arriving,
+  arrivalReady,
   arrivalSyncStuck,
   stuckBookingRefs,
   getDisplayName,
@@ -1417,6 +1465,8 @@ function GuideSessionCard({
   guestsLoaded: boolean;
   arrivalStatus: string | null;
   arriving: boolean;
+  /** False until this guide's location exemption is known — the arrival button stays disabled. */
+  arrivalReady: boolean;
   arrivalSyncStuck: boolean;
   stuckBookingRefs: Set<string>;
   getDisplayName: (b: Booking) => string;
@@ -1473,6 +1523,7 @@ function GuideSessionCard({
         <GuideArrivalCard
           status={arrivalStatus}
           pending={arriving}
+          disabled={!arrivalReady}
           syncStuck={arrivalSyncStuck}
           onArrive={onArrive}
         />

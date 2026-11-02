@@ -22,6 +22,9 @@ export interface GuideEditableDetails {
   bank_address: string | null;
   contracted: boolean;
   contract_date: string | null;
+  /** Owner-only (DB-enforced by guides_location_exempt_owner_only): no geolocation at check-in,
+      punctuality treated as no data. */
+  location_exempt: boolean;
 }
 
 const FIELD_LABELS: Record<keyof GuideEditableDetails, string> = {
@@ -41,6 +44,7 @@ const FIELD_LABELS: Record<keyof GuideEditableDetails, string> = {
   bank_address: 'Bank address',
   contracted: 'Contracted',
   contract_date: 'Contract date',
+  location_exempt: 'Location exempt',
 };
 
 // Single write path for owner edits to a guide's own details, so every change lands in

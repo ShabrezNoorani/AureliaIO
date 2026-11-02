@@ -19,7 +19,7 @@ import {
   type GuideAssignmentRow, type GuideMonthlyRow, type GuideReviewRow,
   type AdminDateFilter, type GuidePaymentSummary, type AdminStatusFilter, type GuideReviewScore,
   type ArrivalPunctualityRow, type SessionGuideForEarnings, type SessionForEarnings, type UnifiedMonthlyRow,
-  type CheckinForGuiding, type SessionBookingForGuiding,
+  type CheckinForGuiding, type SessionBookingForGuiding, excludeExemptGuideArrivals,
 } from '@/lib/guidePerformance';
 import { updateGuideMonthlyPayment, insertGuideMonthlyPayment } from '@/lib/guideRatingActions';
 import { addGuideReview, updateGuideReview, deleteGuideReview, setReviewExcluded, approveGuideReview, rejectGuideReview, type ReviewPayload } from '@/lib/guideReviewActions';
@@ -302,7 +302,12 @@ export default function GuideDashboard() {
     if (aRes.data) setAssignments(aRes.data);
     if (rRes.data) setOptionRates(rRes.data);
     setMonthlyRows(monthlyRes.data || []);
-    setArrivals(arrivalsRes.data || []);
+    // Location-exempt guides' punctuality is "no data" — their arrivals never reach any
+    // punctuality/combined calculation (guides is select('*'), so the flag is already here).
+    const exemptGuideIds = new Set(
+      (gRes.data || []).filter((g: { location_exempt?: boolean }) => g.location_exempt).map((g: { id: string }) => g.id)
+    );
+    setArrivals(excludeExemptGuideArrivals(arrivalsRes.data || [], exemptGuideIds));
     setSessionGuidesForPay(sgRes.data || []);
     setSessionsForPay(sessRes.data || []);
     applyReviewRows(reviewsRes.data || []);

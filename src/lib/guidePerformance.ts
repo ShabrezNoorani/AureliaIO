@@ -712,6 +712,21 @@ export interface ArrivalForPeriod extends ArrivalPunctualityRow {
   arrived_at: string;
 }
 
+/**
+ * Drops every arrival belonging to a location-exempt guide (guides.location_exempt), so their
+ * punctuality reads as "no data" (null) rather than as any measured value — including arrivals
+ * recorded before they were marked exempt. Applied where arrivals are loaded, ahead of every
+ * punctuality/combined calculation, so computeCombinedMetric's existing "a missing part is
+ * dropped, never scored 0" rule is what makes their combined score fall back to review-only.
+ */
+export function excludeExemptGuideArrivals<T extends { guide_id: string | null }>(
+  arrivals: T[],
+  exemptGuideIds: ReadonlySet<string>,
+): T[] {
+  if (exemptGuideIds.size === 0) return arrivals;
+  return arrivals.filter((a) => !(a.guide_id && exemptGuideIds.has(a.guide_id)));
+}
+
 export function filterArrivalsByPeriod(arrivals: ArrivalForPeriod[], bounds: DateRangeBounds): ArrivalForPeriod[] {
   return arrivals.filter((a) => {
     const d = a.arrived_at.slice(0, 10);

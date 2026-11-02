@@ -7,10 +7,12 @@ interface GuideArrivalCardProps {
   pending: boolean;
   /** True when this arrival's write has been retrying in the background for several minutes. */
   syncStuck?: boolean;
+  /** Not tappable yet (e.g. still resolving whether this guide is location-exempt). */
+  disabled?: boolean;
   onArrive: () => void;
 }
 
-export default function GuideArrivalCard({ status, pending, syncStuck, onArrive }: GuideArrivalCardProps) {
+export default function GuideArrivalCard({ status, pending, syncStuck, disabled, onArrive }: GuideArrivalCardProps) {
   if (status) {
     return (
       <div className="flex items-center gap-2.5 bg-green-600/10 border border-green-600/20 rounded-2xl px-4 py-3">
@@ -28,7 +30,7 @@ export default function GuideArrivalCard({ status, pending, syncStuck, onArrive 
   return (
     <button
       onClick={onArrive}
-      disabled={pending}
+      disabled={pending || disabled}
       className="w-full bg-gold text-black py-4 rounded-2xl font-black text-sm uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-60 active:scale-[0.98] transition-all"
     >
       <MapPin size={16} />

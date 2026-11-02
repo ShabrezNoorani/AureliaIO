@@ -9,7 +9,9 @@ import {
   type SessionGuideForTourCount, type SessionDateForTourCount, type ArrivalForPeriod,
   type ScoreBand, type LeaderboardMetric, type LeaderboardPeriod,
   isApprovedReview, reviewCountsTowardScore,
+  excludeExemptGuideArrivals,
 } from '@/lib/guidePerformance';
+import { fetchLocationExemptGuideIds } from '@/lib/guideArrivals';
 
 type ScoringReviewRow = {
   id: string; guide_id: string; stars: number; review_date: string;
@@ -107,7 +109,7 @@ export function useGuideOwnScore(
       }
       setLoading(true);
       const [
-        myReviewsRes, allReviewsRes, guidesRes, sbRes, checkinsRes, sessionGuidesRes, sessionsRes, arrivalsRes,
+        myReviewsRes, allReviewsRes, guidesRes, sbRes, checkinsRes, sessionGuidesRes, sessionsRes, arrivalsRes, exemptGuideIds,
       ] = await Promise.all([
         supabase.from('guide_reviews').select('*').eq('guide_id', guideId),
         fetchScoringReviews(),
@@ -125,6 +127,7 @@ export function useGuideOwnScore(
         // Company-wide, guide_id only — no names — for the Punctuality/Combined metrics' ranking.
         supabase.from('guide_arrivals').select('guide_id, arrived_at, minutes_late')
           .eq('user_id', guideUserId).gte('arrived_at', ADMIN_DEFAULT_FILTER_START),
+        fetchLocationExemptGuideIds(guideUserId),
       ]);
       if (!mounted) return;
 
@@ -141,7 +144,8 @@ export function useGuideOwnScore(
       setCheckins(checkinsRes.data || []);
       setSessionGuides(sessionGuidesRes.data || []);
       setSessions(sessionsRes.data || []);
-      setArrivals(arrivalsRes.data || []);
+      // Location-exempt guides' punctuality is "no data" — same exclusion the owner's boards apply.
+      setArrivals(excludeExemptGuideArrivals(arrivalsRes.data || [], exemptGuideIds));
       setMyReviews(myReviewsRes.data || []);
       setLoading(false);
     };

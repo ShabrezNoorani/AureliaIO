@@ -9,7 +9,7 @@ import {
   computeCheckedInBookingRecords, countCheckedInBookingsByGuide, countCheckedInBookingsByGuideAndMonth,
   groupReviewsByMonth, computeGuideLeaderboard, getScoreBand,
   computeCombinedGuideScore, PUNCTUALITY_SCORE_WEIGHT, GUIDE_SCORE_MIN_BOOKINGS, COMBINED_SCORE_WEIGHTS,
-  getCombinedScoreBand, getMetricScoreBand,
+  getCombinedScoreBand, getMetricScoreBand, excludeExemptGuideArrivals,
   ADMIN_DEFAULT_FILTER_START,
   PUNCTUALITY_GRACE_MINUTES,
   computeToursPerGuide, computeCheckedInBookingCountsForPeriod, computeReviewPointsPerUnit,
@@ -1452,5 +1452,39 @@ describe('getCombinedScoreBand / getMetricScoreBand — verdicts for the 0-100 c
     expect(getMetricScoreBand('combined', 80)).toBe('excellent');
     expect(getMetricScoreBand('perTour', 1)).toBeNull();
     expect(getMetricScoreBand('punctuality', 100)).toBeNull();
+  });
+});
+
+describe('location-exempt guides — punctuality is "no data", never a penalty', () => {
+  const arrivals = [
+    { guide_id: 'exempt', arrived_at: '2026-10-05T09:00:00Z', minutes_late: 30 },
+    { guide_id: 'exempt', arrived_at: '2026-10-06T09:00:00Z', minutes_late: 45 },
+    { guide_id: 'normal', arrived_at: '2026-10-05T09:00:00Z', minutes_late: 30 },
+  ];
+  const fiveStars = [1, 2, 3].map(i => review({ id: `r${i}`, guide_id: 'exempt', stars: 5 }));
+
+  it('drops only the exempt guide\'s arrivals, leaving everyone else\'s untouched', () => {
+    const kept = excludeExemptGuideArrivals(arrivals, new Set(['exempt']));
+    expect(kept).toEqual([arrivals[2]]);
+  });
+
+  it('is a no-op when no guide is exempt', () => {
+    expect(excludeExemptGuideArrivals(arrivals, new Set())).toBe(arrivals);
+  });
+
+  it('makes the exempt guide\'s punctuality null rather than 0', () => {
+    const mine = excludeExemptGuideArrivals(arrivals, new Set(['exempt'])).filter(a => a.guide_id === 'exempt');
+    expect(computePunctualityStats(mine).onTimePct).toBeNull();
+    expect(computeMetricValue('punctuality', fiveStars, 3, 3, mine)).toBeNull();
+  });
+
+  it('falls the combined score back to review-only (same as computeCombinedMetric with no punctuality)', () => {
+    const mine = excludeExemptGuideArrivals(arrivals, new Set(['exempt'])).filter(a => a.guide_id === 'exempt');
+    const reviewScore = computeGuideReviewScore(fiveStars, 3).score;
+    const combined = computeMetricValue('combined', fiveStars, 3, 3, mine);
+    expect(combined).toBe(normalizeReviewScoreTo100(reviewScore));
+    // Without the exemption, the same guide's lateness would have dragged the score down.
+    const unexempted = computeMetricValue('combined', fiveStars, 3, 3, arrivals.filter(a => a.guide_id === 'exempt'));
+    expect(unexempted!).toBeLessThan(combined!);
   });
 });

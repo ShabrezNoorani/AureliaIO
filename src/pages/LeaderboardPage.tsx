@@ -9,7 +9,9 @@ import {
   type GuideReviewRow, type CheckinForGuiding, type SessionBookingForGuiding,
   type SessionGuideForTourCount, type SessionDateForTourCount, type ArrivalForPeriod,
   type LeaderboardMetric, type LeaderboardPeriod,
+  excludeExemptGuideArrivals,
 } from '@/lib/guidePerformance';
+import { fetchLocationExemptGuideIds } from '@/lib/guideArrivals';
 import ScoreInfoTooltip from '@/components/guide/ScoreInfoTooltip';
 import LeaderboardControls from '@/components/guide/LeaderboardControls';
 
@@ -46,7 +48,7 @@ export default function LeaderboardPage() {
   const fetchData = async () => {
     if (!user) return;
     setLoading(true);
-    const [guidesRes, reviewsRes, checkinsRes, sbRes, sessionGuidesRes, sessionsRes, arrivalsRes] = await Promise.all([
+    const [guidesRes, reviewsRes, checkinsRes, sbRes, sessionGuidesRes, sessionsRes, arrivalsRes, exemptGuideIds] = await Promise.all([
       supabase.from('guides').select('id, name, guide_number').eq('user_id', user.id).order('name'),
       supabase.from('guide_reviews').select('*').eq('user_id', user.id).gte('review_date', ADMIN_DEFAULT_FILTER_START),
       // travel_date is the checkin's OWN date — computeCheckedInBookingCountsForPeriod counts off
@@ -57,6 +59,7 @@ export default function LeaderboardPage() {
       supabase.from('session_guides').select('guide_id, session_id, status').eq('user_id', user.id),
       supabase.from('tour_sessions').select('id, tour_date').eq('user_id', user.id).gte('tour_date', ADMIN_DEFAULT_FILTER_START),
       supabase.from('guide_arrivals').select('guide_id, arrived_at, minutes_late').eq('user_id', user.id).gte('arrived_at', ADMIN_DEFAULT_FILTER_START),
+      fetchLocationExemptGuideIds(user.id),
     ]);
     setGuides(guidesRes.data || []);
     // Pending guide-submitted reviews never reach the leaderboard until the owner approves them.
@@ -65,7 +68,8 @@ export default function LeaderboardPage() {
     setSessionBookings(sbRes.data || []);
     setSessionGuides(sessionGuidesRes.data || []);
     setSessions(sessionsRes.data || []);
-    setArrivals(arrivalsRes.data || []);
+    // Location-exempt guides' punctuality is "no data", never a measured value.
+    setArrivals(excludeExemptGuideArrivals(arrivalsRes.data || [], exemptGuideIds));
     setLoading(false);
   };
 
