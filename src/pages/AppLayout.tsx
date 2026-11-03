@@ -343,6 +343,11 @@ const AppLayout = () => {
         {view === 'changelog' && <ChangeLogPage />}
         {view === 'meeting-points' && <MeetingPointsPage />}
         {view === 'ai-insights' && <AiInsightsPage onNavigate={setView} />}
+
+        {/* In normal flow after the page content (never fixed), so it can't overlap anything. */}
+        <footer className="px-6 py-3 text-center text-[10px] text-muted-foreground/70 select-none">
+          AURELIA · Made in Paris <span role="img" aria-label="France">🇫🇷</span>
+        </footer>
       </main>
 
       {lastSynced && (

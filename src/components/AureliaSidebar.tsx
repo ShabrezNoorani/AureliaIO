@@ -43,6 +43,22 @@ interface SidebarItemProps {
   collapsed?: boolean;
 }
 
+interface NavItem {
+  label: string;
+  icon: React.ElementType;
+  active: boolean;
+  onClick: () => void;
+  badge?: number;
+}
+
+interface NavGroup {
+  id: string;
+  label: string;
+  /** Header icon only (the items keep their own icons). */
+  icon: React.ElementType;
+  items: NavItem[];
+}
+
 const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, title, badge, collapsed }: SidebarItemProps) => {
   const [isHovered, setIsHovered] = useState(false);
 
@@ -133,8 +149,13 @@ export default function AureliaSidebar({
   const { user, profile } = useAuth();
   const navigate = useNavigate();
 
-  const [overviewExpanded, setOverviewExpanded] = useState(true);
-  const [operationsExpanded, setOperationsExpanded] = useState(true);
+  // Every group starts expanded; a header tap toggles just that group.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (id: string) => setCollapsedGroups(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   // `collapsed` is a desktop-only concept — mobile always shows the full sidebar (it already has
   // its own show/hide via mobileOpen). Tracks the md breakpoint live so resizing/rotating a window
@@ -170,6 +191,47 @@ export default function AureliaSidebar({
   };
 
   const currentThemeObj = THEMES[getTheme()];
+
+  // The single definition of the owner nav — both the grouped view and the collapsed icon rail
+  // render from this, so they always show the same items, in the same order, with the same handlers.
+  const navGroups: NavGroup[] = [
+    { id: 'overview', label: 'Overview', icon: LayoutDashboard, items: [
+      { label: 'Home', icon: Home, active: activeView === 'executive', onClick: () => handleNavigate('executive') },
+    ] },
+    { id: 'operations', label: 'Operations', icon: Calendar, items: [
+      { label: "Today's Tours", icon: Calendar, active: activeView === 'today', onClick: () => handleNavigate('today') },
+      { label: 'Live Board', icon: Activity, active: activeView === 'live', onClick: () => handleNavigate('live', '/app/live') },
+      { label: 'Dispatch', icon: Send, active: activeView === 'dispatch', onClick: () => handleNavigate('dispatch', '/app/dispatch') },
+      { label: 'Meeting Points', icon: MapPin, active: activeView === 'meeting-points', onClick: () => handleNavigate('meeting-points', '/app/meeting-points') },
+    ] },
+    { id: 'guides', label: 'Guides', icon: Users, items: [
+      { label: 'Guides', icon: Users, active: activeView === 'guides', onClick: () => handleNavigate('guides', '/app/guides') },
+      { label: 'Guide Dashboard', icon: BarChart3, active: activeView === 'guide-dashboard', onClick: () => handleNavigate('guide-dashboard', '/app/guide-dashboard') },
+      { label: 'Leaderboard', icon: Trophy, active: activeView === 'leaderboard', onClick: () => handleNavigate('leaderboard', '/app/leaderboard') },
+    ] },
+    { id: 'finance', label: 'Finance', icon: Wallet, items: [
+      { label: 'Financial Ledger', icon: BookOpen, active: activeView === 'ledger', onClick: () => handleNavigate('ledger'), badge: newBookingsCount },
+      { label: 'Admin Costs', icon: Wallet, active: activeView === 'admin-costs', onClick: () => handleNavigate('admin-costs') },
+      { label: 'Breakdown P&L', icon: LineChart, active: activeView === 'breakdown-pnl', onClick: () => handleNavigate('breakdown-pnl', '/app/breakdown-pnl') },
+    ] },
+    { id: 'insights', label: 'Insights', icon: Sparkles, items: [
+      { label: 'Analytics', icon: BarChart3, active: activeView === 'analytics', onClick: () => handleNavigate('analytics') },
+      { label: 'Simulator', icon: TrendingUp, active: activeView === 'simulator', onClick: () => handleNavigate('simulator') },
+      { label: 'AI Insights', icon: Sparkles, active: activeView === 'ai-insights', onClick: () => handleNavigate('ai-insights', '/app/ai-insights') },
+      { label: 'AQUILA', icon: Radar, active: false, onClick: openAquila },
+    ] },
+    { id: 'catalog', label: 'Catalog', icon: Package, items: [
+      { label: 'Products & Pricing', icon: Package, active: activeView === 'products' || activeView === 'editor', onClick: () => handleNavigate('products') },
+      { label: 'Marketplace', icon: Map, active: activeView === 'marketplace', onClick: () => handleNavigate('marketplace', '/app/marketplace') },
+      { label: 'New Product', icon: Plus, active: false, onClick: () => { onNewProduct(); onCloseMobile(); } },
+    ] },
+  ];
+
+  // SYSTEM — pinned to the bottom of the sidebar, below the scrolling groups.
+  const systemItems: NavItem[] = [
+    { label: 'Change Log', icon: List, active: activeView === 'changelog', onClick: () => handleNavigate('changelog', '/app/changelog') },
+    { label: 'Settings', icon: Settings, active: activeView === 'settings', onClick: () => handleNavigate('settings') },
+  ];
 
   return (
     <>
@@ -210,118 +272,58 @@ export default function AureliaSidebar({
       {/* Navigation */}
       <div className="flex-1 overflow-y-auto px-3 space-y-1 pb-4 aurelia-scrollbar">
         {iconOnly ? (
-          /* Flat icon rail — every item, no group headers/dividers (nothing to expand when
-             there's no room for a group label anyway). Same items, same order, same handlers as
-             the grouped view below — just presented flat. */
+          /* Flat icon rail — every item, no group headers (no room for a label anyway), with a
+             thin divider between groups. Same items, order and handlers as the grouped view. */
           <div className="flex flex-col space-y-0.5">
-            <SidebarItem icon={Home} label="Home" active={activeView === 'executive'} onClick={() => handleNavigate('executive')} collapsed />
-            <SidebarItem icon={TrendingUp} label="Simulator" active={activeView === 'simulator'} onClick={() => handleNavigate('simulator')} collapsed />
-            <SidebarItem icon={BarChart3} label="Analytics" active={activeView === 'analytics'} onClick={() => handleNavigate('analytics')} collapsed />
-            <SidebarItem icon={LineChart} label="Breakdown P&L" active={activeView === 'breakdown-pnl'} onClick={() => handleNavigate('breakdown-pnl', '/app/breakdown-pnl')} collapsed />
-            <SidebarItem icon={Sparkles} label="AI Insights" active={activeView === 'ai-insights'} onClick={() => handleNavigate('ai-insights', '/app/ai-insights')} collapsed />
-            <SidebarItem icon={Radar} label="AQUILA" active={false} onClick={openAquila} collapsed />
-            <SidebarItem icon={Package} label="Products & Pricing" active={activeView === 'products' || activeView === 'editor'} onClick={() => handleNavigate('products')} collapsed />
-            <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => handleNavigate('ledger')} badge={newBookingsCount} collapsed />
-            <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => handleNavigate('admin-costs')} collapsed />
-            <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => handleNavigate('today')} collapsed />
-            <SidebarItem icon={Activity} label="Live Board" active={activeView === 'live'} onClick={() => handleNavigate('live', '/app/live')} collapsed />
-            <SidebarItem icon={Send} label="Dispatch" active={activeView === 'dispatch'} onClick={() => handleNavigate('dispatch', '/app/dispatch')} collapsed />
-            <SidebarItem icon={MapPin} label="Meeting Points" active={activeView === 'meeting-points'} onClick={() => handleNavigate('meeting-points', '/app/meeting-points')} collapsed />
-            <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => handleNavigate('guides', '/app/guides')} collapsed />
-            <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => handleNavigate('guide-dashboard', '/app/guide-dashboard')} collapsed />
-            <SidebarItem icon={Trophy} label="Leaderboard" active={activeView === 'leaderboard'} onClick={() => handleNavigate('leaderboard', '/app/leaderboard')} collapsed />
-            <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => handleNavigate('marketplace', '/app/marketplace')} collapsed />
-            <SidebarItem icon={List} label="Change Log" active={activeView === 'changelog'} onClick={() => handleNavigate('changelog', '/app/changelog')} collapsed />
-            <SidebarItem icon={Plus} label="New Product" active={false} onClick={() => { onNewProduct(); onCloseMobile(); }} collapsed />
+            {navGroups.map((group, gi) => (
+              <div key={group.id} className="flex flex-col space-y-0.5">
+                {gi > 0 && <div className="my-1.5 mx-3 border-t opacity-30" style={{ borderColor: 'hsl(var(--theme-border))' }} />}
+                {group.items.map(item => (
+                  <SidebarItem key={item.label} icon={item.icon} label={item.label} active={item.active} onClick={item.onClick} badge={item.badge} collapsed />
+                ))}
+              </div>
+            ))}
           </div>
         ) : (
-        <>
-        {/* GROUP 1: OVERVIEW */}
-        <div>
-          <button
-            onClick={() => setOverviewExpanded(!overviewExpanded)}
-            className="w-full flex items-center justify-between px-4 py-2 text-[10px] font-bold uppercase tracking-wider transition-colors hover:opacity-100 opacity-80"
-            style={{ color: 'hsl(var(--theme-text-sec))' }}
-          >
-            <div className="flex items-center gap-2">
-              <LayoutDashboard size={14} />
-              <span>Overview</span>
-            </div>
-            {overviewExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-          
-          {overviewExpanded && (
-            <div className="mt-1 flex flex-col space-y-0.5">
-              <SidebarItem icon={Home} label="Home" active={activeView === 'executive'} onClick={() => handleNavigate('executive')} indent />
-              <SidebarItem icon={TrendingUp} label="Simulator" active={activeView === 'simulator'} onClick={() => handleNavigate('simulator')} indent />
-              <SidebarItem icon={BarChart3} label="Analytics" active={activeView === 'analytics'} onClick={() => handleNavigate('analytics')} indent />
-              <SidebarItem icon={LineChart} label="Breakdown P&L" active={activeView === 'breakdown-pnl'} onClick={() => handleNavigate('breakdown-pnl', '/app/breakdown-pnl')} indent />
-              <SidebarItem icon={Sparkles} label="AI Insights" active={activeView === 'ai-insights'} onClick={() => handleNavigate('ai-insights', '/app/ai-insights')} indent />
-              <SidebarItem icon={Radar} label="AQUILA" active={false} onClick={openAquila} indent />
-            </div>
-          )}
-        </div>
-
-        <div className="my-2 mx-4 border-t opacity-30" style={{ borderColor: 'hsl(var(--theme-border))' }} />
-
-        {/* SINGLE: PRODUCTS & PRICING */}
-        <SidebarItem
-          icon={Package}
-          label="Products & Pricing"
-          active={activeView === 'products' || activeView === 'editor'}
-          onClick={() => handleNavigate('products')}
-        />
-
-        <div className="my-2 mx-4 border-t opacity-30" style={{ borderColor: 'hsl(var(--theme-border))' }} />
-
-        {/* GROUP 2: OPERATIONS */}
-        <div>
-          <button
-            onClick={() => setOperationsExpanded(!operationsExpanded)}
-            className="w-full flex items-center justify-between px-4 py-2 text-[10px] font-bold uppercase tracking-wider transition-colors hover:opacity-100 opacity-80"
-            style={{ color: 'hsl(var(--theme-text-sec))' }}
-          >
-            <div className="flex items-center gap-2">
-              <Wallet size={14} />
-              <span>Operations</span>
-            </div>
-            {operationsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-
-          {operationsExpanded && (
-            <div className="mt-1 flex flex-col space-y-0.5">
-              <SidebarItem icon={BookOpen} label="Financial Ledger" active={activeView === 'ledger'} onClick={() => handleNavigate('ledger')} indent badge={newBookingsCount} />
-              <SidebarItem icon={Wallet} label="Admin Costs" active={activeView === 'admin-costs'} onClick={() => handleNavigate('admin-costs')} indent />
-              <SidebarItem icon={Calendar} label="Today's Tours" active={activeView === 'today'} onClick={() => handleNavigate('today')} indent />
-              <SidebarItem icon={Activity} label="Live Board" active={activeView === 'live'} onClick={() => handleNavigate('live', '/app/live')} indent />
-              <SidebarItem icon={Send} label="Dispatch" active={activeView === 'dispatch'} onClick={() => handleNavigate('dispatch', '/app/dispatch')} indent />
-              <SidebarItem icon={MapPin} label="Meeting Points" active={activeView === 'meeting-points'} onClick={() => handleNavigate('meeting-points', '/app/meeting-points')} indent />
-              <SidebarItem icon={Users} label="Guides" active={activeView === 'guides'} onClick={() => handleNavigate('guides', '/app/guides')} indent />
-               <SidebarItem icon={BarChart3} label="Guide Dashboard" active={activeView === 'guide-dashboard'} onClick={() => handleNavigate('guide-dashboard', '/app/guide-dashboard')} indent />
-              <SidebarItem icon={Trophy} label="Leaderboard" active={activeView === 'leaderboard'} onClick={() => handleNavigate('leaderboard', '/app/leaderboard')} indent />
-              <SidebarItem icon={Map} label="Marketplace" active={activeView === 'marketplace'} onClick={() => handleNavigate('marketplace', '/app/marketplace')} indent />
-              <SidebarItem icon={List} label="Change Log" active={activeView === 'changelog'} onClick={() => handleNavigate('changelog', '/app/changelog')} indent />
-            </div>
-          )}
-        </div>
-
-        <div className="my-2 mx-4 border-t opacity-30" style={{ borderColor: 'hsl(var(--theme-border))' }} />
-
-        {/* SINGLE: NEW PRODUCT */}
-        <SidebarItem icon={Plus} label="New Product" active={false} onClick={() => { onNewProduct(); onCloseMobile(); }} />
-        </>
+          navGroups.map((group, gi) => {
+            const expanded = !collapsedGroups.has(group.id);
+            return (
+              <div key={group.id}>
+                {gi > 0 && <div className="my-2 mx-4 border-t opacity-30" style={{ borderColor: 'hsl(var(--theme-border))' }} />}
+                <button
+                  onClick={() => toggleGroup(group.id)}
+                  className="w-full flex items-center justify-between px-4 py-2 text-[10px] font-bold uppercase tracking-wider transition-colors hover:opacity-100 opacity-80"
+                  style={{ color: 'hsl(var(--theme-text-sec))' }}
+                >
+                  <div className="flex items-center gap-2">
+                    <group.icon size={14} />
+                    <span>{group.label}</span>
+                  </div>
+                  {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
+                {expanded && (
+                  <div className="mt-1 flex flex-col space-y-0.5">
+                    {group.items.map(item => (
+                      <SidebarItem key={item.label} icon={item.icon} label={item.label} active={item.active} onClick={item.onClick} badge={item.badge} indent />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
 
-      {/* Settings above bottom info */}
-      <div className="px-3 pb-2 pt-2 border-t border-border/30">
-        <SidebarItem
-          icon={Settings}
-          label="Settings"
-          active={activeView === 'settings'}
-          onClick={() => handleNavigate('settings')}
-          collapsed={iconOnly}
-        />
+      {/* SYSTEM — Change Log + Settings, above the bottom info */}
+      <div className="px-3 pb-2 pt-2 border-t border-border/30 flex flex-col space-y-0.5">
+        {!iconOnly && (
+          <div className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider opacity-80" style={{ color: 'hsl(var(--theme-text-sec))' }}>
+            System
+          </div>
+        )}
+        {systemItems.map(item => (
+          <SidebarItem key={item.label} icon={item.icon} label={item.label} active={item.active} onClick={item.onClick} collapsed={iconOnly} />
+        ))}
       </div>
 
       {/* Bottom section */}
