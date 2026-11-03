@@ -277,6 +277,7 @@ export default function HowItWorksPage() {
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-semibold" style={{ color: INK_SOFT }}>
             <Link to="/how-it-works" className="transition-colors hover:opacity-70">How it works</Link>
             <Link to="/pricing" className="transition-colors hover:opacity-70">Pricing</Link>
+            <Link to="/faq" className="transition-colors hover:opacity-70">FAQ</Link>
             <a href="mailto:shabirshabrez1998@gmail.com" className="transition-colors hover:opacity-70">Contact</a>
           </div>
           <p className="text-xs font-medium" style={{ color: INK_MUTED }}>© 2026 AURELIA</p>

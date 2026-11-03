@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight, Camera, Users, BarChart3, Wallet, Star, MapPin, Quote,
-  Sparkles, ShieldCheck, MessageSquareText, Tag, HelpCircle, Inbox, Trophy, Scale,
+  Sparkles, ShieldCheck, MessageSquareText, Tag, HelpCircle, Inbox, Trophy, Scale, Radar, Check,
 } from 'lucide-react';
 import Logo from '@/components/Logo';
 
@@ -71,9 +71,11 @@ interface FeatureSectionProps {
   copy: string;
   reverse?: boolean;
   visual: ReactNode;
+  /** Optional content under the copy (e.g. a plan badge or bullet list). */
+  extra?: ReactNode;
 }
 
-function FeatureSection({ index, title, copy, reverse, visual }: FeatureSectionProps) {
+function FeatureSection({ index, title, copy, reverse, visual, extra }: FeatureSectionProps) {
   return (
     <Reveal>
       <div className={`grid md:grid-cols-2 gap-10 md:gap-16 items-center ${reverse ? 'md:[&>*:first-child]:order-2' : ''}`}>
@@ -85,6 +87,7 @@ function FeatureSection({ index, title, copy, reverse, visual }: FeatureSectionP
           <p className="text-base md:text-lg leading-relaxed max-w-md" style={{ color: INK_SOFT }}>
             {copy}
           </p>
+          {extra}
         </div>
         <div>{visual}</div>
       </div>
@@ -146,6 +149,9 @@ export default function LandingPage() {
           <div className="flex items-center gap-5">
             <Link to="/how-it-works" className="hidden sm:inline text-sm font-semibold transition-colors hover:opacity-70" style={{ color: INK_SOFT }}>
               How it works
+            </Link>
+            <Link to="/faq" className="hidden sm:inline text-sm font-semibold transition-colors hover:opacity-70" style={{ color: INK_SOFT }}>
+              FAQ
             </Link>
             <Link to="/login" className="text-sm font-semibold transition-colors hover:opacity-70" style={{ color: INK_SOFT }}>
               Log in
@@ -438,6 +444,73 @@ export default function LandingPage() {
           }
         />
 
+        <FeatureSection
+          index="07 — MARKET INTELLIGENCE"
+          title="Know your market, not just your bookings."
+          copy="AQUILA tracks competitor tour listings over time — their prices, options, ratings and demand signals — so you can see where you're ahead, where you're behind, and where there's a gap worth entering. Then ask AI about your market in plain language."
+          extra={
+            <div className="mt-6 max-w-md">
+              <ul className="space-y-2.5 mb-6">
+                {[
+                  'Competitor prices, options and ratings, tracked over time',
+                  'See where you lead or lag, product by product',
+                  'Spot under-served gaps before entering a new market',
+                  'Ask AI about your market data',
+                ].map((point) => (
+                  <li key={point} className="flex items-start gap-2.5 text-sm" style={{ color: INK_SOFT }}>
+                    <Check size={16} className="shrink-0 mt-0.5" style={{ color: GOLD }} />
+                    <span>{point}</span>
+                  </li>
+                ))}
+              </ul>
+              <span
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-bold tracking-widest uppercase"
+                style={{ border: `1px solid ${GOLD}40`, background: `${GOLD}14`, color: GOLD_SOFT }}
+              >
+                Included in the Intelligence plan
+              </span>
+            </div>
+          }
+          visual={
+            <MockCard>
+              <div className="flex items-center justify-between mb-5">
+                <div className="flex items-center gap-2">
+                  <Radar size={16} style={{ color: GOLD }} />
+                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>AQUILA · City walking tours</span>
+                </div>
+              </div>
+              <div className="space-y-2.5">
+                {[
+                  { name: 'Your tour', price: '€39', rating: '4.9', you: true },
+                  { name: 'Competitor A', price: '€45', rating: '4.6', you: false },
+                  { name: 'Competitor B', price: '€35', rating: '4.4', you: false },
+                  { name: 'Competitor C', price: '€42', rating: '4.8', you: false },
+                ].map((row) => (
+                  <div
+                    key={row.name}
+                    className="flex items-center justify-between rounded-xl px-3.5 py-2.5"
+                    style={row.you ? { background: `${GOLD}12`, border: `1px solid ${GOLD}33` } : { background: PAPER, border: `1px solid ${HAIRLINE}` }}
+                  >
+                    <span className="text-sm font-bold" style={{ color: row.you ? GOLD_SOFT : INK }}>{row.name}</span>
+                    <div className="flex items-center gap-4 text-sm tabular-nums">
+                      <span className="inline-flex items-center gap-1" style={{ color: INK_MUTED }}>
+                        <Star size={12} style={{ color: GOLD }} /> {row.rating}
+                      </span>
+                      <span className="font-bold w-10 text-right" style={{ color: INK_SOFT }}>{row.price}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5 rounded-2xl px-4 py-3.5 flex items-start gap-2.5" style={{ background: INK }}>
+                <Sparkles size={15} className="shrink-0 mt-0.5" style={{ color: '#F5C6A5' }} />
+                <p className="text-xs leading-relaxed" style={{ color: '#D6D3D1' }}>
+                  "You're the top-rated tour here, priced below two of three rivals — there may be room to adjust."
+                </p>
+              </div>
+            </MockCard>
+          }
+        />
+
       </div>
 
       {/* ─── EVERYTHING IN ONE PLATFORM — the full feature list, one "why it matters" each ─── */}
@@ -534,6 +607,7 @@ export default function LandingPage() {
           <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-semibold" style={{ color: INK_SOFT }}>
             <Link to="/how-it-works" className="transition-colors hover:opacity-70">How it works</Link>
             <Link to="/pricing" className="transition-colors hover:opacity-70">Pricing</Link>
+            <Link to="/faq" className="transition-colors hover:opacity-70">FAQ</Link>
             <a href="mailto:shabirshabrez1998@gmail.com" className="transition-colors hover:opacity-70">Contact</a>
             <a href="tel:+33755091524" className="transition-colors hover:opacity-70">+33 7 55 09 15 24</a>
           </div>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Check, ArrowLeft } from 'lucide-react';
+import { Check, Minus, ArrowLeft } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import Logo from '@/components/Logo';
@@ -14,6 +14,56 @@ const HAIRLINE = '#E5E1D8';
 const GOLD = '#B45309';
 const GOLD_SOFT = '#92400E';
 
+interface Plan {
+  name: string;
+  price: number;
+  tagline: string;
+  /** Short "Everything in X, plus:" lead-in for the higher tiers. */
+  includesPrevious?: string;
+  features: string[];
+  notIncluded?: string[];
+  /** Small print under the feature list (e.g. the AI-key add-on). */
+  addOnNote?: string;
+  usersIncluded: number;
+  extraUserPrice: number;
+  popular?: boolean;
+}
+
+// Presentational only — no payment wiring. Plans/prices as published.
+const PLANS: Plan[] = [
+  {
+    name: 'Guide',
+    price: 10,
+    tagline: 'Guide-side tools for running tours on the day.',
+    features: ['Guide check-in', 'Automatic booking data from Gmail', 'Guide dashboard'],
+    notIncluded: ['Financial ledger', 'Analytics & P&L', 'Simulator'],
+    usersIncluded: 1,
+    extraUserPrice: 2,
+  },
+  {
+    name: 'Operations',
+    price: 20,
+    tagline: 'Run the whole operation — and the numbers behind it.',
+    includesPrevious: 'Everything in Guide, plus:',
+    features: ['Financial analytics', 'P&L', 'Products & pricing', 'AI insights'],
+    addOnNote: 'AI insights: bring your own AI key, or add the AI-key add-on for +€5 / month.',
+    usersIncluded: 2,
+    extraUserPrice: 5,
+    popular: true,
+  },
+  {
+    name: 'Intelligence',
+    price: 25,
+    tagline: 'Your operation, plus a clear view of the market around it.',
+    includesPrevious: 'Everything in Operations, plus:',
+    features: ['Market Research — AQUILA market intelligence'],
+    usersIncluded: 3,
+    extraUserPrice: 5,
+  },
+];
+
+const usersLabel = (n: number) => (n === 1 ? '1 user included' : `${n} users included`);
+
 export default function PricingPage() {
   const navigate = useNavigate();
   const { user, refreshProfile } = useAuth();
@@ -21,15 +71,6 @@ export default function PricingPage() {
   const [promoLoading, setPromoLoading] = useState(false);
   const [promoError, setPromoError] = useState('');
   const [promoSuccess, setPromoSuccess] = useState(false);
-
-  const features = [
-    'Live guest check-in, from any phone',
-    'Smart guide allocation & balancing',
-    'Automatic booking ingestion from every OTA',
-    'Guide payments, earnings & invoices',
-    'Guide performance scoring (reviews + punctuality)',
-    'Owner analytics & live operations board',
-  ];
 
   // A logged-in visitor only ever lands here because ProtectedRoute redirected them after their
   // trial ended — a first-time, signed-out visitor sees the plain pricing pitch instead.
@@ -85,105 +126,149 @@ export default function PricingPage() {
         </div>
       </nav>
 
-      <div className="flex items-center justify-center px-6 py-16 md:py-24">
-        <div className="max-w-md w-full">
-          <div className="text-center mb-10">
+      <div className="px-6 py-16 md:py-24">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-12 md:mb-14 max-w-2xl mx-auto">
             <h1 className="font-serif text-3xl md:text-4xl font-semibold tracking-tight mb-3" style={{ color: INK }}>
               {isTrialGate ? 'Your free trial has ended' : 'Simple, honest pricing'}
             </h1>
             <p className="text-base" style={{ color: INK_SOFT }}>
               {isTrialGate
                 ? 'Subscribe to keep using AURELIA.'
-                : 'One plan. Everything included. Start with a free trial.'}
+                : 'Three plans, priced monthly. Start with a free trial — no card required.'}
             </p>
           </div>
 
-          <div className="rounded-3xl bg-white p-8 relative overflow-hidden" style={{ border: `1px solid ${HAIRLINE}`, boxShadow: '0 20px 60px -20px rgba(28,25,23,0.12)' }}>
-            <div className="absolute top-0 left-0 right-0 h-1" style={{ background: `linear-gradient(to right, ${GOLD}00, ${GOLD}, ${GOLD}00)` }} />
-
-            <div className="mb-6 text-center">
-              <h2 className="text-sm font-bold uppercase tracking-widest mb-2" style={{ color: GOLD_SOFT }}>AURELIA</h2>
-              <div className="flex items-baseline justify-center gap-1.5">
-                <span className="text-5xl font-black tracking-tight" style={{ color: INK }}>€20</span>
-                <span className="text-sm font-medium" style={{ color: INK_MUTED }}>/ month</span>
-              </div>
-              <p className="text-xs font-semibold mt-2" style={{ color: INK_MUTED }}>Free trial included — no card required to start.</p>
-            </div>
-
-            <div className="space-y-3 mb-8 text-left">
-              {features.map((feature) => (
-                <div key={feature} className="flex items-center gap-3">
-                  <Check size={16} style={{ color: '#15803d' }} className="flex-shrink-0" />
-                  <span className="text-sm" style={{ color: INK_SOFT }}>{feature}</span>
-                </div>
-              ))}
-            </div>
-
-            {isTrialGate ? (
-              <>
-                <button
-                  disabled
-                  className="w-full py-3 rounded-xl font-bold text-sm cursor-not-allowed mb-2"
-                  style={{ background: `${GOLD}26`, color: `${GOLD_SOFT}99` }}
-                >
-                  Subscribe Now
-                </button>
-                <p className="text-xs text-center mb-8" style={{ color: INK_MUTED }}>Card payments coming soon</p>
-
-                <div className="pt-6" style={{ borderTop: `1px solid ${HAIRLINE}` }}>
-                  <p className="text-sm mb-3" style={{ color: INK_SOFT }}>Have a promo code?</p>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={promoCode}
-                      onChange={(e) => setPromoCode(e.target.value)}
-                      placeholder="Enter code"
-                      className="aurelia-input flex-1"
-                    />
-                    <button
-                      onClick={handleApplyPromo}
-                      disabled={promoLoading || !promoCode.trim()}
-                      className="aurelia-gold-btn px-6 py-2.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    >
-                      {promoLoading ? (
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        'Apply'
-                      )}
-                    </button>
-                  </div>
-                  {promoError && <p className="text-xs text-red-600 mt-2">{promoError}</p>}
-                  {promoSuccess && <p className="text-xs mt-2" style={{ color: '#15803d' }}>✓ Code applied! Redirecting to your dashboard…</p>}
-                </div>
-              </>
-            ) : (
-              <Link
-                to="/signup"
-                className="w-full py-3 rounded-xl font-bold text-sm text-white text-center block"
-                style={{ background: GOLD }}
+          <div className="grid md:grid-cols-3 gap-5 md:gap-6 items-stretch">
+            {PLANS.map((plan) => (
+              <div
+                key={plan.name}
+                className={`rounded-3xl bg-white p-7 md:p-8 relative flex flex-col ${plan.popular ? 'md:-translate-y-2' : ''}`}
+                style={{
+                  border: `1px solid ${plan.popular ? `${GOLD}66` : HAIRLINE}`,
+                  boxShadow: plan.popular
+                    ? `0 24px 60px -20px ${GOLD}40, 0 4px 16px -4px rgba(28,25,23,0.06)`
+                    : '0 20px 60px -20px rgba(28,25,23,0.12)',
+                }}
               >
-                Start free trial
-              </Link>
-            )}
+                {plan.popular && (
+                  <>
+                    <div className="absolute top-0 left-0 right-0 h-1 rounded-t-3xl" style={{ background: `linear-gradient(to right, ${GOLD}00, ${GOLD}, ${GOLD}00)` }} />
+                    <span
+                      className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-full text-white whitespace-nowrap"
+                      style={{ background: GOLD }}
+                    >
+                      Most popular
+                    </span>
+                  </>
+                )}
+
+                <h2 className="text-sm font-bold uppercase tracking-widest mb-2" style={{ color: GOLD_SOFT }}>{plan.name}</h2>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-5xl font-black tracking-tight" style={{ color: INK }}>€{plan.price}</span>
+                  <span className="text-sm font-medium" style={{ color: INK_MUTED }}>/ month</span>
+                </div>
+                <p className="text-sm mt-3 mb-6 min-h-[2.5rem]" style={{ color: INK_SOFT }}>{plan.tagline}</p>
+
+                <div className="rounded-xl px-4 py-3 mb-6 text-xs" style={{ background: PAPER, border: `1px solid ${HAIRLINE}` }}>
+                  <p className="font-bold" style={{ color: INK }}>{usersLabel(plan.usersIncluded)}</p>
+                  <p className="mt-0.5" style={{ color: INK_MUTED }}>Additional users: +€{plan.extraUserPrice} / user / month</p>
+                </div>
+
+                <div className="space-y-3 text-left flex-1">
+                  {plan.includesPrevious && (
+                    <p className="text-xs font-bold uppercase tracking-widest" style={{ color: INK_MUTED }}>{plan.includesPrevious}</p>
+                  )}
+                  {plan.features.map((feature) => (
+                    <div key={feature} className="flex items-start gap-3">
+                      <Check size={16} style={{ color: '#15803d' }} className="flex-shrink-0 mt-0.5" />
+                      <span className="text-sm" style={{ color: INK_SOFT }}>{feature}</span>
+                    </div>
+                  ))}
+                  {plan.notIncluded?.map((feature) => (
+                    <div key={feature} className="flex items-start gap-3">
+                      <Minus size={16} style={{ color: INK_MUTED }} className="flex-shrink-0 mt-0.5" />
+                      <span className="text-sm line-through decoration-1" style={{ color: INK_MUTED }}>{feature}</span>
+                    </div>
+                  ))}
+                  {plan.addOnNote && (
+                    <p className="text-xs leading-relaxed pt-2" style={{ color: INK_MUTED }}>{plan.addOnNote}</p>
+                  )}
+                </div>
+
+                <div className="mt-8">
+                  {isTrialGate ? (
+                    <>
+                      <button
+                        disabled
+                        className="w-full py-3 rounded-xl font-bold text-sm cursor-not-allowed mb-2"
+                        style={{ background: `${GOLD}26`, color: `${GOLD_SOFT}99` }}
+                      >
+                        Subscribe Now
+                      </button>
+                      <p className="text-xs text-center" style={{ color: INK_MUTED }}>Card payments coming soon</p>
+                    </>
+                  ) : (
+                    <Link
+                      to="/signup"
+                      className="w-full py-3 rounded-xl font-bold text-sm text-center block transition-colors"
+                      style={plan.popular ? { background: GOLD, color: 'white' } : { border: `1px solid ${GOLD}66`, color: GOLD_SOFT }}
+                    >
+                      Start free trial
+                    </Link>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
 
-          <p className="text-sm text-center mt-8" style={{ color: INK_SOFT }}>
-            Need more for a larger team?{' '}
-            <a href="mailto:shabirshabrez1998@gmail.com" className="font-bold hover:underline" style={{ color: GOLD }}>
-              Contact us
-            </a>
-          </p>
+          {isTrialGate && (
+            <div className="max-w-md mx-auto mt-10 rounded-3xl bg-white p-6 md:p-8" style={{ border: `1px solid ${HAIRLINE}` }}>
+              <p className="text-sm mb-3" style={{ color: INK_SOFT }}>Have a promo code?</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={promoCode}
+                  onChange={(e) => setPromoCode(e.target.value)}
+                  placeholder="Enter code"
+                  className="aurelia-input flex-1"
+                />
+                <button
+                  onClick={handleApplyPromo}
+                  disabled={promoLoading || !promoCode.trim()}
+                  className="aurelia-gold-btn px-6 py-2.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {promoLoading ? (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    'Apply'
+                  )}
+                </button>
+              </div>
+              {promoError && <p className="text-xs text-red-600 mt-2">{promoError}</p>}
+              {promoSuccess && <p className="text-xs mt-2" style={{ color: '#15803d' }}>✓ Code applied! Redirecting to your dashboard…</p>}
+            </div>
+          )}
 
-          <p className="text-xs text-center mt-6" style={{ color: INK_MUTED }}>
-            Questions? Reach us at{' '}
-            <a href="mailto:shabirshabrez1998@gmail.com" className="hover:underline" style={{ color: GOLD_SOFT }}>
-              shabirshabrez1998@gmail.com
-            </a>{' '}
-            or{' '}
-            <a href="tel:+33755091524" className="hover:underline" style={{ color: GOLD_SOFT }}>
-              +33 7 55 09 15 24
-            </a>
-          </p>
+          <div className="max-w-md mx-auto">
+            <p className="text-sm text-center mt-8" style={{ color: INK_SOFT }}>
+              Need more for a larger team?{' '}
+              <a href="mailto:shabirshabrez1998@gmail.com" className="font-bold hover:underline" style={{ color: GOLD }}>
+                Contact us
+              </a>
+            </p>
+
+            <p className="text-xs text-center mt-6" style={{ color: INK_MUTED }}>
+              Questions? Reach us at{' '}
+              <a href="mailto:shabirshabrez1998@gmail.com" className="hover:underline" style={{ color: GOLD_SOFT }}>
+                shabirshabrez1998@gmail.com
+              </a>{' '}
+              or{' '}
+              <a href="tel:+33755091524" className="hover:underline" style={{ color: GOLD_SOFT }}>
+                +33 7 55 09 15 24
+              </a>
+            </p>
+          </div>
         </div>
       </div>
     </div>
