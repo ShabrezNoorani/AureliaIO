@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Home, CalendarCheck, CalendarClock, User, Star, History, LogOut, Menu, X, Wallet, AlertTriangle } from 'lucide-react';
+import { Home, CalendarCheck, CalendarClock, User, Star, History, LogOut, Menu, X, Wallet, AlertTriangle, ScrollText } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import Logo from '@/components/Logo';
+import BetaBadge from '@/components/BetaBadge';
 import PullToRefreshChrome from '@/components/PullToRefreshChrome';
 import GuideHome from './GuideHome';
 import GuideCheckin from './GuideCheckin';
@@ -13,6 +14,10 @@ import GuideEarningsOnly from './GuideEarningsOnly';
 import GuideFutureTours from './GuideFutureTours';
 import { useGuideAccess } from '@/hooks/use-guide-access';
 
+/** FABULA (guide-training scripts) — a separate companion app, opened in a new tab. Shown to every
+    guide; FABULA itself decides who has access. */
+const FABULA_URL = 'https://fabula.aureliaio.com';
+
 type GuideView = 'dashboard' | 'checkin' | 'upcoming' | 'profile' | 'reviews' | 'history';
 
 interface NavItemProps {
@@ -20,9 +25,11 @@ interface NavItemProps {
   label: string;
   active: boolean;
   onClick: () => void;
+  /** Companion app still in beta — shows a muted "Beta" pill after the label. */
+  beta?: boolean;
 }
 
-function NavItem({ icon: Icon, label, active, onClick }: NavItemProps) {
+function NavItem({ icon: Icon, label, active, onClick, beta }: NavItemProps) {
   return (
     <button
       onClick={onClick}
@@ -34,7 +41,8 @@ function NavItem({ icon: Icon, label, active, onClick }: NavItemProps) {
       }}
     >
       <Icon size={18} strokeWidth={active ? 2.5 : 1.8} />
-      <span>{label}</span>
+      <span className={beta ? 'flex-1 min-w-0 text-left truncate' : undefined}>{label}</span>
+      {beta && <BetaBadge />}
     </button>
   );
 }
@@ -136,6 +144,7 @@ export default function GuideLayout() {
               <NavItem icon={User} label="My Profile" active={view === 'profile'} onClick={() => handleNavigate('profile', '/guide/profile')} />
               <NavItem icon={Star} label="My Reviews" active={view === 'reviews'} onClick={() => handleNavigate('reviews', '/guide/reviews')} />
               <NavItem icon={History} label="History" active={view === 'history'} onClick={() => handleNavigate('history', '/guide/history')} />
+              <NavItem icon={ScrollText} label="FABULA" active={false} beta onClick={() => { window.open(FABULA_URL, '_blank', 'noopener,noreferrer'); setMobileMenuOpen(false); }} />
             </>
           )}
         </div>

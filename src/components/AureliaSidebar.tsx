@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart, Send, LineChart, PanelLeftClose, PanelLeftOpen, Trophy, MapPin, Sparkles, Radar } from 'lucide-react';
+import { LayoutDashboard, Package, Plus, BookOpen, Wallet, Settings, LogOut, ChevronDown, ChevronRight, Home, TrendingUp, BarChart3, Palette, Calendar, Map, Users, List, Activity, Euro, BarChart2, FileText, Menu, X, Database, ShoppingCart, Send, LineChart, PanelLeftClose, PanelLeftOpen, Trophy, MapPin, Sparkles, Radar, ScrollText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, Profile } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import Logo from '@/components/Logo';
+import BetaBadge from '@/components/BetaBadge';
 import { getTheme, applyTheme, THEMES, ThemeName } from '@/lib/theme';
 
 /** AQUILA (market intelligence) — a separate app, opened in a new tab. This sidebar is owner-only
     (rendered solely by AppLayout, behind ProtectedRoute requiredRole="owner"). */
 const AQUILA_URL = 'https://aquila.aureliaio.com';
 const openAquila = () => window.open(AQUILA_URL, '_blank', 'noopener,noreferrer');
+/** FABULA (guide-training scripts) — a separate companion app, opened in a new tab. */
+const FABULA_URL = 'https://fabula.aureliaio.com';
+const openFabula = () => window.open(FABULA_URL, '_blank', 'noopener,noreferrer');
 
 export type View = 'dashboard' | 'simulator' | 'products' | 'editor' | 'ledger' | 'admin-costs' | 'blog' | 'settings' | 'today' | 'live' | 'dispatch' | 'executive' | 'analytics' | 'breakdown-pnl' | 'guides' | 'guide-dashboard' | 'leaderboard' | 'marketplace' | 'changelog' | 'meeting-points' | 'ai-insights';
 
@@ -41,6 +45,8 @@ interface SidebarItemProps {
   /** Icon-only: hides the label and shows it as a title tooltip instead, centers the icon, and
       swaps the numbered badge pill for a small dot (a count wouldn't fit next to nothing). */
   collapsed?: boolean;
+  /** Marks a companion app still in beta — a muted "Beta" pill (a tiny "β" in the icon rail). */
+  beta?: boolean;
 }
 
 interface NavItem {
@@ -49,6 +55,7 @@ interface NavItem {
   active: boolean;
   onClick: () => void;
   badge?: number;
+  beta?: boolean;
 }
 
 interface NavGroup {
@@ -59,7 +66,7 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, title, badge, collapsed }: SidebarItemProps) => {
+const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, title, badge, collapsed, beta }: SidebarItemProps) => {
   const [isHovered, setIsHovered] = useState(false);
 
   const baseClasses = collapsed
@@ -75,7 +82,7 @@ const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, tit
     <button
       onClick={disabled ? undefined : onClick}
       disabled={disabled}
-      title={collapsed ? label : (disabled && title ? title : undefined)}
+      title={collapsed ? (beta ? `${label} (Beta)` : label) : (disabled && title ? title : undefined)}
       onMouseEnter={() => !disabled && setIsHovered(true)}
       onMouseLeave={() => !disabled && setIsHovered(false)}
       className={`${baseClasses} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
@@ -87,6 +94,19 @@ const SidebarItem = ({ icon: Icon, label, active, onClick, disabled, indent, tit
     >
       <Icon size={collapsed ? 20 : (indent ? 16 : 18)} strokeWidth={active ? 2.5 : 1.8} />
       {!collapsed && <span className="flex-1 min-w-0 text-left truncate">{label}</span>}
+      {beta && (
+        collapsed ? (
+          <span
+            aria-hidden
+            className="absolute top-1 right-2 text-[9px] font-semibold leading-none"
+            style={{ color: 'hsl(var(--theme-text-sec))', opacity: 0.7 }}
+          >
+            β
+          </span>
+        ) : (
+          <BetaBadge />
+        )
+      )}
       {!!badge && badge > 0 && (
         collapsed ? (
           <span
@@ -208,6 +228,7 @@ export default function AureliaSidebar({
       { label: 'Guides', icon: Users, active: activeView === 'guides', onClick: () => handleNavigate('guides', '/app/guides') },
       { label: 'Guide Dashboard', icon: BarChart3, active: activeView === 'guide-dashboard', onClick: () => handleNavigate('guide-dashboard', '/app/guide-dashboard') },
       { label: 'Leaderboard', icon: Trophy, active: activeView === 'leaderboard', onClick: () => handleNavigate('leaderboard', '/app/leaderboard') },
+      { label: 'FABULA', icon: ScrollText, active: false, onClick: openFabula, beta: true },
     ] },
     { id: 'finance', label: 'Finance', icon: Wallet, items: [
       { label: 'Financial Ledger', icon: BookOpen, active: activeView === 'ledger', onClick: () => handleNavigate('ledger'), badge: newBookingsCount },
@@ -218,7 +239,7 @@ export default function AureliaSidebar({
       { label: 'Analytics', icon: BarChart3, active: activeView === 'analytics', onClick: () => handleNavigate('analytics') },
       { label: 'Simulator', icon: TrendingUp, active: activeView === 'simulator', onClick: () => handleNavigate('simulator') },
       { label: 'AI Insights', icon: Sparkles, active: activeView === 'ai-insights', onClick: () => handleNavigate('ai-insights', '/app/ai-insights') },
-      { label: 'AQUILA', icon: Radar, active: false, onClick: openAquila },
+      { label: 'AQUILA', icon: Radar, active: false, onClick: openAquila, beta: true },
     ] },
     { id: 'catalog', label: 'Catalog', icon: Package, items: [
       { label: 'Products & Pricing', icon: Package, active: activeView === 'products' || activeView === 'editor', onClick: () => handleNavigate('products') },
@@ -279,7 +300,7 @@ export default function AureliaSidebar({
               <div key={group.id} className="flex flex-col space-y-0.5">
                 {gi > 0 && <div className="my-1.5 mx-3 border-t opacity-30" style={{ borderColor: 'hsl(var(--theme-border))' }} />}
                 {group.items.map(item => (
-                  <SidebarItem key={item.label} icon={item.icon} label={item.label} active={item.active} onClick={item.onClick} badge={item.badge} collapsed />
+                  <SidebarItem key={item.label} icon={item.icon} label={item.label} active={item.active} onClick={item.onClick} badge={item.badge} beta={item.beta} collapsed />
                 ))}
               </div>
             ))}
@@ -304,7 +325,7 @@ export default function AureliaSidebar({
                 {expanded && (
                   <div className="mt-1 flex flex-col space-y-0.5">
                     {group.items.map(item => (
-                      <SidebarItem key={item.label} icon={item.icon} label={item.label} active={item.active} onClick={item.onClick} badge={item.badge} indent />
+                      <SidebarItem key={item.label} icon={item.icon} label={item.label} active={item.active} onClick={item.onClick} badge={item.badge} beta={item.beta} indent />
                     ))}
                   </div>
                 )}
